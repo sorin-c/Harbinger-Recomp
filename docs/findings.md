@@ -67,7 +67,7 @@ which matches the engine's "Unable to read version number" errors (likely).
 
 ## 5. Open questions
 
-- `res0`/`res1` override order (guessed: `res1` wins). Needs a side-by-side run.
+- ~~`res0`/`res1` override order~~: proven by tracing the original, `res1` wins (see boot.md).
 - `.gim` origin fields, the 8 `extra` bytes, palette index 0 handling, alpha mode.
 - All the gameplay formats in section 3 except archives, images, audio and scripts.
 

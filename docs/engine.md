@@ -38,7 +38,8 @@ What it showed:
 
 ## Next: boot path to the main menu
 
-1. Trace `WinMain` → `GGame` start-up: ini reading, manager load order, the
-   intro videos and the first interface screen.
+See [boot.md](boot.md) for the traced start-up and load order.
+
+1. Done: trace `WinMain` → `GGame` start-up and the resource load order.
 2. Reverse `.itf` (interface layouts) and `.fnt` (fonts), which the menu needs.
 3. Rebuild the main loop and draw the main menu from the original files.

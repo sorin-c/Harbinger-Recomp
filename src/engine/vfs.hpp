@@ -17,7 +17,7 @@ namespace harbinger {
 class Vfs {
 public:
     // Mounts every res*.sqh in `installDir`. Later archives (by name) take
-    // precedence, so res1 overrides res0 (guessed order, see sqh.md).
+    // precedence, so res1 overrides res0 (confirmed by tracing the original).
     explicit Vfs(const std::filesystem::path& installDir);
 
     // Reads a resource by game path (any case, '\' or '/'). Like the original,
