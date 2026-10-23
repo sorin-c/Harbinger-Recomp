@@ -12,7 +12,12 @@ set(HARBINGER_WARNINGS $<IF:$<CXX_COMPILER_ID:MSVC>,/W4,-Wall -Wextra -Wpedantic
 
 # File formats and engine core: no platform dependencies, used by tests and tools.
 add_library(harbinger_formats
+  src/formats/acr.cpp
+  src/formats/fnt.cpp
   src/formats/gim.cpp
+  src/formats/itf.cpp
+  src/formats/itm.cpp
+  src/formats/mgr.cpp
   src/formats/sqh.cpp
 )
 target_include_directories(harbinger_formats PUBLIC src)
@@ -21,6 +26,8 @@ target_compile_options(harbinger_formats PRIVATE ${HARBINGER_WARNINGS})
 add_library(harbinger_core
   src/engine/vfs.cpp
   src/render/sprite.cpp
+  src/ui/item_animation.cpp
+  src/ui/text.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
 target_compile_options(harbinger_core PRIVATE ${HARBINGER_WARNINGS})
@@ -46,6 +53,10 @@ if(HARBINGER_BUILD_APPS)
     FetchContent_MakeAvailable(SDL3)
   endif()
 
+  add_executable(harbinger src/app/harbinger.cpp)
+  target_link_libraries(harbinger PRIVATE harbinger_core SDL3::SDL3)
+  target_compile_options(harbinger PRIVATE ${HARBINGER_WARNINGS})
+
   add_executable(harbinger-viewer src/app/viewer.cpp)
   target_link_libraries(harbinger-viewer PRIVATE harbinger_core SDL3::SDL3)
   target_compile_options(harbinger-viewer PRIVATE ${HARBINGER_WARNINGS})
@@ -53,7 +64,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-  foreach(t sqh gim core)
+  foreach(t sqh gim core ui resources)
     add_executable(test_${t} tests/test_${t}.cpp)
     target_link_libraries(test_${t} PRIVATE harbinger_core)
     add_test(NAME ${t} COMMAND test_${t})

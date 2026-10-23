@@ -2,6 +2,7 @@
 // Format notes and evidence: docs/formats/gim.md
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -33,6 +34,10 @@ struct Image {
     uint8_t encoding() const { return flags & 0x0F; }
     bool isRle() const { return encoding() & 0x04; }
 };
+
+// Decodes `height` RLE rows of `width` pixels starting at d[pos] and advances
+// `pos`. Also used by RLE fonts (.fnt), which share the row encoding.
+void decodeRleRows(const uint8_t* d, size_t size, size_t& pos, uint16_t width, uint16_t height, Frame& f);
 
 // Throws std::runtime_error when the data is malformed or not fully consumed.
 Image decode(const std::vector<uint8_t>& data);

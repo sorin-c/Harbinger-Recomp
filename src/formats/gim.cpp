@@ -37,13 +37,15 @@ private:
     size_t pos_ = 0;
 };
 
+}  // namespace
+
 // One RLE row: u16 byteLength (including itself), u8 segmentCount, then per
 // segment u8 transparentRun, u8 literalCount, literal palette indices.
 // A literal count byte of 0xFF stands for 254 pixels.
-void decodeRleFrame(const uint8_t* d, size_t size, size_t& pos, const Image& img, Frame& f) {
-    f.index.assign(size_t(img.width) * img.height, 0);
+void decodeRleRows(const uint8_t* d, size_t size, size_t& pos, uint16_t width, uint16_t height, Frame& f) {
+    f.index.assign(size_t(width) * height, 0);
     f.opaque.assign(f.index.size(), 0);
-    for (size_t y = 0; y < img.height; ++y) {
+    for (size_t y = 0; y < height; ++y) {
         if (pos + 3 > size) throw std::runtime_error("gim: truncated row");
         const size_t rowEnd = pos + (d[pos] | (d[pos + 1] << 8));
         const uint8_t segments = d[pos + 2];
@@ -54,19 +56,17 @@ void decodeRleFrame(const uint8_t* d, size_t size, size_t& pos, const Image& img
             x += d[q];
             const size_t literal = d[q + 1] == 0xFF ? 254 : d[q + 1];
             q += 2;
-            if (q + literal > rowEnd || x + literal > img.width) throw std::runtime_error("gim: segment overruns row");
+            if (q + literal > rowEnd || x + literal > width) throw std::runtime_error("gim: segment overruns row");
             for (size_t i = 0; i < literal; ++i, ++x) {
-                f.index[y * img.width + x] = d[q + i];
-                f.opaque[y * img.width + x] = 1;
+                f.index[y * width + x] = d[q + i];
+                f.opaque[y * width + x] = 1;
             }
             q += literal;
         }
-        if (q != rowEnd || x != img.width) throw std::runtime_error("gim: row length mismatch");
+        if (q != rowEnd || x != width) throw std::runtime_error("gim: row length mismatch");
         pos = rowEnd;
     }
 }
-
-}  // namespace
 
 Image decode(const std::vector<uint8_t>& data) {
     Reader r(data);
@@ -102,7 +102,7 @@ Image decode(const std::vector<uint8_t>& data) {
             size_t pos = 0;
             while (pos < size) {
                 img.frames.emplace_back();
-                decodeRleFrame(d, size, pos, img, img.frames.back());
+                decodeRleRows(d, size, pos, img.width, img.height, img.frames.back());
             }
         } else {
             if (size_t(img.pitch) * img.height != size || img.pitch < img.width)

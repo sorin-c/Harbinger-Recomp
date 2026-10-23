@@ -17,7 +17,15 @@ What exists so far:
 - `.sqh` archive reader and `sqhtool` (list / extract)
 - `.gim` image decoder and `gim2tga`
 - `Vfs` (archive mounting and the game's path rules)
+- Parsers for interface layouts (`.itf`), fonts (`.fnt`), resource indexes
+  (`.mgr`), cursors (`.acr`) and the animated button items (`.itm`)
+- `harbinger`, the game: currently the main menu and character screen, drawn
+  from the original files, with mouse, keyboard and gamepad input
 - `harbinger-viewer`, an SDL3 sprite browser (keyboard or gamepad)
+
+```
+harbinger --data "C:/Games/Harbinger"
+```
 
 ## Build
 

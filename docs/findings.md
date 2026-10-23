@@ -68,8 +68,11 @@ which matches the engine's "Unable to read version number" errors (likely).
 ## 5. Open questions
 
 - ~~`res0`/`res1` override order~~: proven by tracing the original, `res1` wins (see boot.md).
-- `.gim` origin fields, the 8 `extra` bytes, palette index 0 handling, alpha mode.
-- All the gameplay formats in section 3 except archives, images, audio and scripts.
+- `.gim` origin fields, the 8 `extra` bytes, alpha mode. ~~Palette index 0~~: pure
+  green is the key (shadow marker on RLE sprites, plain colour key on raw images).
+- ~~Interface, font, index, cursor formats~~: decoded in step 2, see
+  `docs/formats/{itf,fnt,mgr,acr,itm}.md`. Items beyond the animated buttons are not.
+- The remaining gameplay formats in section 3.
 
 ## Reproducing
 

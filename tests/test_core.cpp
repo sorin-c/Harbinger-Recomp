@@ -45,8 +45,11 @@ static void testSprite() {
     auto alpha = keyedImage(7);
     CHECK(render::toRgba(alpha, 0)[1] >> 24 == 128);  // encoding 7 keeps palette alpha
 
-    auto raw = keyedImage(0);  // raw images: markers are normal colours
-    CHECK(render::toRgba(raw, 0)[0] == (255u << 8 | 255u << 24));
+    auto raw = keyedImage(0);  // raw images: green is a plain colour key, red is a colour
+    CHECK(render::toRgba(raw, 0)[0] == 0);
+    CHECK(render::toRgba(raw, 0, render::KeyMode::Shadow)[0] == 0);
+    CHECK(render::toRgba(raw, 0)[2] == (255u | 255u << 24));
+    CHECK(render::toRgba(raw, 0, render::KeyMode::Raw)[0] == (255u << 8 | 255u << 24));
 }
 
 static void testVfs(const char* dir) {

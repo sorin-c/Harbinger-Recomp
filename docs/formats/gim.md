@@ -51,8 +51,9 @@ sheets have `fsp` in their path; frame counts range from 3 to 73.
 | RLE row format | proven by test | Every row of every RLE file ends exactly at `rowBytes`, sums to `width`, and every payload is consumed exactly. The decoder routine itself hasn't been read yet |
 | Literal `0xFF` = 254 pixels | proven by test | Without this rule 927 files fail; with it, all pass. It looks like an encoder quirk |
 | Multi-frame sheets | proven by test | 5,376 payloads decode as 3 to 73 whole frames with no remainder |
-| Palette byte order B, G, R, A | likely | With BGR, human ("dude") upgrade chips render red and the readme says red lights are for humans. RGB makes them blue |
+| Palette byte order B, G, R, A | proven | The main menu's text colour in a capture of the original, RGB (0,254,137), is entry 4 of StartBkg's palette read as B, G, R, A (the engine colours text with it, see fnt.md) |
 | RLE palettes reserve entries 0-1 for pure green and pure red markers | proven by survey | 9,486 palettes have pure green at index 0, 5,141 have pure red at index 1, 372 have them swapped; no other slot carries them often |
 | Green marks the shadow, red is a one-pixel rim (hover highlight) | guessed | Green sits under characters' feet; red outlines figures exactly. Characters also show a green fringe, which suggests the art was rendered over a green key. Renderer code not yet traced |
+| Raw paletted images use pure green as a colour key | likely | Cursor frames and the character-choice portraits are raw with pure green at index 0; the original shows neither with green |
 | Encoding bit 2 means RLE, encoding 7 uses palette alpha | guessed | Encoding 7 palettes carry alpha values other than 0xFF; renderer not yet traced |
 | Meaning of origin fields, `extra`, and `kind` 3 | unknown | |
