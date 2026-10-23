@@ -1,0 +1,21 @@
+# Build output
+/build*/
+/out/
+
+# Never commit original game data
+*.sqh
+*.bik
+*.exe
+*.dll
+*.bpl
+*.m3d
+*.asi
+*.flt
+/data/
+/gamedata/
+/extracted/
+
+# Local reverse-engineering artefacts (decompiler output is reference only)
+/research/local/
+*.gpr
+*.rep/
