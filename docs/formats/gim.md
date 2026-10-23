@@ -52,6 +52,7 @@ sheets have `fsp` in their path; frame counts range from 3 to 73.
 | Literal `0xFF` = 254 pixels | proven by test | Without this rule 927 files fail; with it, all pass. It looks like an encoder quirk |
 | Multi-frame sheets | proven by test | 5,376 payloads decode as 3 to 73 whole frames with no remainder |
 | Palette byte order B, G, R, A | likely | With BGR, human ("dude") upgrade chips render red and the readme says red lights are for humans. RGB makes them blue |
-| Palette index 0 (bright green) is a colour key or shadow, not drawn as-is | guessed | It appears around character feet in sprite sheets |
+| RLE palettes reserve entries 0-1 for pure green and pure red markers | proven by survey | 9,486 palettes have pure green at index 0, 5,141 have pure red at index 1, 372 have them swapped; no other slot carries them often |
+| Green marks the shadow, red is a one-pixel rim (hover highlight) | guessed | Green sits under characters' feet; red outlines figures exactly. Characters also show a green fringe, which suggests the art was rendered over a green key. Renderer code not yet traced |
 | Encoding bit 2 means RLE, encoding 7 uses palette alpha | guessed | Encoding 7 palettes carry alpha values other than 0xFF; renderer not yet traced |
 | Meaning of origin fields, `extra`, and `kind` 3 | unknown | |

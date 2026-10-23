@@ -9,15 +9,20 @@ the engine reads the original `res0.sqh` / `res1.sqh` archives.
 
 ## Status
 
-Step 1 (mapping the game) is underway. See [docs/findings.md](docs/findings.md).
+- Step 1, mapping the game: first pass done. See [docs/findings.md](docs/findings.md).
+- Step 2, rebuilding the engine: under way. See [docs/engine.md](docs/engine.md).
+
+What exists so far:
 
 - `.sqh` archive reader and `sqhtool` (list / extract)
-- `.gim` image decoder and `gim2tga` viewer
+- `.gim` image decoder and `gim2tga`
+- `Vfs` (archive mounting and the game's path rules)
+- `harbinger-viewer`, an SDL3 sprite browser (keyboard or gamepad)
 
 ## Build
 
 ```
-cmake -S . -B build -G Ninja
+cmake -S . -B build -G Ninja      # fetches SDL3 if it isn't installed
 cmake --build build
 HARBINGER_DATA="/path/to/Harbinger" ctest --test-dir build --output-on-failure
 ```
