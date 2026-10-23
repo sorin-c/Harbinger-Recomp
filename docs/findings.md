@@ -49,7 +49,7 @@ them, 798 vtables and 2,157 virtual functions were named in Ghidra
 | `.anm` `.agt` | 550 / 117 | Animation and agent definitions; `.anm` reference sprite sheet paths |
 | `.giz` `.brs` `.chk` `.mck` | 798 / 20 / 93 / 93 | Gizmos, brushes, level chunk maps and their collision/marker maps (likely) |
 | `.emt` `.itf` `.fnt` `.acr` `.mgr` | 179 / 44 / 19 / 3 / 84 | Particle emitters, interface layouts, fonts, cursors, manager indexes |
-| Saves `.har` / `.hpr` / `.gim` | per slot | `.gim` is a 256x192 greyscale thumbnail (decodes, proven). `.har` is binary object state with no strings; `.hpr` holds the quest log text. Both are serialisations of the game classes, so they get reversed alongside those classes in step 2 |
+| Saves `.har` / `.hpr` / `.gim` | per slot | `.gim` is a 256x192 greyscale thumbnail (decodes, proven). `.har` is binary object state with no strings; `.hpr` holds the quest log text. Both are serialisations of the game classes. Loading original saves is not a goal (decided 2026-10-23), so the rebuild will use its own save format and these are only reversed if they help understand game state |
 
 Many binary formats begin with a little-endian `double` version (1.0, 1.2, 1.75...),
 which matches the engine's "Unable to read version number" errors (likely).
