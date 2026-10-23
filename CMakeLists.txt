@@ -23,13 +23,32 @@ add_library(harbinger_formats
 target_include_directories(harbinger_formats PUBLIC src)
 target_compile_options(harbinger_formats PRIVATE ${HARBINGER_WARNINGS})
 
+# dr_mp3 (public domain / MIT-0), a single header, pinned by commit and hash.
+set(HARBINGER_DR_MP3 ${CMAKE_BINARY_DIR}/_deps/dr_libs/dr_mp3.h)
+if(NOT EXISTS ${HARBINGER_DR_MP3})
+  file(DOWNLOAD
+    https://raw.githubusercontent.com/mackron/dr_libs/8159355353a9baeea04416df9626ac2b9afbf97b/dr_mp3.h
+    ${HARBINGER_DR_MP3}
+    EXPECTED_HASH SHA256=91f264e8559cc8ccecbcfc38abc77fff66533f5e95f666a4ba48238e69e190a4
+    STATUS HARBINGER_DR_MP3_STATUS)
+  list(GET HARBINGER_DR_MP3_STATUS 0 HARBINGER_DR_MP3_CODE)
+  if(NOT HARBINGER_DR_MP3_CODE EQUAL 0)
+    file(REMOVE ${HARBINGER_DR_MP3})
+    message(FATAL_ERROR "Could not download dr_mp3.h: ${HARBINGER_DR_MP3_STATUS}")
+  endif()
+endif()
+
 add_library(harbinger_core
+  src/audio/mp3.cpp
+  src/audio/wav.cpp
+  src/engine/ini.cpp
   src/engine/vfs.cpp
   src/render/sprite.cpp
   src/ui/item_animation.cpp
   src/ui/text.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
+target_include_directories(harbinger_core SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/_deps/dr_libs)
 target_compile_options(harbinger_core PRIVATE ${HARBINGER_WARNINGS})
 
 add_executable(sqhtool tools/sqhtool.cpp)
@@ -53,7 +72,7 @@ if(HARBINGER_BUILD_APPS)
     FetchContent_MakeAvailable(SDL3)
   endif()
 
-  add_executable(harbinger src/app/harbinger.cpp)
+  add_executable(harbinger src/app/harbinger.cpp src/app/assets.cpp src/app/screen.cpp src/app/sound.cpp)
   target_link_libraries(harbinger PRIVATE harbinger_core SDL3::SDL3)
   target_compile_options(harbinger PRIVATE ${HARBINGER_WARNINGS})
 
@@ -64,7 +83,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-  foreach(t sqh gim core ui resources)
+  foreach(t sqh gim core ui resources audio)
     add_executable(test_${t} tests/test_${t}.cpp)
     target_link_libraries(test_${t} PRIVATE harbinger_core)
     add_test(NAME ${t} COMMAND test_${t})

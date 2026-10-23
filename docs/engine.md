@@ -5,7 +5,8 @@
 | Path | Role | Depends on |
 |---|---|---|
 | `src/formats/` | File formats (`.sqh`, `.gim`, `.mgr`, `.itf`, `.fnt`, `.acr`, `.itm`) | C++17 only |
-| `src/engine/` | Engine core: `Vfs` (archive mounting, path rules) | formats |
+| `src/engine/` | Engine core: `Vfs` (archive mounting, path rules), `Ini` | formats |
+| `src/audio/` | WAV and MP3 decoding (dr_mp3, downloaded and hash-checked by CMake) | C++17 only |
 | `src/render/` | Platform-neutral rendering helpers (`.gim` frame to RGBA) | formats |
 | `src/ui/` | Interface pieces with the engine's rules: text boxes, animated items | formats, render |
 | `src/app/` | SDL3 programs | everything + SDL3 |
@@ -63,10 +64,15 @@ matches, the labels match in position and colour except a 1-pixel dark fringe
 explained yet: two of the four line up best one pixel right and up of where the
 `.itf` places them, the other two fit no simple offset or filtering.
 
+## Milestone 3: music and sounds (done)
+
+The front end plays `Intro.mp3` on a loop and the buttons play their
+interface's hover and press sounds (docs/formats/audio.md). `--no-audio` turns
+sound off; screenshot mode never opens an audio device.
+
 ## Next
 
-1. Music and UI sounds (`sound.mgr`, Miles-era `.wav`/`.mp3`), and Bink video
-   later or skipped.
+1. Bink video, later or skipped.
 2. Options and Load screens (`options.itf`, `load.itf`: CheckBox, SliderBar,
    TextBtn, KeyField).
 3. Start a game: levels, agents and `.anm` animation, the in-game loop.
