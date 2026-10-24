@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,14 @@ struct GizmoRecord {
     std::vector<uint8_t> extra;  // the class's own fields (giz::Template::recordExtra)
 };
 
+// An alternative version of the level (FUN_00448080): cells it replaces. The
+// chunk load takes a variant number; 0 is the base level. No shipped level
+// has variants beyond the base.
+struct Variant {
+    std::string name;
+    std::vector<std::pair<uint16_t, Cell>> cells;  // (index into Level::cells, replacement)
+};
+
 struct Level {
     double version = 0;  // 1.23 in every shipped level
     uint16_t act = 0;    // [ActN] section in Harbinger.ini: which brush and gizmo sets
@@ -55,14 +64,19 @@ struct Level {
     uint16_t unknown3 = 0, unknown4 = 0;
     std::string name;    // shown to the player, e.g. "Torvus Junction"
     std::vector<Cell> cells;  // column-major: cells[x * height + y] (FUN_00447360)
-    size_t cellsEnd = 0;      // file offset after the cells
+    std::vector<Variant> variants;  // variants 1..n (the base level is variant 0)
+    size_t cellsEnd = 0;      // file offset after the cells and variants
 
     // Filled by parseGizmos.
-    std::vector<std::vector<uint16_t>> instanceLists;  // instance ids; meaning not confirmed
+    // Per variant (0 = base), the sorted instance ids of the gizmos it keeps
+    // (FUN_004477e0); FUN_004495a0 deletes every other gizmo it loads.
+    std::vector<std::vector<uint16_t>> instanceLists;
     std::vector<GizmoRecord> gizmos;
     size_t gizmosEnd = 0;     // file offset where the undecoded part starts
 
     const Cell& at(int x, int y) const { return cells[size_t(x) * height + size_t(y)]; }
+    // Whether variant `v` keeps a gizmo instance.
+    bool keeps(const GizmoRecord& g, size_t v = 0) const;
 };
 
 // Throws std::runtime_error on malformed data. Stops after the map cells.

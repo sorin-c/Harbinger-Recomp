@@ -62,7 +62,8 @@ public:
     ScreenPoint gizmoTopLeft(const chk::GizmoRecord& g);
     // Draw order key: larger is nearer the viewer. Comparable with a cell's x + y.
     double gizmoDepth(const chk::GizmoRecord& g) const;
-    // False for gizmos whose first frame is an editor placeholder: an
+    // False for gizmos the base variant drops (chk::Level::keeps), and for
+    // gizmos whose first frame is an editor placeholder: an
     // umbilical shell's first image is only the outline of its footprint, and
     // the original shows nothing there until the shell closes.
     bool gizmoVisible(const chk::GizmoRecord& g) const;

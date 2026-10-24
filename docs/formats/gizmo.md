@@ -91,9 +91,8 @@ Every class's load starts with `GAnimatedGizmo_v4` (0x4b21c0), which reads
 After the map cells (`docs/formats/level.md`):
 
 ```
-u16  listCount          1 in every shipped level
-repeat listCount:
-  u16 n, then n * u16 instance id
+repeat variantCount:    FUN_004477e0, one list per variant (0 = base)
+  u16 n, then n * u16 instance id, ascending
 i32  count              FUN_004495a0
 repeat count:
   u16  template         id in the act's gizmo.mgr
@@ -102,9 +101,11 @@ repeat count:
   ...  class data       the plug's chunk load (vtable slot 22)
 ```
 
-The list holds every instance id in most levels; in Outer Labs it misses
-eight of them and its order differs from the records'. What it is for is not
-known yet.
+The chunk load reads only the selected variant's list and seeks past the
+others. `FUN_004495a0` then loads every record, keeps the gizmos whose
+instance is the next id in that list, and deletes the rest. The base list
+holds every instance in most levels; Outer Labs (both copies) drops eight, so
+those eight never appear in the game.
 
 Record class data at chunk version 1.23 (`label` is FUN_004b8bf0: a u8 flag,
 then a `str` when the flag is 1):
@@ -159,7 +160,8 @@ class until its states are decoded.
 | Set-gizmo record layout and class data | proven | plug loads listed above; all 93 level files (80 unique paths) parse, every record inside its map, instance ids unique |
 | Chest record: 3 u16 at version 1.23 | proven | 0x445140 compares the version with 1.22 (`fcomp`, C0 set below 1.22 -> 4 words) |
 | Draw anchor | likely | `FUN_004b3690` (proven); Torvus Junction drawn this way matches the original's screen under Wine |
-| Frame codes, mask cell fields, the instance list | guessed / open | see the text |
+| Instance lists select the gizmos a variant keeps | proven | `FUN_004477e0` (list per variant, seek past the others); `FUN_004495a0` compares each record's instance with the list and deletes the rest |
+| Frame codes, mask cell fields | guessed / open | see the text |
 
 ## Open questions
 

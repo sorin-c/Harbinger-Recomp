@@ -157,7 +157,7 @@ double Level::gizmoDepth(const chk::GizmoRecord& g) const {
 
 bool Level::gizmoVisible(const chk::GizmoRecord& g) const {
     const giz::Template& t = gizmoTemplate(g);
-    return !t.frames.empty() && t.cls != giz::UmbilicalShell;
+    return map_.keeps(g) && !t.frames.empty() && t.cls != giz::UmbilicalShell;
 }
 
 void Level::drawGizmo(render::RgbaImage& dst, const chk::GizmoRecord& g, int originX, int originY) {

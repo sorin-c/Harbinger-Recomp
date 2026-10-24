@@ -41,16 +41,24 @@ u16  unknown3           version >= 1.17, chunk+0x20
 str  name               version > 1.2: the level's display name
 u16  unknown4           version > 1.21, chunk+0x36
 repeat width*height:    map cells, FUN_00448080 / FUN_004e2d60
-  u16  layerCount       0..2
-  repeat layerCount:
-    u16  brush          id in the act's brush.mgr
-    u16  tile           brush tile id
-...                     instance list and set gizmos (docs/formats/gizmo.md)
+  cell
+u16  variantCount       1 in every shipped level (the base level only)
+repeat variantCount-1:  variants 1.., FUN_00448080
+  u32  size             bytes to skip when the variant is not selected
+  str  name
+  u16  n
+  repeat n:
+    u16  index          cell index (x * height + y)
+    cell                replaces that cell
+...                     per-variant instance lists and set gizmos
+                        (docs/formats/gizmo.md)
 ...                     agents, triggers, sounds, attachments, rooms,
                         path cells (not decoded)
 ```
 
 `str` is the engine string (u32 length without the NUL, the characters, a NUL).
+A `cell` is a u16 layer count (0..2) and that many (u16 brush, u16 tile)
+pairs: the brush id in the act's brush.mgr and the brush's tile id.
 
 Cells are stored **column-major**: cell (x, y) is at index `x * height + y`
 (`FUN_00447360` indexes `cells[a * dim24 + b]` and `FUN_004e2eb0` puts vertex
@@ -111,6 +119,7 @@ buffer, which the rebuild does not reproduce yet.
 |---|---|---|
 | Header, entry points, level name | proven | `FUN_0049e160`, `FUN_004491c0`; all 80 levels parse; every entry point lies inside its map |
 | Version constants 1.16, 1.17, 1.2, 1.21, 1.23 | proven | doubles at `0x54fb60`, `0x54fb58`, `0x54a040`, `0x54fb50`, `0x54fb48` |
+| Variants: count, then per variant size, name, replaced cells | proven (layout) | `FUN_00448080` reads and seeks; the chunk load passes the selected variant to it and to `FUN_004477e0`; every shipped level has the base only, so the variant path is untested on data |
 | Cells: count then (brush, tile) pairs, at most 2 | proven | `FUN_004e2d60` (cell struct 0x28 bytes holds 2 layers); every level parses with width*height cells |
 | Column-major order | likely | `FUN_00447360` index math; entry points (x < width, y < height) on non-square maps; rendered levels join seamlessly |
 | `.brs` layout, 13 groups, editor categories | proven | `FUN_0043f290`; all 20 brushes parse to the last byte |

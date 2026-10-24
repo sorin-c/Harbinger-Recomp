@@ -114,6 +114,7 @@ static void testLevel() {
     c.u16(0).u16(302).u16(0).str("Test Room").u16(0);
     c.u16(1).u16(1).u16(0x15);
     c.u16(2).u16(1).u16(0x16).u16(3).u16(0x4001);
+    c.u16(2).u32(0).str("Broken").u16(1).u16(1).u16(0);  // variant 1 empties cell 1
     c.u16(0xAAAA);  // the undecoded rest
     const chk::Level lv = chk::parse(c.d);
     CHECK(lv.act == 1 && lv.width == 2 && lv.height == 1);
@@ -122,6 +123,9 @@ static void testLevel() {
     CHECK(lv.name == "Test Room" && lv.music == 302);
     CHECK(lv.at(0, 0).count == 1 && lv.at(0, 0).layers[0].tile == 0x15);
     CHECK(lv.at(1, 0).count == 2 && lv.at(1, 0).layers[1].brush == 3);
+    CHECK(lv.variants.size() == 1 && lv.variants[0].name == "Broken");
+    CHECK(lv.variants[0].cells.size() == 1 && lv.variants[0].cells[0].first == 1);
+    CHECK(lv.variants[0].cells[0].second.count == 0);
     CHECK(lv.cellsEnd == c.d.size() - 2);
 
     Bytes old;
@@ -170,7 +174,8 @@ static void testGizmo() {
     c.f64(1.23).u16(1).u16(2).u16(2).u16(0);
     c.u16(0).u16(302).u16(0).str("Room").u16(0);
     for (int i = 0; i < 4; ++i) c.u16(0);
-    c.u16(1).u16(2).u16(7).u16(9);                // one list: instances 7, 9
+    c.u16(1);                                     // the base variant only
+    c.u16(1).u16(7);                              // its list keeps instance 7
     c.u32(2);
     c.u16(40).u16(7).u16(1).u16(0);               // the spawner at (1, 0)
     c.d.insert(c.d.end(), rec, rec + 12);
@@ -178,7 +183,8 @@ static void testGizmo() {
     c.u16(0xAAAA);
     chk::Level lv = chk::parse(c.d);
     chk::parseGizmos(lv, c.d, [&](uint16_t id) { return id == 40 ? &t : id == 41 ? &chest : nullptr; });
-    CHECK(lv.instanceLists.size() == 1 && lv.instanceLists[0].size() == 2);
+    CHECK(lv.instanceLists.size() == 1 && lv.instanceLists[0].size() == 1);
+    CHECK(lv.keeps(lv.gizmos[0]) && !lv.keeps(lv.gizmos[1]));
     CHECK(lv.gizmos.size() == 2 && lv.gizmos[0].x == 1 && lv.gizmos[1].instance == 9);
     CHECK(lv.gizmos[1].extra.size() == r.d.size());
     CHECK(lv.gizmosEnd == c.d.size() - 2);

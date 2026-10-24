@@ -1,5 +1,6 @@
 #include "formats/chk.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 #include "formats/binary.hpp"
@@ -15,6 +16,20 @@ double f64(ByteReader& r) {
     double v;
     std::memcpy(&v, &bits, sizeof v);
     return v;
+}
+
+// FUN_004e2d60: a layer count and that many (brush, tile) pairs. A cell holds
+// at most two layers.
+Cell cell(ByteReader& r) {
+    Cell c;
+    const uint16_t n = r.u16();
+    if (n > 2) r.fail("cell with more than two layers");
+    c.count = uint8_t(n);
+    for (uint16_t i = 0; i < n; ++i) {
+        c.layers[i].brush = r.u16();
+        c.layers[i].tile = r.u16();
+    }
+    return c;
 }
 
 }  // namespace
@@ -48,30 +63,42 @@ Level parse(const std::vector<uint8_t>& data) {
     lv.name = r.string();
     lv.unknown4 = r.u16();
 
-    // FUN_00448080 / FUN_004e2d60: width * height cells, each a count and that
-    // many (brush, tile) pairs. A cell holds at most two layers.
+    // FUN_00448080: width * height cells.
     lv.cells.resize(size_t(lv.width) * lv.height);
-    for (auto& c : lv.cells) {
+    for (auto& c : lv.cells) c = cell(r);
+
+    // FUN_00448080 goes on: a variant count, then for variants 1..n-1 a byte
+    // size, a name and the cells they replace.
+    const uint16_t variants = r.u16();
+    if (!variants) r.fail("no base variant");
+    for (uint16_t v = 1; v < variants; ++v) {
+        r.u32();  // size, for skipping unselected variants
+        Variant var;
+        var.name = r.string();
         const uint16_t n = r.u16();
-        if (n > 2) r.fail("cell with more than two layers");
-        c.count = uint8_t(n);
         for (uint16_t i = 0; i < n; ++i) {
-            c.layers[i].brush = r.u16();
-            c.layers[i].tile = r.u16();
+            const uint16_t index = r.u16();
+            if (index >= lv.cells.size()) r.fail("variant cell outside the map");
+            var.cells.emplace_back(index, cell(r));
         }
+        lv.variants.push_back(std::move(var));
     }
     lv.cellsEnd = r.pos();
     return lv;
+}
+
+bool Level::keeps(const GizmoRecord& g, size_t v) const {
+    if (v >= instanceLists.size()) return false;
+    const auto& list = instanceLists[v];
+    return std::find(list.begin(), list.end(), g.instance) != list.end();
 }
 
 void parseGizmos(Level& lv, const std::vector<uint8_t>& data,
                  const std::function<const giz::Template*(uint16_t)>& lookup) {
     ByteReader r(data, "chk");
     r.skip(lv.cellsEnd);
-    // Lists of instance ids. Every shipped level has one, holding all or most
-    // of the instances below.
-    const uint16_t lists = r.u16();
-    lv.instanceLists.assign(lists, {});
+    // FUN_004477e0: one list of instance ids per variant.
+    lv.instanceLists.assign(lv.variants.size() + 1, {});
     for (auto& list : lv.instanceLists) {
         const uint16_t n = r.u16();
         for (uint16_t i = 0; i < n; ++i) list.push_back(r.u16());
