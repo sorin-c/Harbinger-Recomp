@@ -72,7 +72,11 @@ WalkMap::WalkMap(const Level& level) : WalkMap(level.map().width * 2, level.map(
         if (!m.keeps(g)) continue;
         const giz::Template& t = level.gizmoTemplate(g);
         if (t.masks.empty() || t.frames.empty()) continue;
-        const size_t maskIndex = t.frames[0].mask < t.masks.size() ? t.frames[0].mask : 0;
+        // The mask of the frame the gizmo starts its state on: a shut door
+        // blocks, an open one does not. Doors that open later will need the
+        // grid redone, as the original does on each frame's mask change.
+        const size_t f = std::min(level.gizmoFrame(g, 0), t.frames.size() - 1);
+        const size_t maskIndex = t.frames[f].mask < t.masks.size() ? t.frames[f].mask : 0;
         for (const auto& mc : t.masks[maskIndex].cells) {
             if (mc.kind == 0xd) continue;
             const int sx = 2 * g.x + mc.dx, sy = 2 * g.y + 1 + mc.dy;
