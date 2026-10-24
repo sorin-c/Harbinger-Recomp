@@ -4,6 +4,7 @@
 // Format notes and evidence: docs/formats/level.md
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -69,6 +70,29 @@ public:
     ScreenPoint gizmoTopLeft(const chk::GizmoRecord& g);
     // Draw order key: larger is nearer the viewer. Comparable with a cell's x + y.
     double gizmoDepth(const chk::GizmoRecord& g) const;
+    // A gizmo's 3D shape as the camera sees it (giz::MeshPiece). The original
+    // draws each gizmo as triangles in map space with a depth buffer; the
+    // camera looks along (-1, -1, -1), so at any one pixel comparing two
+    // surfaces' map x + y orders them as the depth buffer would. `depth`
+    // holds, for each pixel of the first frame's image, the x + y of the
+    // nearest point of the shape there, relative to the gizmo's x + y, or
+    // NaN where the shape does not cover the pixel.
+    struct DepthMap {
+        int width = 0, height = 0;
+        std::vector<float> depth;
+        float at(int x, int y) const {
+            return x < 0 || y < 0 || x >= width || y >= height ? NAN : depth[size_t(y) * size_t(width) + size_t(x)];
+        }
+    };
+    const DepthMap& gizmoShape(const chk::GizmoRecord& g);
+    // +1 if gizmo `a` hides `b` where their shapes overlap on screen, -1 if
+    // `b` hides `a`, 0 if they do not overlap: at each pixel both shapes
+    // cover, the larger map x + y is nearer; most such pixels decide.
+    int gizmoInFront(const chk::GizmoRecord& a, const chk::GizmoRecord& b);
+    // Frame `i` of a gizmo as the original shows it: only the pixels its
+    // shape covers (the original draws nothing but the shape's triangles, so
+    // the editor outlines some first frames carry never show). Cached.
+    const render::RgbaImage* gizmoFrameImage(const chk::GizmoRecord& g, size_t i);
     // False for gizmos the base variant drops (chk::Level::keeps), and for
     // gizmos whose first frame is an editor placeholder: an
     // umbilical shell's first image is only the outline of its footprint, and
@@ -158,6 +182,8 @@ private:
     std::map<std::string, std::vector<render::RgbaImage>> agentSheets_;  // every frame, by sheet path
     std::map<std::string, std::unique_ptr<render::RgbaImage>> images_;  // by tile path
     std::map<std::string, std::unique_ptr<render::RgbaImage>> gizmoImages_;  // by frame path
+    std::map<const giz::Template*, DepthMap> gizmoShapes_;
+    std::map<std::pair<const giz::Template*, size_t>, std::unique_ptr<render::RgbaImage>> gizmoFrames_;
     struct GizmoRuntime {
         GizmoState state;
         GizmoPlay play;

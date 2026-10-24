@@ -195,6 +195,15 @@ in it. The walk grid follows the door, so the player can walk through once
 it is open. Chests open (no loot yet). Evidence: `docs/formats/gizmo.md`,
 "Using gizmos".
 
+## Milestone 14: gizmos in 3D order (done)
+
+Every gizmo template carries a 3D shape that the original draws with a depth
+buffer. The rebuild reads it, draws only what the shape covers (so editor
+outlines and markers no longer show) and orders gizmos and characters by
+comparing depths where their pictures overlap, so a character walking past
+a door or a machine goes behind or in front of the right parts. Evidence:
+`docs/formats/gizmo.md`, "Shape".
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips

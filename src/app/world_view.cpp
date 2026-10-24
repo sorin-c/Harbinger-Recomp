@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <queue>
+#include <string>
 
 namespace harbinger::app {
 
@@ -33,29 +35,30 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     for (const auto& g : m.gizmos)
         if (level_->gizmoVisible(g)) {
             Object o{level_->gizmoDepth(g), &g, nullptr};
-            o.minX = o.maxX = g.x, o.minY = o.maxY = g.y + 0.5;
-            const giz::Template& t = level_->gizmoTemplate(g);
-            if (!t.masks.empty() && !t.frames.empty() && t.frames[0].mask < t.masks.size()) {
-                // The box of the half cells the gizmo blocks (mask `a` bit 0,
-                // see world/walkmap.cpp), or of all of them if it blocks none:
-                // what it covers on the floor that can be walked around.
-                const auto& cells = t.masks[t.frames[0].mask].cells;
-                const bool anyBlocked = std::any_of(cells.begin(), cells.end(), [](const auto& c) { return c.a & 1; });
-                bool first = true;
-                for (const auto& c : cells) {
-                    if (anyBlocked && !(c.a & 1)) continue;
-                    const double x = (2 * g.x + c.dx) / 2.0, y = (2 * g.y + 1 + c.dy) / 2.0;
-                    if (first) o.minX = o.maxX = x, o.minY = o.maxY = y, first = false;
-                    o.minX = std::min(o.minX, x), o.maxX = std::max(o.maxX, x + 0.5);
-                    o.minY = std::min(o.minY, y), o.maxY = std::max(o.maxY, y + 0.5);
-                }
-            }
+            o.shape = &level_->gizmoShape(g);
+            const auto tl = level_->gizmoTopLeft(g);
+            o.left = int(std::floor(tl.x)), o.top = int(std::floor(tl.y));
             objects_.push_back(o);
         }
     for (const auto& a : m.agents)
         if (level_->agentVisible(a)) objects_.push_back({level_->agentDepth(a), nullptr, &a});
     std::stable_sort(objects_.begin(), objects_.end(),
                      [](const auto& a, const auto& b) { return a.depth < b.depth; });
+
+    // Gizmos stay put, so which of two overlapping gizmos hides the other is
+    // worked out once.
+    behind_.resize(objects_.size());
+    for (size_t i = 0; i < objects_.size(); ++i) {
+        const Object& p = objects_[i];
+        if (!p.gizmo || p.shape->depth.empty()) continue;
+        for (size_t j = i + 1; j < objects_.size(); ++j) {
+            const Object& q = objects_[j];
+            if (!q.gizmo || q.shape->depth.empty()) continue;
+            const int c = level_->gizmoInFront(*p.gizmo, *q.gizmo);
+            if (c > 0) behind_[i].push_back(j);
+            else if (c < 0) behind_[j].push_back(i);
+        }
+    }
 }
 
 WorldView::~WorldView() {
@@ -116,12 +119,13 @@ bool WorldView::attackNearest() {
 const chk::GizmoRecord* WorldView::gizmoAt(float x, float y) const {
     // The front-most usable gizmo with a drawn pixel under the pointer.
     const double sx = x - screenW_ / 2.0 + camX_, sy = y - screenH_ / 2.0 + camY_;
-    for (auto it = objects_.rbegin(); it != objects_.rend(); ++it) {
-        if (!it->gizmo || !world::usable(level_->gizmoTemplate(*it->gizmo))) continue;
-        const chk::GizmoRecord& g = *it->gizmo;
-        const auto& frames = level_->gizmoTemplate(g).frames;
+    for (auto k = order_.rbegin(); k != order_.rend(); ++k) {
+        if (*k >= objects_.size()) continue;
+        const Object& o = objects_[*k];
+        if (!o.gizmo || !world::usable(level_->gizmoTemplate(*o.gizmo))) continue;
+        const chk::GizmoRecord& g = *o.gizmo;
         for (const size_t i : level_->gizmoLayers(g, level_->gizmoFrame(g, elapsedMs_))) {
-            const render::RgbaImage* img = level_->gizmoImage(frames[i]);
+            const render::RgbaImage* img = level_->gizmoFrameImage(g, i);
             if (!img) continue;
             const auto tl = level_->gizmoFrameTopLeft(g, i);
             const int u = int(std::floor(sx - std::floor(tl.x))), v = int(std::floor(sy - std::floor(tl.y)));
@@ -267,7 +271,8 @@ void WorldView::drawGizmo(const chk::GizmoRecord& g) const {
     const auto& frames = level_->gizmoTemplate(g).frames;
     for (const size_t i : level_->gizmoLayers(g, level_->gizmoFrame(g, elapsedMs_))) {
         const auto tl = level_->gizmoFrameTopLeft(g, i);
-        drawImage(frames[i].path, level_->gizmoImage(frames[i]), tl.x, tl.y);
+        drawImage(std::to_string(g.gizmo) + ":" + std::to_string(i) + ":" + frames[i].path,
+                  level_->gizmoFrameImage(g, i), tl.x, tl.y);
     }
 }
 
@@ -300,50 +305,107 @@ void WorldView::drawTargetBar() const {
     SDL_RenderFillRect(ren_, &bar);
 }
 
-double WorldView::playerDepth() const {
-    // Large gizmos (the umbilical pit, the generator) span many cells, so one
-    // depth per gizmo puts a player standing beside them on the wrong side.
-    // Against a nearby gizmo's footprint box the player is in front when it
-    // is past the box along x or y, behind when it is short of it; otherwise
-    // the depths decide. (A rebuild rule: the original draws with Direct3D,
-    // not traced yet.)
-    const double px = player_->x(), py = player_->y(), own = px + py;
-    double after = -1e9, before = 1e9;
-    for (const Object& o : objects_) {
-        if (!o.gizmo || std::fabs(o.depth - own) > 12) continue;
-        const bool front = px >= o.maxX || py >= o.maxY, behind = px <= o.minX || py <= o.minY;
-        if (front && !behind) after = std::max(after, o.depth);
-        if (behind && !front) before = std::min(before, o.depth);
-    }
-    double depth = own;
-    if (depth <= after) depth = after + 1e-6;
-    if (depth >= before && before > after) depth = before - 1e-6;
-    return depth;
+WorldView::Sprite WorldView::agentSprite(const chk::AgentRecord* a) const {
+    auto place = [](const auto& pose, world::ScreenPoint p) {
+        return Sprite{pose.image, int(std::floor(p.x - pose.anchorX)), int(std::floor(p.y - pose.anchorY))};
+    };
+    if (a) return place(foes_->pose(*a, elapsedMs_), world::toScreen(a->x, a->y));
+    return place(player_->pose(elapsedMs_), world::toScreen(player_->x(), player_->y()));
+}
+
+int WorldView::compare(const Object& o, const Sprite& s, double depth) const {
+    // An agent's picture stands upright at its map position, so all of it
+    // is at the depth of its feet (Level::DepthMap compares map x + y).
+    const world::Level::DepthMap& m = *o.shape;
+    const int x0 = std::max(o.left, s.left), x1 = std::min(o.left + m.width, s.left + s.image->width);
+    const int y0 = std::max(o.top, s.top), y1 = std::min(o.top + m.height, s.top + s.image->height);
+    if (x0 >= x1 || y0 >= y1) return 0;
+    const double base = o.gizmo->x + o.gizmo->y;
+    long front = 0, back = 0;
+    for (int y = y0; y < y1; y += 2)
+        for (int x = x0; x < x1; x += 2) {
+            if ((s.image->pixels[size_t(y - s.top) * size_t(s.image->width) + size_t(x - s.left)] >> 24) < 0x40)
+                continue;
+            const float d = m.at(x - o.left, y - o.top);
+            if (std::isnan(d)) continue;
+            if (base + d > depth + 1e-3) ++front;
+            else if (base + d < depth - 1e-3) ++back;
+        }
+    return front > back ? 1 : back > front ? -1 : 0;
 }
 
 void WorldView::draw() const {
     const auto& m = level_->map();
-    // Floors, then walls, edges, gizmos and agents back to front (rebuild order; the
-    // original draws through Direct3D with depth, see docs/formats/level.md).
+    // Floors first. Then walls by diagonal (x + y), back to front, and the
+    // gizmos and agents among them (rebuild order; the original draws
+    // through Direct3D with a depth buffer, see docs/formats/level.md).
     for (int x = 0; x < m.width; ++x)
         for (int y = 0; y < m.height; ++y) drawLayer(x, y, 0);
-    auto drawObject = [&](const Object& o) { o.gizmo ? drawGizmo(*o.gizmo) : drawAgent(*o.agent); };
-    // The player sorts with the objects by the same depth (x + y).
-    const double playerDepth = this->playerDepth();
-    bool playerDrawn = false;
-    auto drawUpTo = [&](double depth, size_t& next) {
-        for (; next < objects_.size() && objects_[next].depth < depth; ++next) {
-            if (!playerDrawn && playerDepth < objects_[next].depth) drawPlayer(), playerDrawn = true;
-            drawObject(objects_[next]);
+
+    // The order of the pictures: a picture that another hides where they
+    // overlap draws first; otherwise the smaller depth key first. Node n =
+    // objects_.size() is the player.
+    const size_t n = objects_.size();
+    std::vector<std::vector<size_t>> edges(n + 1);  // edges[i]: drawn after i
+    std::vector<int> waiting(n + 1, 0);
+    auto edge = [&](size_t first, size_t then) { edges[first].push_back(then), ++waiting[then]; };
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j : behind_[i]) edge(j, i);
+    std::vector<size_t> gizmos;
+    for (size_t i = 0; i < n; ++i)
+        if (objects_[i].gizmo && !objects_[i].shape->depth.empty()) gizmos.push_back(i);
+    auto placeAgent = [&](size_t node, const chk::AgentRecord* a, double depth) {
+        const Sprite s = agentSprite(a);
+        if (!s.image) return;
+        for (size_t gi : gizmos) {
+            const int c = compare(objects_[gi], s, depth);
+            if (c > 0) edge(node, gi);
+            else if (c < 0) edge(gi, node);
         }
-        if (!playerDrawn && playerDepth < depth) drawPlayer(), playerDrawn = true;
     };
-    size_t next = 0;
-    for (int d = 0; d < m.width + m.height; ++d) {
-        for (int x = std::max(0, d - m.height + 1); x < m.width && x <= d; ++x) drawLayer(x, d - x, 1);
-        drawUpTo(d + 1, next);
+    for (size_t i = 0; i < n; ++i)
+        if (objects_[i].agent) placeAgent(i, objects_[i].agent, objects_[i].depth);
+    const double playerDepth = player_->x() + player_->y();
+    placeAgent(n, nullptr, playerDepth);
+
+    auto depthOf = [&](size_t i) { return i == n ? playerDepth : objects_[i].depth; };
+    auto later = [&](size_t a, size_t b) { return depthOf(a) > depthOf(b); };
+    std::priority_queue<size_t, std::vector<size_t>, decltype(later)> ready(later);
+    for (size_t i = 0; i <= n; ++i)
+        if (!waiting[i]) ready.push(i);
+    std::vector<bool> done(n + 1, false);
+    order_.clear();
+    while (order_.size() <= n) {
+        size_t i = n + 1;
+        while (!ready.empty() && done[ready.top()]) ready.pop();
+        if (!ready.empty()) {
+            i = ready.top();
+            ready.pop();
+        } else {
+            // A cycle (three pictures each hiding the next): take the
+            // nearest-to-the-back one left.
+            for (size_t k = 0; k <= n; ++k)
+                if (!done[k] && (i > n || depthOf(k) < depthOf(i))) i = k;
+        }
+        done[i] = true;
+        order_.push_back(i);
+        for (size_t j : edges[i])
+            if (--waiting[j] == 0 && !done[j]) ready.push(j);
     }
-    drawUpTo(1e9, next);
+
+    int diagonal = 0;
+    auto wallsUpTo = [&](double depth) {
+        for (; diagonal < m.width + m.height && diagonal <= depth; ++diagonal)
+            for (int x = std::max(0, diagonal - m.height + 1); x < m.width && x <= diagonal; ++x)
+                drawLayer(x, diagonal - x, 1);
+    };
+    for (size_t i : order_) {
+        wallsUpTo(depthOf(i));
+        if (i == n) drawPlayer();
+        else if (objects_[i].gizmo) drawGizmo(*objects_[i].gizmo);
+        else drawAgent(*objects_[i].agent);
+    }
+    wallsUpTo(1e9);
     drawTargetBar();
 }
 

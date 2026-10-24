@@ -206,7 +206,7 @@ public:
     }
     // Screenshot mode: walk to a view pixel, or hold the stick in a direction.
     void clickWorld(SDL_FPoint p) {
-        if (world_ && !world_->attackAt(p.x, p.y)) world_->walkTo(p.x, p.y);
+        if (world_ && !world_->attackAt(p.x, p.y) && !world_->useAt(p.x, p.y)) world_->walkTo(p.x, p.y);
     }
     void attackWorld() {
         if (world_) world_->attackNearest();

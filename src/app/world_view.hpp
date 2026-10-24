@@ -87,16 +87,28 @@ private:
     uint64_t startMs_ = 0, elapsedMs_ = 0;  // animation clock, from the first update
     // GPU copies of tile images, by brush, tile id (centre tiles are cut per id).
     mutable std::map<std::pair<uint16_t, uint16_t>, Texture> tiles_;
-    // Visible gizmos and agents, back to front, with their depth keys.
+    // Visible gizmos and agents. The original draws them with a depth
+    // buffer; the rebuild orders whole pictures by comparing depths where
+    // they overlap (see draw()).
     struct Object {
-        double depth;
+        double depth;  // the order key against walls, and between pictures that do not overlap
         const chk::GizmoRecord* gizmo;
         const chk::AgentRecord* agent;
-        double minX = 0, minY = 0, maxX = 0, maxY = 0;  // a gizmo's footprint in map cells
+        const world::Level::DepthMap* shape = nullptr;  // a gizmo's
+        int left = 0, top = 0;  // where a gizmo's shape sits, map screen pixels
     };
-    // Where the player goes in the back-to-front order (see draw()).
-    double playerDepth() const;
     std::vector<Object> objects_;
+    std::vector<std::vector<size_t>> behind_;  // per gizmo: the gizmos it hides (they draw first)
+    // A picture placed on the map: an agent's pose, or a whole gizmo.
+    struct Sprite {
+        const render::RgbaImage* image = nullptr;
+        int left = 0, top = 0;
+    };
+    Sprite agentSprite(const chk::AgentRecord* a) const;  // nullptr: the player
+    // +1 if gizmo object `o` is in front of a sprite standing at map depth
+    // `depth` where they overlap, -1 if behind, 0 if they do not overlap.
+    int compare(const Object& o, const Sprite& s, double depth) const;
+    mutable std::vector<size_t> order_;  // the last draw order (objects_ indices; objects_.size() = the player)
     mutable std::map<std::string, Texture> objectTextures_;  // by image path
 };
 

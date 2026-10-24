@@ -20,7 +20,7 @@ enum Class : uint8_t {
 
 // Flag bits in the high byte of the flags word (FUN_004b7350).
 enum Flags : uint16_t {
-    HasScript = 0x8000,   // gizmo+0x10; the template ends with script blocks
+    HasMesh = 0x8000,     // gizmo+0x10; the template ends with its 3D shape (every shipped file)
     HasLight = 0x4000,    // gizmo+100; the template carries a light
     HasOffset = 0x2000,   // gizmo+0x34/+0x36 start at 0 and are read
 };
@@ -49,6 +49,26 @@ struct Frame {
     uint8_t rect[8] = {};
 };
 
+// A gizmo's 3D shape (FUN_004b3310): the original draws each gizmo as
+// triangles in map space, textured with its picture, so the depth buffer
+// sorts it against walls, agents and other gizmos. One piece per mask cell
+// with `a` bit 1 (`cell` indexes those cells of the first mask, in order).
+struct MeshVertex {
+    int16_t x = 0, y = 0, z = 0;  // half cells from the cell's corner; z up
+    int16_t nx = 0, ny = 0, nz = 0;  // -1 read as 2; the loader folds them into one code (lighting?)
+    int16_t u = 0, v = 0;         // texture coordinates, 1/16 units
+};
+struct MeshTriangle {
+    uint16_t a = 0, b = 0, c = 0;  // vertex indices
+    uint16_t p = 0, q = 0;         // meaning not decoded
+    int16_t r = 0;                 // meaning not decoded
+};
+struct MeshPiece {
+    uint16_t cell = 0;
+    std::vector<MeshVertex> vertices;
+    std::vector<MeshTriangle> triangles;
+};
+
 struct SpawnPoint {
     int16_t a = 0, b = 0, c = 0;  // GSpawnGizmo_v4 entries; meaning not decoded
 };
@@ -68,7 +88,8 @@ struct Template {
     std::vector<SpawnPoint> spawns;
     std::vector<uint8_t> classData;  // other class fields, undecoded
     std::vector<uint8_t> light;      // HasLight: undecoded
-    std::vector<uint8_t> script;     // HasScript: undecoded blocks
+    std::vector<MeshPiece> mesh;     // HasMesh
+    uint16_t meshTail = 0;           // gizmo+0x32: ORed into the vertex colours' top byte (FUN_004b2d20)
 
     // The first frame whose code is 1, or 0 if none (GLoopedGizmo_v4 keeps
     // it at gizmo+0xba): where a looped gizmo's second loop starts.

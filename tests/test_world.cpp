@@ -161,17 +161,22 @@ static void testGizmo() {
         CHECK(t.frameAt(101, 0, 3) == 2 && t.frameAt(250, 0, 3) == 3 && t.frameAt(501, 0, 3) == 1);
         CHECK(t.frameAt(450, 2, 3) == 2 && t.frameAt(0, 1, 1) == 1);
     }
-    // A spawner with two slots and an empty script section.
-    Bytes sp = gizHeader("Spawner", giz::HasScript | giz::Spawn);
+    // A spawner with two slots and a one-triangle shape.
+    Bytes sp = gizHeader("Spawner", giz::HasMesh | giz::Spawn);
     sp.u16(2).u16(50).u16(66).u16(7).u16(102).u16(40).u16(7);
-    sp.u16(0).u16(0);
+    sp.u16(1).u16(0).u16(3);
+    for (int i = 0; i < 3; ++i) sp.u16(i).u16(1).u16(0).u16(1).u16(0).u16(0).u16(4 * i).u16(8);
+    sp.u16(1).u16(0).u16(1).u16(2).u16(0).u16(0).u16(0xffff);
+    sp.u16(1);
     const giz::Template t = giz::parse(sp.d);
     CHECK(t.name == "Spawner" && t.cls == giz::Spawn && t.version == 1.04);
     CHECK(t.masks.size() == 1 && t.masks[0].rows == 2 && t.masks[0].cells.size() == 2);
     CHECK(t.masks[0].cells[1].dy == -1);
     CHECK(t.frames.size() == 1 && t.frames[0].x == 5 && t.frames[0].y == 6 && t.frames[0].path == "f.tga");
     CHECK(t.spawns.size() == 2 && t.spawns[1].a == 102);
-    CHECK(t.script.size() == 4);
+    CHECK(t.mesh.size() == 1 && t.mesh[0].vertices.size() == 3 && t.mesh[0].triangles.size() == 1);
+    CHECK(t.mesh[0].vertices[2].x == 2 && t.mesh[0].vertices[2].u == 8 && t.mesh[0].triangles[0].c == 2);
+    CHECK(t.mesh[0].triangles[0].r == -1 && t.meshTail == 1);
     const uint8_t rec[12] = {};
     CHECK(t.recordExtra(rec, sizeof rec) == 12);  // 8 + a word per slot
     CHECK(throws([&] { t.recordExtra(rec, 11); }));
@@ -571,6 +576,28 @@ static void testRealData(const char* dir) {
         }
         if (g.instance == 149) CHECK(storage.gizmoPlay(g).mode == world::GizmoPlay::PingPong);
     }
+    // Their 3D shapes: the door's shape covers every pixel of its moving
+    // frames and none of its first two (an editor outline of the open
+    // door). The shut door stands in front of its console, on the wall
+    // inside the doorway.
+    {
+        const chk::GizmoRecord* console = storage.gizmoByInstance(149);
+        const chk::GizmoRecord* door = storage.gizmoByInstance(151);
+        CHECK(console && door);
+        if (console && door) {
+            const auto& frames = storage.gizmoTemplate(*door).frames;
+            for (size_t i = 0; i < frames.size(); ++i) {
+                const render::RgbaImage* raw = storage.gizmoImage(frames[i]);
+                const render::RgbaImage* shown = storage.gizmoFrameImage(*door, i);
+                size_t opaque = 0, kept = 0;
+                for (size_t k = 0; k < raw->pixels.size(); ++k)
+                    opaque += raw->pixels[k] >> 24 != 0, kept += shown->pixels[k] >> 24 != 0;
+                CHECK(opaque > 0);
+                CHECK(kept == (i < 2 ? 0 : opaque));
+            }
+            CHECK(storage.gizmoInFront(*door, *console) == 1 && storage.gizmoInFront(*console, *door) == -1);
+        }
+    }
     // Using that console opens the door: it plays its frames backwards to
     // frame 0 (open), the console returns to idle, and the walk grid lets
     // the player through the doorway.
@@ -623,7 +650,8 @@ static void testRealData(const char* dir) {
     }
     // Across the game: most doors start shut, some consoles have no power,
     // and the lights and incubators that have it pause and play.
-    size_t shut = 0, open = 0, dark = 0, pausing = 0;
+    size_t shut = 0, open = 0, dark = 0, pausing = 0, opaquePx = 0, coveredPx = 0;
+    std::set<std::string> covered;
     for (const auto& [id, path] : mgr::parse(*vfs.read(ini.require("Paths", "Levels"))).entries) {
         world::Level lv(vfs, ini, id);
         for (const auto& g : lv.map().gizmos) {
@@ -634,9 +662,20 @@ static void testRealData(const char* dir) {
             if (t.cls == giz::Bridge) ++(p.first == 0 ? open : shut);
             if (t.cls == giz::Console && p.mode == world::GizmoPlay::Hold && p.first + 1 == t.frames.size()) ++dark;
             if (p.mode == world::GizmoPlay::Pauses) ++pausing;
+            // The shapes cover the pictures (what they leave out is mostly
+            // editor art: outlines, fill markers).
+            if (!t.frames.empty() && covered.insert(t.name).second) {
+                const render::RgbaImage* img = lv.gizmoImage(t.frames[0]);
+                const auto& shape = lv.gizmoShape(g);
+                for (int y = 0; img && y < img->height; ++y)
+                    for (int x = 0; x < img->width; ++x)
+                        if (img->pixels[size_t(y) * size_t(img->width) + size_t(x)] >> 24)
+                            ++opaquePx, coveredPx += !std::isnan(shape.at(x, y));
+            }
         }
     }
     CHECK(shut > 200 && open > 10 && dark > 0 && pausing > 300);
+    CHECK(opaquePx > 0 && coveredPx > opaquePx * 95 / 100);
 }
 
 static void testScript() {

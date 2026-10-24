@@ -203,10 +203,10 @@ gives the Human "Armor 7" + "Rifle 2", the Gladiator "Base Torso" +
   the player slides. Letting go stops at once.
 - **Mouse**: a click walks to the point under the pointer as the original
   does; holding the button re-targets every 100 ms.
-- **Draw order**: big gizmos (the umbilical pit) span many cells, so the
-  player is placed in front of a nearby gizmo when it stands past the box of
-  the half cells the gizmo blocks, behind when short of it, by depth
-  otherwise.
+- **Draw order**: the player and the other characters go in front of or
+  behind each gizmo by comparing depths where their pictures overlap with
+  the gizmo's 3D shape (`docs/formats/gizmo.md`, "Shape"), as the original's
+  depth buffer would.
 
 ## Checked against the original (Wine)
 

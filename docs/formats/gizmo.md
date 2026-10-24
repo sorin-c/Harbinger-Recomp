@@ -54,16 +54,24 @@ if flags & 0x4000:      light (gizmo+100)
   u8  light[2 + 0x30 + 0x18]
   repeat 2:             FUN_004b3af0
     u16 n, then n * 26 bytes
-if flags & 0x8000:      FUN_004b3310
-  u16 blockCount
-  repeat blockCount:
-    u16 id
-    u16 a, then a * 16 bytes
-    u16 b, then b * 12 bytes
-  u16 tail
+if flags & 0x8000:      the 3D shape, FUN_004b3310 (see "Shape")
+  u16 pieceCount
+  repeat pieceCount:
+    u16 cell            index into the first mask's cells with a bit 1
+    u16 vertexCount
+    repeat vertexCount: 16 bytes
+      i16 x, y, z       half cells from the cell's corner (* 0.5, 0x5492c8); z up
+      i16 n[3]          -1 read as 2, folded into (n2 * 3 + n1) * 3 + n0 (0 -> 9)
+      i16 u, v          texture coordinates in 1/16 (* 0.0625, 0x553e18)
+    u16 triangleCount
+    repeat triangleCount: 12 bytes
+      u16 a, b, c       vertex indices
+      u16 p, q          not decoded
+      i16 r             not decoded
+  u16 tail              gizmo+0x32
 ```
 
-Flags: 0x8000 script blocks, 0x4000 light, 0x2000 the offset below is read,
+Flags: 0x8000 the 3D shape (set in every shipped file), 0x4000 light, 0x2000 the offset below is read,
 0x1000, 0x800, 0x400, 0x200 (set fields whose use is not known yet).
 
 ### Class data (vtable slot 4)
@@ -141,8 +149,43 @@ The mask cells agree: a template's footprint, in half cells, starts at the
 left half of the gizmo's cell and runs towards +x and -y, and its bounding
 diamond is as wide as the image (Trailer: 6 by 8 half cells, 448 px).
 
-The rebuild draws each gizmo's first frame there, sorted with the walls by the
-x + y of its nearest footprint cell.
+**Shape.** Every template carries a 3D shape: triangles in map space, one
+piece per cell of the first mask whose `a` has bit 1 (the cells
+`FUN_004b5ca0` files in its third list, in file order; the piece's `cell`
+indexes them). A vertex `(x, y, z)` of the piece for cell `(dx, dy)` lies at
+map `(gx + (x + dx) / 2, gy + (y + dy + 1) / 2)`, height `z / 2`, and the
+original textures the triangles with the gizmo's picture at the pixel the
+point projects to:
+
+```
+px = 64 + 64 * (X - Y),   py = height - (rows + 1) * 32 + 32 * (X + Y) - 64 * Z
+```
+
+with `X, Y` the offsets from the gizmo's position and `Z` the height. For
+pictures over 256 pixels `FUN_004b25e0` recomputes the texture coordinates
+with exactly this projection; for the others the stored `u, v` are this
+point in the power-of-two texture (343 of the 344 such templates fit it).
+So the shape is the gizmo's picture folded onto walls, panels and boxes,
+and the original draws it through Direct3D with a depth buffer
+(`FUN_004b2d20` builds the draw lists per piece). Two things follow:
+
+- Only the pixels the shape covers are drawn. What the shapes leave out is
+  editor art: a door's first frames are only a red outline of the open door
+  (Vantir Storage's door: frames 0 and 1 lie wholly outside its shape,
+  frames 2 to 15 wholly inside), the magenta "Flood Fill" markers, the
+  umbilical shell's outline. Over the game the shapes cover 96% of the
+  first frames' opaque pixels.
+- Depth: the camera looks along (-1, -1, -1) (screen y = 32 (x + y) - 64 z),
+  so at a given pixel the surface with the larger map `x + y` is nearer;
+  comparing `x + y` there orders two surfaces as the depth buffer does.
+
+The rebuild has no depth buffer (SDL's 2D renderer). It cuts each frame to
+the shape (`Level::gizmoFrameImage`), keeps a depth per pixel of the shape
+(`Level::gizmoShape`), and orders whole pictures: of two gizmos that overlap
+on screen, the one nearer at most of the shared pixels draws last
+(`Level::gizmoInFront`); a character counts as an upright picture at the
+depth of its feet. The rest keeps the order of the x + y of each gizmo's
+nearest footprint cell, with the walls drawn by diagonal among them.
 
 **Animation.** The original keeps one picture per gizmo, made from the first
 frame (`FUN_004b25e0` cuts it into tiles of at most 256 pixels and
@@ -280,9 +323,9 @@ plays its activation once and goes back to idle.
 
 | Claim | Label | Evidence |
 |---|---|---|
-| `.giz` layout, masks, frames, light, script blocks | proven | functions above; all 796 templates in both archives parse to the last byte |
+| `.giz` layout, masks, frames, light, 3D shape | proven | functions above; all 796 templates in both archives parse to the last byte |
 | Class data per class | proven | slot 4 of each class's vtable; every class present in the files parses to the end |
-| Flags 0x8000 / 0x4000 / 0x2000 gate script, light, offset | proven | `FUN_004b7350` -> `FUN_004b23e0`, `FUN_004b3730`; `GAnimatedGizmo_v24` control flow |
+| Flags 0x8000 / 0x4000 / 0x2000 gate the shape, light, offset | proven | `FUN_004b7350` -> `FUN_004b23e0`, `FUN_004b3730`; `GAnimatedGizmo_v24` control flow |
 | Spawn slot count = template spawn list length | proven | `FUN_00508d50` copies the template's +0xcc; `GSpawnGizmo_v4` counts the list into it |
 | Set-gizmo record layout and class data | proven | plug loads listed above; all 93 level files (80 unique paths) parse, every record inside its map, instance ids unique |
 | Chest record: 3 u16 at version 1.23 | proven | 0x445140 compares the version with 1.22 (`fcomp`, C0 set below 1.22 -> 4 words) |
@@ -298,6 +341,9 @@ plays its activation once and goes back to idle.
 | Use point | proven | `FUN_004b3690`, `GFakeGizmoPlug_v22`, `GActivateAction` |
 | Console activation, door toggle, chest opening | proven | `GConsolePlug_v0`, `_v1`, `FUN_004bdaf0`, `GBridgePlug_v1`, `_v29`, `FUN_004a01e0`, `GBarrelPlug_v1`, `_v29`; Vantir Storage's console 149 opens door 151 and its doorway becomes walkable (test) |
 | Mask cell fields | proven | `FUN_004b5ca0`, `FUN_004475f0`, `FUN_00447740` (`docs/movement.md`) |
+| 3D shape layout | proven | `FUN_004b3310`; every template parses to the last byte |
+| Shape placement and projection | proven | `FUN_004b25e0` (texture coordinates from the projection), the stored coordinates of 343 of 344 small templates (affine fit), Vantir Storage's door frames lying exactly inside or outside its shape |
+| Drawn with a depth buffer, only the shape's triangles | likely | `FUN_004b2d20` and the Direct3D quads of `FUN_004e2eb0`; the depth state itself is not traced |
 
 ## Open questions
 
@@ -306,12 +352,13 @@ plays its activation once and goes back to idle.
   using breakers, key consoles and lifts.
 - What a chest drops (`FUN_004d8dd0`).
 - Whether the first pause of a random-pause gizmo starts at once.
-- Draw order: a shut door now hides the console beside it in Vantir
-  Storage; the sort key may need the footprint of the frame shown.
-- Frame 0 of some doors is only a red outline (editor art?); the original
-  may hide it the way it hides the umbilical shell.
+- Vantir Storage's door console stands inside the doorway, so by the
+  shapes the shut door hides it; check against the original in game.
+- The vertex normal code and the triangle fields `p`, `q`, `r` (lighting?),
+  and the shape's tail word.
+- Walls are drawn by diagonal, not with their own 3D quads.
 - The mask cells' `kind`, `a`, `b` (walkability or occlusion), and the
   missing mask images.
-- The light block and the script blocks.
+- The light block.
 - The meaning of the record class data (chest contents, console links, spawn
   slots).

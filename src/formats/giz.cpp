@@ -143,17 +143,24 @@ Template parse(const std::vector<uint8_t>& data) {
             raw(r, t.light, size_t(n) * 26);
         }
     }
-    if (t.flags & HasScript) {
-        // FUN_004b3310: blocks of (id, 16-byte entries, 12-byte entries), then a word.
-        const size_t start = r.pos();
-        const uint16_t blocks = r.u16();
-        for (uint16_t i = 0; i < blocks; ++i) {
-            r.u16();
-            r.skip(size_t(r.u16()) * 16);
-            r.skip(size_t(r.u16()) * 12);
+    if (t.flags & HasMesh) {
+        // FUN_004b3310: pieces of (cell, 16-byte vertices, 12-byte triangles), then a word.
+        t.mesh.resize(r.u16());
+        for (MeshPiece& piece : t.mesh) {
+            piece.cell = r.u16();
+            piece.vertices.resize(r.u16());
+            for (MeshVertex& v : piece.vertices) {
+                v.x = r.i16(), v.y = r.i16(), v.z = r.i16();
+                v.nx = r.i16(), v.ny = r.i16(), v.nz = r.i16();
+                v.u = r.i16(), v.v = r.i16();
+            }
+            piece.triangles.resize(r.u16());
+            for (MeshTriangle& tri : piece.triangles) {
+                tri.a = r.u16(), tri.b = r.u16(), tri.c = r.u16();
+                tri.p = r.u16(), tri.q = r.u16(), tri.r = r.i16();
+            }
         }
-        r.u16();
-        t.script.assign(data.begin() + long(start), data.begin() + long(r.pos()));
+        t.meshTail = r.u16();
     }
     r.expectEnd();
     return t;
