@@ -6,7 +6,7 @@
 //
 //   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id] [--entry id]
 //             [--character human|gladiator|culibine] [--no-audio] [--settings config.cfg] [--run-ms ms]
-//             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack]]
+//             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--use]]
 //
 // Mouse, keyboard (up/down to move, left/right for sliders, Enter, Esc = back)
 // and gamepad (D-pad/stick, A, B = back) all drive the menus. In the level the
@@ -50,6 +50,7 @@ struct Options {
     uint16_t entry = 0;  // the level's entry point (0 = "Default"; a testing aid)
     bool audio = true;
     bool attack = false;  // screenshot mode: the attack button at 0 ms
+    bool use = false;     // screenshot mode: the use button at 0 ms and every 1.5 s
     uint64_t timeMs = 0, runMs = 0;
     std::optional<SDL_FPoint> mouse, click, stick;  // screenshot mode: pointer, a click at 0 ms, a held stick
     world::Character character = world::Character::Human;
@@ -192,8 +193,11 @@ public:
         if (world_) {
             world_->draw();
             SDL_SetRenderDrawColor(ren_, 160, 255, 160, 255);
-            const std::string title = world_->level().map().name + "  (walking, melee and trigger scripts: no HUD or enemy AI yet)";
+            const std::string title = world_->level().map().name + "  (walking, melee, trigger scripts and loot: no HUD or enemy AI yet)";
             SDL_RenderDebugText(ren_, 8, 8, title.c_str());
+            const std::string carried = "Uan: " + std::to_string(world_->money()) + "   items picked up: " +
+                                        std::to_string(world_->carried().size());
+            SDL_RenderDebugText(ren_, 8, 32, carried.c_str());
             SDL_RenderDebugText(ren_, 8, 20, "Walk: stick / WASD / click   Hit: click enemy / F / X / RT   Use, close bubble: E / Space / A   Menu: Esc / B");
         } else {
             screen_->draw(ren_);
@@ -213,6 +217,9 @@ public:
     }
     void attackWorld() {
         if (world_) world_->attackNearest();
+    }
+    void useWorld() {
+        if (world_ && !world_->closeBubble()) world_->useNearest();
     }
     void holdStick(SDL_FPoint v) { stick_ = v; }
 
@@ -571,6 +578,10 @@ Options parseArgs(int argc, char** argv) {
             o.attack = true;
             continue;
         }
+        if (a == "--use") {
+            o.use = true;
+            continue;
+        }
         if (i + 1 >= argc) throw std::runtime_error("missing value for " + a);
         const std::string v = argv[++i];
         if (a == "--data") o.data = v;
@@ -608,7 +619,7 @@ Options parseArgs(int argc, char** argv) {
     if (o.data.empty()) throw std::runtime_error("Harbinger.ini not found. Put harbinger.exe in the Harbinger folder, or run:\n"
                                                  "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--no-audio] "
                                                  "[--character human|gladiator|culibine] [--settings config.cfg] "
-                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack]]");
+                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--use]]");
     return o;
 }
 
@@ -644,6 +655,7 @@ int main(int argc, char** argv) {
                     game.update(t);
                     if (t == 0 && opt.click) game.clickWorld(*opt.click);
                     if (t == 0 && opt.attack) game.attackWorld();
+                    if (t % 1500 == 0 && opt.use) game.useWorld();
                 }
                 game.draw();
                 SDL_Surface* s = SDL_RenderReadPixels(ren, nullptr);
