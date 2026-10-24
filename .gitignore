@@ -19,3 +19,6 @@
 /research/local/
 *.gpr
 *.rep/
+
+# Python caches
+__pycache__/
