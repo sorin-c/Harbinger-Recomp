@@ -6,13 +6,15 @@
 //
 //   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id]
 //             [--character human|gladiator|culibine] [--no-audio] [--settings config.cfg] [--run-ms ms]
-//             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y]]
+//             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack]]
 //
 // Mouse, keyboard (up/down to move, left/right for sliders, Enter, Esc = back)
 // and gamepad (D-pad/stick, A, B = back) all drive the menus. In the level the
 // left stick, arrows or WASD walk the character in that direction (as in
 // Diablo II Resurrected on a controller), and clicking or holding the mouse
 // button walks it to the pointer, as in the original. The camera follows.
+// Clicking an enemy goes and hits it (the original's GAttackAction); F, the
+// pad's X / Square or the right trigger hit the nearest enemy ahead.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -46,6 +48,7 @@ struct Options {
     std::string data, screen = "startup", screenshot, settings;
     uint16_t level = 1;  // a new game starts in level 1 (FUN_00497850)
     bool audio = true;
+    bool attack = false;  // screenshot mode: the attack button at 0 ms
     uint64_t timeMs = 0, runMs = 0;
     std::optional<SDL_FPoint> mouse, click, stick;  // screenshot mode: pointer, a click at 0 ms, a held stick
     world::Character character = world::Character::Human;
@@ -187,9 +190,9 @@ public:
         if (world_) {
             world_->draw();
             SDL_SetRenderDrawColor(ren_, 160, 255, 160, 255);
-            const std::string title = world_->level().map().name + "  (walking only: no HUD, scripts or combat yet)";
+            const std::string title = world_->level().map().name + "  (walking and melee only: no HUD, scripts or enemy AI yet)";
             SDL_RenderDebugText(ren_, 8, 8, title.c_str());
-            SDL_RenderDebugText(ren_, 8, 20, "Walk: left stick / WASD / arrows, or click and hold    Back to menu: Esc / B");
+            SDL_RenderDebugText(ren_, 8, 20, "Walk: stick / WASD / click   Hit: click enemy / F / X / RT   Menu: Esc / B");
         } else {
             screen_->draw(ren_);
         }
@@ -203,7 +206,10 @@ public:
     }
     // Screenshot mode: walk to a view pixel, or hold the stick in a direction.
     void clickWorld(SDL_FPoint p) {
-        if (world_) world_->walkTo(p.x, p.y);
+        if (world_ && !world_->attackAt(p.x, p.y)) world_->walkTo(p.x, p.y);
+    }
+    void attackWorld() {
+        if (world_) world_->attackNearest();
     }
     void holdStick(SDL_FPoint v) { stick_ = v; }
 
@@ -240,8 +246,10 @@ private:
                 // Swap Mouse Buttons makes the right button the one that walks.
                 if (e.button.button == (settings_.swapMouse ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT)) {
                     mouse_ = {e.button.x, e.button.y};
-                    showCursor_ = mouseHeld_ = true;
-                    world_->walkTo(mouse_.x, mouse_.y);
+                    showCursor_ = true;
+                    // On an enemy: go and hit it (GAttackAction); elsewhere walk.
+                    mouseHeld_ = !world_->attackAt(mouse_.x, mouse_.y);
+                    if (mouseHeld_) world_->walkTo(mouse_.x, mouse_.y);
                     lastRetarget_ = now_;
                 }
                 break;
@@ -255,16 +263,25 @@ private:
                     saveDisplay();
                 } else if (e.key.key == SDLK_ESCAPE) {
                     endGame();
+                } else if (e.key.key == SDLK_F && !e.key.repeat) {
+                    world_->attackNearest();
                 }
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) endGame();
+                // Attack (rebuild controls, D3-style): X / Square, or the right trigger.
+                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_WEST) world_->attackNearest();
                 break;
             case SDL_EVENT_GAMEPAD_AXIS_MOTION:
                 if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) stick_.x = e.gaxis.value / 32767.0f;
                 if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) stick_.y = e.gaxis.value / 32767.0f;
                 if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX || e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY)
                     showCursor_ = false;  // playing on the pad: hide the pointer
+                if (e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
+                    const bool pulled = e.gaxis.value > 16000;
+                    if (pulled && !trigger_) world_->attackNearest();
+                    trigger_ = pulled;
+                }
                 break;
             default: break;
         }
@@ -521,7 +538,7 @@ private:
     int gameW_ = kScreenW, gameH_ = kScreenH;
     SDL_FPoint stick_{0, 0};
     world::Character character_ = world::Character::Human;
-    bool mouseHeld_ = false, steering_ = false;
+    bool mouseHeld_ = false, steering_ = false, trigger_ = false;
     uint64_t lastRetarget_ = 0;
     static constexpr float kStickDeadZone = 0.25f;
     static constexpr uint64_t kRetargetMs = 100;  // rebuild choice
@@ -535,6 +552,10 @@ Options parseArgs(int argc, char** argv) {
         const std::string a = argv[i];
         if (a == "--no-audio") {
             o.audio = false;
+            continue;
+        }
+        if (a == "--attack") {
+            o.attack = true;
             continue;
         }
         if (i + 1 >= argc) throw std::runtime_error("missing value for " + a);
@@ -573,7 +594,7 @@ Options parseArgs(int argc, char** argv) {
     if (o.data.empty()) throw std::runtime_error("Harbinger.ini not found. Put harbinger.exe in the Harbinger folder, or run:\n"
                                                  "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--no-audio] "
                                                  "[--character human|gladiator|culibine] [--settings config.cfg] "
-                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y]]");
+                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack]]");
     return o;
 }
 
@@ -608,6 +629,7 @@ int main(int argc, char** argv) {
                 for (uint64_t t = 0; t <= opt.timeMs; t += 10) {
                     game.update(t);
                     if (t == 0 && opt.click) game.clickWorld(*opt.click);
+                    if (t == 0 && opt.attack) game.attackWorld();
                 }
                 game.draw();
                 SDL_Surface* s = SDL_RenderReadPixels(ren, nullptr);

@@ -1,6 +1,7 @@
 // The in-game view, as far as it is rebuilt: a level's floor, walls, gizmos
 // and characters, drawn and animated from the original files, and the
-// player's character walking on it with the camera following.
+// player's character walking on it with the camera following, and fighting
+// the level's enemies hand to hand.
 #pragma once
 
 #include <SDL3/SDL.h>
@@ -12,6 +13,8 @@
 #include <vector>
 
 #include "app/assets.hpp"
+#include "world/combat.hpp"
+#include "world/foes.hpp"
 #include "world/level.hpp"
 #include "world/player.hpp"
 #include "world/walkmap.hpp"
@@ -33,6 +36,12 @@ public:
     void steer(float dx, float dy);
     // Click to move: walk to the map point under view pixel (x, y).
     void walkTo(float x, float y);
+    // Click to attack: if an enemy is drawn under view pixel (x, y), go and
+    // hit it and return true.
+    bool attackAt(float x, float y);
+    // The pad's attack button: hit the nearest enemy within a few cells,
+    // preferring those ahead. False if there is none.
+    bool attackNearest();
     // The map point under view pixel (x, y).
     world::WalkMap::Point mapPoint(float x, float y) const;
     void update(uint64_t nowMs);
@@ -40,6 +49,7 @@ public:
 
     const world::Level& level() const { return *level_; }
     const world::Player& player() const { return *player_; }
+    const world::Foes& foes() const { return *foes_; }
 
 private:
     const Texture* tile(const chk::Layer& layer) const;
@@ -47,6 +57,7 @@ private:
     void drawGizmo(const chk::GizmoRecord& g) const;
     void drawAgent(const chk::AgentRecord& a) const;
     void drawPlayer() const;
+    void drawTargetBar() const;
     void drawImage(const std::string& key, const render::RgbaImage* img, double left, double top) const;
 
     Assets& assets_;
@@ -54,6 +65,8 @@ private:
     std::unique_ptr<world::Level> level_;
     std::unique_ptr<world::WalkMap> walk_;
     std::unique_ptr<world::Player> player_;
+    world::Rng rng_;
+    std::unique_ptr<world::Foes> foes_;
     int screenW_, screenH_;
     double camX_ = 0, camY_ = 0;  // map screen position at the centre of the view
     uint64_t startMs_ = 0, elapsedMs_ = 0;  // animation clock, from the first update

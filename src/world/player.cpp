@@ -31,21 +31,6 @@ std::vector<uint16_t> startingItems(Character c) {
     return {};
 }
 
-// Source-over for agent layers, as the compositor FUN_004c2710 stacks them:
-// art (opaque) replaces what is below; a marker pixel (shadow, translucent)
-// never covers art and keeps the darker of the two shadows.
-void stack(render::RgbaImage& dst, const std::vector<uint32_t>& src, int w, int h) {
-    for (int v = 0; v < std::min(h, dst.height); ++v)
-        for (int u = 0; u < std::min(w, dst.width); ++u) {
-            const uint32_t p = src[size_t(v) * size_t(w) + size_t(u)];
-            const uint32_t a = p >> 24;
-            if (!a) continue;
-            uint32_t& d = dst.pixels[size_t(v) * size_t(dst.width) + size_t(u)];
-            if (a == 255) d = p;
-            else if ((d >> 24) < a) d = p;
-        }
-}
-
 }  // namespace
 
 const char* characterSection(Character c) {
@@ -58,7 +43,7 @@ const char* characterSection(Character c) {
 }
 
 Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& walk, const chk::EntryPoint& start)
-    : vfs_(vfs), walk_(walk) {
+    : walk_(walk), sprites_(vfs) {
     const std::string section = characterSection(character);
     template_ = agt::parse(readOrThrow(vfs, ini.require(section, "Agent")));
     animIndex_ = mgr::parse(readOrThrow(vfs, ini.require(section, "Anims")));
@@ -66,15 +51,28 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
     // Each equipped item hands its animation group to one of three layers
     // (GEquipCell_v1 -> FUN_004efcf0), drawn over the body in layer order.
     const auto items = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Items")));
+    const auto weapons = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Weapons")));
     std::string slots[3];
+    int weaponRank = -1;
     for (uint16_t id : startingItems(character)) {
         const std::string* path = items.find(id);
         if (!path) continue;
         const auto data = readOrThrow(vfs, *path);
-        // Mod chips go into the weapon's socket and draw nothing.
-        if (data.size() < 2 || itm::spriteLayer(uint16_t(data[0] | data[1] << 8)) < 0) continue;
+        const uint16_t cls = data.size() < 2 ? 0 : uint16_t(data[0] | data[1] << 8);
+        if (cls < itm::HumanWeapon || cls > itm::RightGauntlet) continue;  // mod chips: in a socket
         const itm::Item item = itm::parse(data);
+        // The blows' weapon: the melee one where there is a choice (the
+        // gladiator's blade over its gun, the right gauntlet over the left).
+        // The original's choice (FUN_004213a0) is not traced: guessed.
+        static constexpr uint16_t kRank[] = {0, 3, 0, 0, 1, 4, 0, 1, 2};
+        if (kRank[cls] > weaponRank) {
+            if (const std::string* w = weapons.find(item.socketed->word38)) {
+                weapon_ = wpn::parse(readOrThrow(vfs, *w));
+                weaponRank = kRank[cls];
+            }
+        }
         const int layer = itm::spriteLayer(item.classId);
+        if (layer < 0) continue;
         for (const auto& g : groups_.groups)
             if (g.id == item.socketed->animGroup) slots[layer] = g.name;
     }
@@ -94,6 +92,7 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
 
 bool Player::walkTo(double x, double y) {
     steerX_ = steerY_ = 0;
+    target_ = -1;
     path_ = walk_.findPath({x_, y_}, {x, y}, limit_);
     return !path_.empty();
 }
@@ -101,7 +100,29 @@ bool Player::walkTo(double x, double y) {
 void Player::steer(double dx, double dy) {
     steerX_ = dx;
     steerY_ = dy;
-    if (dx != 0 || dy != 0) path_.clear();
+    if (dx != 0 || dy != 0) path_.clear(), target_ = -1;
+}
+
+void Player::attack(int id, double x, double y) {
+    steerX_ = steerY_ = 0;
+    if (target_ == id && state_ == agt::Melee) return;  // already swinging at it
+    target_ = id;
+    targetX_ = x;
+    targetY_ = y;
+    targetAlive_ = true;
+    path_.clear();
+    if (std::hypot(x - x_, y - y_) > kReach) path_ = walk_.findPath({x_, y_}, {x, y}, limit_);
+}
+
+void Player::trackTarget(double x, double y, bool alive) {
+    targetX_ = x;
+    targetY_ = y;
+    targetAlive_ = alive;
+}
+
+void Player::faceTarget() {
+    // GAgentPlug_v58: an attack turns the attacker to its target.
+    if (targetX_ != x_ || targetY_ != y_) facing_ = facingTowards(targetX_ - x_, targetY_ - y_);
 }
 
 void Player::setState(agt::State s, uint64_t nowMs) {
@@ -110,7 +131,7 @@ void Player::setState(agt::State s, uint64_t nowMs) {
     stateStart_ = nowMs;  // a new state starts its animation from the first frame
 }
 
-void Player::update(uint64_t nowMs) {
+std::optional<Player::Blow> Player::update(uint64_t nowMs) {
     if (!started_) {
         started_ = true;
         lastMs_ = stateStart_ = nowMs;
@@ -122,9 +143,98 @@ void Player::update(uint64_t nowMs) {
     const double halfDt = double(dt) * 0.5;
     const double step = speed_ * (halfLastDt_ + halfDt);
     halfLastDt_ = halfDt;
+    // A new order (walking, steering) cuts the swing short.
+    if (state_ == agt::Melee && target_ < 0 && (steerX_ != 0 || steerY_ != 0 || !path_.empty())) setState(agt::Idle, nowMs);
+    if (state_ == agt::Melee) return stepMelee(nowMs);
+    if (target_ >= 0) {
+        if (!targetAlive_) {
+            target_ = -1;
+            path_.clear();
+        } else if (std::hypot(targetX_ - x_, targetY_ - y_) <= kReach) {
+            path_.clear();
+            faceTarget();
+            setState(agt::Melee, nowMs);
+            meleeFrame_ = -1;
+            return stepMelee(nowMs);
+        } else if (path_.empty()) {
+            target_ = -1;  // nowhere left to walk: give up
+        }
+    }
     if (steerX_ != 0 || steerY_ != 0) stepSteer(step);
     else if (!path_.empty()) stepPath(step);
     setState((steerX_ != 0 || steerY_ != 0 || !path_.empty()) ? agt::Move : agt::Idle, nowMs);
+    return std::nullopt;
+}
+
+std::optional<Player::Blow> Player::stepMelee(uint64_t nowMs) {
+    const auto anims = layerAnims(agt::Melee);
+    if (anims.empty() || anims[0]->directions.empty() || anims[0]->directions[0].frames.empty()) {
+        setState(agt::Idle, nowMs);
+        return std::nullopt;
+    }
+    const int64_t frames = int64_t(anims[0]->directions[0].frames.size());
+    std::optional<Blow> blow;
+    // Run the tags of every frame reached since the last step (GAgentPlug_v9
+    // looks them up in the body's animation, which holds the layers' tags too).
+    for (;;) {
+        const int64_t frame = int64_t((nowMs - std::min(nowMs, stateStart_)) / kFrameMs);
+        if (frame <= meleeFrame_) break;
+        const int64_t f = meleeFrame_ + 1;
+        if (f >= frames) {
+            setState(agt::Idle, nowMs);  // the swing is over
+            if (!targetAlive_) target_ = -1;
+            return blow;
+        }
+        meleeFrame_ = f;
+        const size_t dir = anm::directionFor(facing_, anims[0]->directions.size());
+        bool looped = false;
+        for (const anm::Animation* a : anims) {
+            if (dir >= a->directions.size()) continue;
+            for (const auto& raw : a->directions[dir].actions) {
+                const anm::Action act = anm::action(raw);
+                if (act.frame != f) continue;
+                if (act.x == -3) {
+                    // Another swing while the target can be hit: jump y
+                    // frames (start time moves by y frames) and face it again.
+                    if (target_ >= 0 && targetAlive_ && std::hypot(targetX_ - x_, targetY_ - y_) <= kReach + 0.25) {
+                        stateStart_ += uint64_t(-int64_t(act.y)) * kFrameMs;
+                        meleeFrame_ += act.y;
+                        faceTarget();
+                        looped = true;
+                    }
+                } else if (act.x >= 0 && target_ >= 0) {
+                    if (auto off = blowOffset(dir, act.frame)) blow = Blow{target_, x_ + off->x, y_ + off->y};
+                }
+            }
+        }
+        if (looped) continue;
+    }
+    return blow;
+}
+
+std::optional<WalkMap::Point> Player::blowOffset(size_t dir, uint16_t frame) {
+    // FUN_0042a6a0: the tags of one frame, across all directions, circle the
+    // agent; their mean |y| is the circle's centre row. A tag's offset from
+    // it, (dx, dy) = ((x - hotspot x) / 128, (|y| - mean) / 64), is a screen
+    // offset turned into the map: (dy + dx, dy - dx).
+    const auto anims = layerAnims(agt::Melee);
+    if (anims.empty() || !anims[0]->hotspot) return std::nullopt;
+    const int refX = anims[0]->hotspot->first;
+    int sum = 0, count = 0;
+    std::optional<anm::Action> mine;
+    for (const anm::Animation* a : anims)
+        for (size_t d = 0; d < a->directions.size(); ++d)
+            for (const auto& raw : a->directions[d].actions) {
+                const anm::Action act = anm::action(raw);
+                if (act.frame != frame || act.x < 0) continue;
+                sum += std::abs(int(act.y));
+                ++count;
+                if (d == dir) mine = act;
+            }
+    if (!mine || count == 0) return std::nullopt;
+    const double mean = double(sum) / count;
+    const double dx = (mine->x - refX) / 128.0, dy = (std::abs(int(mine->y)) - mean) / 64.0;
+    return WalkMap::Point{dy + dx, dy - dx};
 }
 
 void Player::stepPath(double step) {
@@ -160,16 +270,6 @@ void Player::stepSteer(double step) {
     }
 }
 
-const gim::Image* Player::sheet(const std::string& path) {
-    auto it = sheets_.find(path);
-    if (it == sheets_.end()) {
-        std::unique_ptr<gim::Image> img;
-        if (auto data = vfs_.read(path)) img = std::make_unique<gim::Image>(gim::decode(*data));
-        it = sheets_.emplace(path, std::move(img)).first;
-    }
-    return it->second.get();
-}
-
 std::vector<const anm::Animation*> Player::layerAnims(agt::State s) {
     // The body is the template's own animation for the state (the player
     // templates have one per state), then each equipment layer's.
@@ -183,15 +283,8 @@ std::vector<const anm::Animation*> Player::layerAnims(agt::State s) {
         if (const std::string* p = animIndex_.find(g->byState[size_t(s)])) paths.push_back(*p);
     }
     std::vector<const anm::Animation*> out;
-    for (const auto& p : paths) {
-        auto it = anims_.find(p);
-        if (it == anims_.end()) {
-            std::unique_ptr<anm::Animation> a;
-            if (auto data = vfs_.read(p)) a = std::make_unique<anm::Animation>(anm::parse(*data));
-            it = anims_.emplace(p, std::move(a)).first;
-        }
-        if (it->second) out.push_back(it->second.get());
-    }
+    for (const auto& p : paths)
+        if (const anm::Animation* a = sprites_.anim(p)) out.push_back(a);
     return out;
 }
 
@@ -204,32 +297,12 @@ Player::Pose Player::pose(uint64_t nowMs) {
     // FUN_0042c020: 100 ms a frame, looping over the first direction's count.
     const size_t frames = base.directions.empty() ? 0 : base.directions[0].frames.size();
     if (frames == 0 || dir >= base.directions.size() || base.directions[dir].frames.empty()) return pose;
-    const size_t frame = size_t((nowMs - std::min(nowMs, stateStart_)) / 100 % frames);
-    const auto key = std::make_tuple(int(state_), dir, frame);
-    auto it = poses_.find(key);
-    if (it == poses_.end()) {
-        render::RgbaImage img;
-        for (const anm::Animation* a : anims) {
-            if (dir >= a->directions.size() || a->directions[dir].frames.empty()) continue;
-            const gim::Image* s = sheet(anm::sheetPath(a->directions[dir].frames[0]));
-            if (!s || s->frames.empty()) continue;
-            if (img.pixels.empty()) {
-                img.width = s->width;
-                img.height = s->height;
-                img.pixels.assign(size_t(img.width) * size_t(img.height), 0);
-            }
-            // Every layer's sheet has the same size and lines up with the
-            // body's (checked against the original's sprite).
-            stack(img, render::toRgba(*s, std::min(frame, s->frames.size() - 1), render::KeyMode::Agent), s->width,
-                  s->height);
-        }
-        it = poses_.emplace(key, std::move(img)).first;
-    }
-    if (it->second.pixels.empty()) return pose;
+    const size_t frame = size_t((nowMs - std::min(nowMs, stateStart_)) / kFrameMs % frames);
     pose.key = "player#" + std::to_string(int(state_)) + "#" + std::to_string(dir) + "#" + std::to_string(frame);
-    pose.image = &it->second;
-    pose.anchorX = base.hotspot ? base.hotspot->first : it->second.width / 2;
-    pose.anchorY = base.hotspot ? base.hotspot->second : it->second.height;
+    pose.image = sprites_.compose(pose.key, anims, dir, frame);
+    if (!pose.image) return pose;
+    pose.anchorX = base.hotspot ? base.hotspot->first : pose.image->width / 2;
+    pose.anchorY = base.hotspot ? base.hotspot->second : pose.image->height;
     return pose;
 }
 

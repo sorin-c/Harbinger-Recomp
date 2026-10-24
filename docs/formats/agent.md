@@ -37,7 +37,7 @@ u16  class              read by GAgentMgr_v5 (0x418670)
 -- slot 9, 0x405dc0 (every class) --
 u16  type               agent+0x54
 f64  version            FUN_00406a60 (header)
-u16  unknown
+u16  defence            template+0x10, what an attack roll must reach (docs/combat.md)
 f64  unknown, unknown
 u16  stats[n]           n = 10 from 1.86, else 9; one fewer below 1.6, one fewer below 1.2
 str  name
@@ -57,7 +57,7 @@ repeat count:           GAgentAnimCtr (vtable 0x54a05c)
 6 bytes                 agent+0x218
 u16, u16                agent+0x46, +0x48
 version > 1.2:  u16 lists, each u32 m and m x u16 (FUN_00406c30)
-version > 1.4:  u8 k, k x 4 bytes
+version > 1.4:  u8 k, k x (u16 damage type, u16 percent): resistances, template+0x204 (docs/combat.md)
 version > 1.8:  10 bytes, 11 above 1.86 (FUN_00407170)
 ```
 

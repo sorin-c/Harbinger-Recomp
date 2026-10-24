@@ -24,6 +24,7 @@ add_library(harbinger_formats
   src/formats/gim.cpp
   src/formats/itf.cpp
   src/formats/itm.cpp
+  src/formats/wpn.cpp
   src/formats/mgr.cpp
   src/formats/sqh.cpp
 )
@@ -60,6 +61,9 @@ add_library(harbinger_core
   src/world/gizmo_state.cpp
   src/world/motion.cpp
   src/world/player.cpp
+  src/world/sprite_cache.cpp
+  src/world/combat.cpp
+  src/world/foes.cpp
   src/world/walkmap.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
@@ -108,7 +112,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-  foreach(t sqh gim core ui resources audio world movement)
+  foreach(t sqh gim core ui resources audio world movement combat)
     add_executable(test_${t} tests/test_${t}.cpp)
     target_link_libraries(test_${t} PRIVATE harbinger_core)
     add_test(NAME ${t} COMMAND test_${t})

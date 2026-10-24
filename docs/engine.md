@@ -172,6 +172,19 @@ walls and drops on the original's half-cell walk grid and path finder, or
 along a gamepad stick or the keys, sliding along walls. The camera follows it.
 Evidence and the parts still guessed: `docs/movement.md`.
 
+Each character starts in the equipment the original gives it (the start-item
+lists in each player plug), drawn from those items' animation groups.
+
+## Milestone 12: hitting enemies (done)
+
+Clicking an enemy (or F, the pad's X / Square or the right trigger) walks the
+player up to it and swings the melee animation, again and again, as the
+original's tags loop it. Each blow lands where the weapon's tag puts it and
+rolls to hit and for damage with the original's generator, damage table,
+defences and resistances; enemies get the original's hit-point rolls and,
+when those run out, play their death animation and stay as corpses.
+Evidence: `docs/combat.md`. Enemies do not fight back yet.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
@@ -180,4 +193,6 @@ Evidence and the parts still guessed: `docs/movement.md`.
 3. Using gizmos (consoles opening doors, chests), the other classes' states;
    doors and lifts changing the walk grid.
 4. Running scripts from triggers. The room graph.
-5. The in-game loop, HUD and lighting.
+5. Enemy AI (thinkers, their attacks), the player's ranged attack, hit
+   points and death, experience.
+6. The in-game loop, HUD and lighting.
