@@ -94,6 +94,11 @@ harbinger --data <dir> --screen options|load [--settings file.cfg]
   character is picked and the name box reads "Player".
 - Keyboard and gamepad: up/down move a focus outline through the controls,
   left/right step a focused slider by 5%.
+- Display (a rebuild addition, in the free row above Options' buttons, in the
+  labels' font): 4:3 window sizes that fit the screen, or fullscreen
+  (borderless, at the desktop resolution). Applied on Accept and kept in
+  `display.ini` next to `config.cfg`; Alt+Enter toggles fullscreen anywhere.
+  The 800x600 screens are scaled to fit with black bars.
 
 ## Next
 

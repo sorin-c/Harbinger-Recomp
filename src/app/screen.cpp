@@ -7,8 +7,12 @@
 
 namespace harbinger::app {
 
+// Class id of the rebuild's choice control; the factory has no class 0xFFFF.
+constexpr uint16_t kChoice = 0xFFFF;
+
 bool Widget::interactive() const {
     switch (cls()) {
+        case kChoice:
         case itf::Button:
         case itf::ScrollUp:
         case itf::ScrollDown:
@@ -157,6 +161,12 @@ void Screen::event(Widget& w, ui::PointerEvent e) {
         case itf::ScrollUp:
         case itf::ScrollDown:
         case itf::TextBtn: notify = w.button.event(e); break;
+        case kChoice:
+            if (e == ui::PointerEvent::Up) {
+                w.step = pointerX_ < w.rect.x + w.rect.w / 2 ? -1 : 1;
+                notify = true;
+            }
+            break;
         default: break;
     }
     if (notify) notices_.push_back({index, long(int32_t(w.action))});
@@ -187,12 +197,16 @@ void Screen::activateFocus() {
     if (!focus_) return;
     Widget& w = widgets_[*focus_];
     if (w.cls() == itf::SliderBar) return;
+    if (w.cls() == kChoice) return adjustFocus(1);
     event(w, ui::PointerEvent::Down);
     event(w, ui::PointerEvent::Up);
 }
 
 void Screen::adjustFocus(int dir) {
-    if (focus_ && widgets_[*focus_].cls() == itf::SliderBar) {
+    if (focus_ && widgets_[*focus_].cls() == kChoice) {
+        widgets_[*focus_].step = dir;
+        notices_.push_back({*focus_, long(int32_t(widgets_[*focus_].action))});
+    } else if (focus_ && widgets_[*focus_].cls() == itf::SliderBar) {
         Widget& w = widgets_[*focus_];
         w.slider.nudge(dir);
         notices_.push_back({*focus_, long(int32_t(w.action))});
@@ -232,6 +246,26 @@ void Screen::setText(size_t control, const std::string& text) {
     Widget& w = widgets_.at(control);
     w.text = text;
     renderFaces(w);
+}
+
+size_t Screen::addChoice(int x, int y, int width, uint16_t font, uint32_t action) {
+    itf::Control& c = extras_.emplace_back();
+    c.classId = kChoice;
+    c.x = int16_t(x), c.y = int16_t(y), c.z = -1000;
+    c.name = "Choice";
+    itf::TextBox box;
+    box.width = uint16_t(width);
+    box.height = 18;
+    box.font = box.fontAlt = box.fontStar = font;
+    box.align = 0x20;
+    c.textBox = box;
+    Widget w;
+    w.control = &c;
+    w.rect = {float(x), float(y), float(width), 18};
+    w.action = action;
+    widgets_.push_back(std::move(w));
+    order_.push_back(widgets_.size() - 1);
+    return widgets_.size() - 1;
 }
 
 void Screen::setDisabled(size_t control, bool disabled) {

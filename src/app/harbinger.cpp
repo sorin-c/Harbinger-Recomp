@@ -21,6 +21,7 @@
 #include "app/assets.hpp"
 #include "app/screen.hpp"
 #include "app/sound.hpp"
+#include "engine/display.hpp"
 #include "engine/settings.hpp"
 
 using namespace harbinger;
@@ -47,9 +48,36 @@ std::optional<std::vector<uint8_t>> readFile(const std::string& path) {
     return std::vector<uint8_t>(std::istreambuf_iterator<char>(f), {});
 }
 
+// The rebuild's folder for settings (%APPDATA%\harbinger-recomp\harbinger on
+// Windows), with a trailing separator, or "" if there is none.
+std::string prefDir() {
+    char* dir = SDL_GetPrefPath("harbinger-recomp", "harbinger");
+    if (!dir) return "";
+    std::string out = dir;
+    SDL_free(dir);
+    return out;
+}
+
+Display loadDisplay(const std::string& path) {
+    if (path.empty()) return {};
+    const auto data = readFile(path);
+    return data ? Display::parse(std::string(data->begin(), data->end())) : Display{};
+}
+
+void applyDisplay(SDL_Window* win, const Display& d) {
+    if (d.fullscreen) {
+        SDL_SetWindowFullscreen(win, true);  // borderless, at the desktop's resolution
+    } else {
+        SDL_SetWindowFullscreen(win, false);
+        SDL_SetWindowSize(win, d.width, d.height);
+        SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    }
+}
+
 class FrontEnd {
 public:
-    FrontEnd(SDL_Renderer* ren, const Options& opt) : ren_(ren), assets_(ren, opt.data), cursor_(assets_) {
+    FrontEnd(SDL_Window* win, SDL_Renderer* ren, const Options& opt, const Display& display, std::string displayPath)
+        : win_(win), ren_(ren), assets_(ren, opt.data), cursor_(assets_), display_(display), displayPath_(std::move(displayPath)) {
         loadSettings(opt);
         if (opt.audio) {
             sound_ = std::make_unique<SoundSystem>();
@@ -90,7 +118,13 @@ public:
                 }
                 break;
             case SDL_EVENT_KEY_DOWN:
-                if (e.key.key == SDLK_UP) focus(-1);
+                if (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT)) {
+                    // Alt+Enter: fullscreen on / off, kept for next time.
+                    display_.fullscreen = !display_.fullscreen;
+                    applyDisplay(win_, display_);
+                    saveDisplay();
+                    if (current_ == kOptionsItf) showDisplay(display_);
+                } else if (e.key.key == SDLK_UP) focus(-1);
                 else if (e.key.key == SDLK_DOWN || e.key.key == SDLK_TAB) focus(1);
                 else if (e.key.key == SDLK_LEFT) adjust(-1);
                 else if (e.key.key == SDLK_RIGHT) adjust(1);
@@ -184,6 +218,25 @@ private:
         screen_->setSlider(kSound, 3, settings_.sound);
         screen_->setSlider(kGamma, 4, settings_.gamma);
         screen_->setCheck(kHighRes, 5, highRes_);
+        // A rebuild addition: the display choice, in the free row above the
+        // buttons, in the labels' font. Action 6 is unused by the original.
+        displayChoice_ = screen_->addChoice(170, 388, 460, 10, 6);
+        int maxW = 0, maxH = 0;
+        SDL_Rect usable;
+        if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(win_), &usable)) maxW = usable.w, maxH = usable.h;
+        choices_ = displayChoices(maxW, maxH);
+        choice_ = 0;
+        for (size_t i = 0; i < choices_.size(); ++i)
+            if (choices_[i] == display_) choice_ = i;
+        if (!(choices_[choice_] == display_)) {  // a size from the file that is not offered: offer it too
+            choices_.insert(choices_.end() - 1, display_);
+            choice_ = choices_.size() - 2;
+        }
+        showDisplay(display_);
+    }
+
+    void showDisplay(const Display& d) {
+        if (current_ == kOptionsItf) screen_->setText(displayChoice_, "Display    -  " + d.describe() + "  +");
     }
 
     // Load Game (interface 0xd). The rebuild cannot read the original's saves
@@ -252,7 +305,18 @@ private:
             case 0: SDL_Log("Configure Controls: not rebuilt yet"); return;
             case 1: swapChanged_ = !swapChanged_; return;
             case 5: highResChanged_ = !highResChanged_; return;
+            case 6: {  // display choice (rebuild): shown now, applied on Accept
+                const int n = int(choices_.size());
+                choice_ = size_t((int(choice_) + screen_->choiceStep(displayChoice_) + n) % n);
+                showDisplay(choices_[choice_]);
+                return;
+            }
             case -2:  // Accept: apply the toggles, write config.cfg
+                if (!(choices_[choice_] == display_)) {
+                    display_ = choices_[choice_];
+                    applyDisplay(win_, display_);
+                    saveDisplay();
+                }
                 if (swapChanged_) settings_.swapMouse = !settings_.swapMouse;
                 if (highResChanged_) highRes_ = !highRes_;  // no other resolution to switch to yet
                 saveSettings();
@@ -284,10 +348,7 @@ private:
         if (!opt.settings.empty()) {
             settingsPath_ = opt.settings;
         } else if (opt.screenshot.empty()) {
-            if (char* dir = SDL_GetPrefPath("harbinger-recomp", "harbinger")) {
-                settingsPath_ = std::string(dir) + "config.cfg";
-                SDL_free(dir);
-            }
+            if (const std::string dir = prefDir(); !dir.empty()) settingsPath_ = dir + "config.cfg";
         }
         for (const std::string& path : {settingsPath_, opt.data + "/config.cfg"}) {
             if (path.empty()) continue;
@@ -308,12 +369,18 @@ private:
         if (!f.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size())))
             SDL_Log("could not write %s", settingsPath_.c_str());
     }
+    void saveDisplay() {
+        if (displayPath_.empty()) return;
+        std::ofstream f(displayPath_, std::ios::trunc);
+        if (!(f << display_.serialize())) SDL_Log("could not write %s", displayPath_.c_str());
+    }
     void applyVolumes() {
         if (!sound_) return;
         sound_->setMusicVolume(float(settings_.musicGain()));
         sound_->setSoundVolume(float(settings_.sound));
     }
 
+    SDL_Window* win_;
     SDL_Renderer* ren_;
     Assets assets_;
     Cursor cursor_;
@@ -323,6 +390,10 @@ private:
     std::optional<std::string> pending_;
     Settings settings_, saved_;
     std::string settingsPath_;
+    Display display_;
+    std::string displayPath_;
+    std::vector<Display> choices_;
+    size_t choice_ = 0, displayChoice_ = 0;
     bool swapChanged_ = false, highResChanged_ = false, highRes_ = true;
     SDL_FPoint mouse_{kScreenW / 2.0f, kScreenH / 2.0f};
     bool showCursor_ = false, running_ = true, stickX_ = false, stickY_ = false;
@@ -376,17 +447,21 @@ int main(int argc, char** argv) {
         if (shot) opt.audio = false;
         if (shot) SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) throw std::runtime_error(SDL_GetError());
+        // The window as it was left (display.ini next to the settings).
+        const std::string displayPath = shot ? "" : prefDir().empty() ? "" : prefDir() + "display.ini";
+        const Display display = loadDisplay(displayPath);
         SDL_Window* win = nullptr;
         SDL_Renderer* ren = nullptr;
-        if (!SDL_CreateWindowAndRenderer("Harbinger", kScreenW, kScreenH,
+        if (!SDL_CreateWindowAndRenderer("Harbinger", shot ? kScreenW : display.width, shot ? kScreenH : display.height,
                                          shot ? 0 : SDL_WINDOW_RESIZABLE, &win, &ren))
             throw std::runtime_error(SDL_GetError());
+        if (display.fullscreen && !shot) applyDisplay(win, display);
         SDL_SetRenderLogicalPresentation(ren, kScreenW, kScreenH, SDL_LOGICAL_PRESENTATION_LETTERBOX);
         SDL_SetRenderVSync(ren, 1);
         if (!shot) SDL_HideCursor();
 
         {
-            FrontEnd game(ren, opt);
+            FrontEnd game(win, ren, opt, display, displayPath);
             if (shot) {
                 // Deterministic capture: simulate `--time` ms in 10 ms steps.
                 if (opt.mouse) game.setMouse(*opt.mouse);

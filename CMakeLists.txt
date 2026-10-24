@@ -41,6 +41,7 @@ endif()
 add_library(harbinger_core
   src/audio/mp3.cpp
   src/audio/wav.cpp
+  src/engine/display.cpp
   src/engine/ini.cpp
   src/engine/settings.cpp
   src/engine/vfs.cpp

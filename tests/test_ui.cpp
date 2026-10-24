@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "engine/display.hpp"
 #include "engine/settings.hpp"
 #include "ui/controls.hpp"
 #include "ui/item_animation.hpp"
@@ -206,12 +207,28 @@ static void testSettings() {
     CHECK(threw);
 }
 
+static void testDisplay() {
+    const Display d = Display::parse("[Display]\nmode=window\nwidth=1024\nheight=768\n");
+    CHECK(!d.fullscreen && d.width == 1024 && d.height == 768 && d.describe() == "1024 x 768 Window");
+    CHECK(Display::parse(d.serialize()) == d);
+    CHECK(Display::parse("[Display]\nmode=fullscreen\n").describe() == "Fullscreen");
+    const Display bad = Display::parse("[Display]\nwidth=abc\nheight=5\n");
+    CHECK(bad.width == 800 && bad.height == 600);
+    // 4:3 windows that fit, then fullscreen; 800x600 is always offered.
+    const auto c = displayChoices(1920, 1040);
+    CHECK(c.size() == 4 && c[1].width == 1024 && c[2].width == 1280);  // 1440x1080 is too tall
+    CHECK(c.front().width == 800 && c.back().fullscreen);
+    CHECK(displayChoices(0, 0).size() == 2);
+    for (const auto& x : c) CHECK(x.fullscreen || (x.width * 3 == x.height * 4 && x.height <= 1040));
+}
+
 int main() {
     testAnimation();
     testTextBox();
     testWrap();
     testControls();
     testSettings();
+    testDisplay();
     if (failures) std::fprintf(stderr, "%d check(s) failed\n", failures);
     return failures ? 1 : 0;
 }

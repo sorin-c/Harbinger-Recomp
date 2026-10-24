@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <deque>
 #include <functional>
 #include <optional>
 #include <string>
@@ -34,6 +35,7 @@ struct Widget {
     ui::Button button;
     ui::CheckBox check;
     ui::SliderBar slider;
+    int step = 0;  // Choice: -1 or +1 from the last press
 
     uint16_t cls() const { return control->classId; }
     bool interactive() const;
@@ -85,6 +87,13 @@ public:
     void setText(size_t control, const std::string& text);
     void setDisabled(size_t control, bool disabled);
 
+    // A rebuild-only control: one line of text in `font`, centred in `width`
+    // pixels, that steps through choices. Clicking its left half or pressing
+    // left asks for the previous choice, the right half or right the next;
+    // the step is read with choiceStep(). Returns its control index.
+    size_t addChoice(int x, int y, int width, uint16_t font, uint32_t action);
+    int choiceStep(size_t control) const { return widgets_.at(control).step; }
+
     void update(uint64_t nowMs);
     void draw(SDL_Renderer* ren) const;
 
@@ -98,6 +107,7 @@ private:
     itf::Interface itf_;
     std::vector<gim::Color> palette_;
     std::vector<Widget> widgets_;
+    std::deque<itf::Control> extras_;  // controls added by addChoice()
     std::vector<size_t> order_;
     std::optional<size_t> focus_, captured_;
     float pointerX_ = 0;
