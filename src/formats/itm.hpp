@@ -59,6 +59,7 @@ enum : uint16_t {
     GladiatorTorso = 6,     // GGladiatorTorsoItem
     LeftGauntlet = 7,       // GLeftGauntletItem
     RightGauntlet = 8,      // GRightGauntletItem
+    Money = 10,             // money.itm, dropped with an amount (GMoneyPlug)
     AnimatedItem = 25,      // GAnimatedItem
 };
 
@@ -69,5 +70,9 @@ int spriteLayer(uint16_t classId);
 // Throws std::runtime_error on malformed data, trailing bytes, or a class whose
 // body is not decoded yet.
 Item parse(const std::vector<uint8_t>& data);
+
+// Only the common header (class, image, name, the optional block), for any
+// class; the class body is left unread.
+Item parseHeader(const std::vector<uint8_t>& data);
 
 }  // namespace harbinger::itm

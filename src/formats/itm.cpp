@@ -21,8 +21,9 @@ int spriteLayer(uint16_t classId) {
     }
 }
 
-Item parse(const std::vector<uint8_t>& data) {
-    ByteReader r(data, "itm");
+namespace {
+
+Item readHeader(ByteReader& r) {
     Item it;
     // Common header (FUN_004d5c10): 14 bytes, a u32, the name. The second
     // word over 256 is the version the class loaders test.
@@ -41,6 +42,19 @@ Item parse(const std::vector<uint8_t>& data) {
         for (auto& v : b) v = r.u8();
         it.block = std::move(b);
     }
+    return it;
+}
+
+}  // namespace
+
+Item parseHeader(const std::vector<uint8_t>& data) {
+    ByteReader r(data, "itm");
+    return readHeader(r);
+}
+
+Item parse(const std::vector<uint8_t>& data) {
+    ByteReader r(data, "itm");
+    Item it = readHeader(r);
     const double version = it.version();
     // Class body (vtable slot 3).
     if (it.classId == AnimatedItem) {

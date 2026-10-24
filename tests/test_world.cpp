@@ -26,6 +26,9 @@
 #include "world/gizmo_state.hpp"
 #include "world/level.hpp"
 #include "world/script.hpp"
+#include "world/loot.hpp"
+#include "formats/gig.hpp"
+#include "formats/itm.hpp"
 #include "world/walkmap.hpp"
 
 using namespace harbinger;
@@ -519,6 +522,48 @@ static void testRealData(const char* dir) {
     }
     CHECK(voiced > 50 && unvoiced == 0);
 
+    // Every item group parses, and every chest's group and item resolve.
+    {
+        size_t groups = 0, chests = 0, withGroup = 0;
+        const auto items = mgr::parse(*vfs.read(ini.require("Paths", "Items")));
+        size_t headers = 0;
+        for (const auto& [id, path] : items.entries)
+            if (const auto d = vfs.read(path)) {
+                itm::parseHeader(*d);
+                ++headers;
+            }
+        CHECK(headers > 1000);
+        for (const char* who : {"Human", "Gladiator", "Culibine"}) {
+            const auto idx = mgr::parse(*vfs.read(ini.require(who, "ItemGroups")));
+            for (const auto& [id, path] : idx.entries) {
+                const auto d = vfs.read(path);
+                CHECK(d);
+                if (!d) continue;
+                const gig::Group g = gig::parse(*d);
+                // (Culibine basegladblade3 has money 10..2; it holds no money item.)
+                CHECK(g.countMin <= g.countMax);
+                for (const auto& e : g.entries) CHECK(items.find(e.item));
+                ++groups;
+            }
+        }
+        CHECK(groups > 300);
+        const auto human = mgr::parse(*vfs.read(ini.require("Human", "ItemGroups")));
+        for (const auto& [id, path] : mgr::parse(*vfs.read(ini.require("Paths", "Levels"))).entries) {
+            world::Level lv(vfs, ini, id);
+            for (const auto& gz : lv.map().gizmos) {
+                const auto c = world::chestContents(lv.gizmoTemplate(gz), gz);
+                if (!c) continue;
+                ++chests;
+                if (c->group) {
+                    ++withGroup;
+                    CHECK(human.find(c->group));
+                }
+                if (c->item) CHECK(items.find(c->item));
+            }
+        }
+        CHECK(chests > 1000 && withGroup > 900);
+    }
+
     // Refuse Disposal: walking up to the portal sets off trigger 4, whose
     // script (id 11) is the portal scene with seven thought bubbles.
     {
@@ -753,6 +798,46 @@ static void testScriptRunning() {
     CHECK(calls == expect);
 }
 
+static void testLoot() {
+    // A group: money 5..15, one or two drops, item 12 (weight 1) or 7 (weight 3).
+    const std::vector<uint8_t> bytes{0, 0, 0, 0, 0, 0, 0, 0, 5, 15, 1, 2, 2, 0, 0, 0, 12, 0, 1, 0, 7, 0, 3, 0};
+    const gig::Group g = gig::parse(bytes);
+    CHECK(g.moneyMin == 5 && g.moneyMax == 15 && g.countMin == 1 && g.countMax == 2);
+    CHECK(g.entries.size() == 2 && g.entries[1].item == 7 && g.totalWeight() == 4);
+    bool threw = false;
+    try {
+        gig::parse(std::vector<uint8_t>(bytes.begin(), bytes.end() - 1));
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    CHECK(threw);
+
+    auto isMoney = [](uint16_t id) { return id == 12; };
+    world::Rng rng(1234);
+    std::map<uint16_t, int> seen;
+    for (int i = 0; i < 2000; ++i) {
+        const auto drops = world::rollDrops(&g, 0, isMoney, rng);
+        CHECK(drops.size() >= 1 && drops.size() <= 2);
+        for (const auto& d : drops) {
+            ++seen[d.item];
+            if (d.item == 12) CHECK(d.amount >= 5 && d.amount < 15);
+            else CHECK(d.amount == 0);
+        }
+    }
+    // FUN_00441dc0 picks the first entry whose running total reaches
+    // rand % total: item 12 for 0 and 1, item 7 for 2 and 3.
+    CHECK(seen[12] > seen[7] / 2 && seen[12] < seen[7] * 2);
+    // The chest's own item drops unless the group already gave it.
+    const auto withOwn = world::rollDrops(nullptr, 62, isMoney, rng);
+    CHECK(withOwn.size() == 1 && withOwn[0].item == 62);
+    CHECK(world::rollDrops(nullptr, 0, isMoney, rng).empty());
+    gig::Group only7 = g;
+    only7.entries = {{7, 1}};
+    only7.countMin = only7.countMax = 1;
+    const auto once = world::rollDrops(&only7, 7, isMoney, rng);
+    CHECK(once.size() == 1 && once[0].item == 7);
+}
+
 int main() {
     testBrush();
     testLevel();
@@ -761,6 +846,7 @@ int main() {
     testAgents();
     testScript();
     testScriptRunning();
+    testLoot();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
         testRealData(dir);
     else

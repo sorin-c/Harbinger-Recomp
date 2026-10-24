@@ -18,6 +18,7 @@
 #include "world/combat.hpp"
 #include "world/foes.hpp"
 #include "world/level.hpp"
+#include "world/loot.hpp"
 #include "world/player.hpp"
 #include "world/walkmap.hpp"
 
@@ -56,13 +57,14 @@ public:
     // The pad's attack button: hit the nearest enemy within a few cells,
     // preferring those ahead. False if there is none.
     bool attackNearest();
-    // Using gizmos (consoles, chests): walk up to the usable gizmo under view
-    // pixel (x, y) and use it on arrival; false if there is none there.
+    // Using gizmos (consoles, chests) and picking up items: walk up to the
+    // item or usable gizmo under view pixel (x, y) and take or use it on
+    // arrival; false if there is none there.
     bool useAt(float x, float y);
-    // The same for the nearest usable gizmo within kUseRange cells of the
-    // player (pad and keys).
+    // The same for the nearest item, else the nearest usable gizmo, within
+    // kUseRange cells of the player (pad and keys).
     bool useNearest();
-    bool usePending() const { return pendingUse_ != nullptr; }
+    bool usePending() const { return pendingUse_ != nullptr || pendingPickup_ != 0; }
     // Rebuild choices: how near a gizmo's use point the player must stand
     // to use it, and how far the use button looks for one, in map cells.
     static constexpr double kUseReach = 1.5, kUseRange = 3.0;
@@ -74,6 +76,11 @@ public:
     const world::Level& level() const { return *level_; }
     const world::Player& player() const { return *player_; }
     const world::Foes& foes() const { return *foes_; }
+    const world::Loot& loot() const { return *loot_; }
+    // What the player has picked up (item.mgr ids; money adds to money()).
+    // A plain list until the inventory is rebuilt.
+    const std::vector<uint16_t>& carried() const { return carried_; }
+    uint32_t money() const { return money_; }
 
 private:
     const Texture* tile(const chk::Layer& layer) const;
@@ -82,6 +89,12 @@ private:
     void drawAgent(const chk::AgentRecord& a) const;
     void drawPlayer() const;
     void drawTargetBar() const;
+    void drawGroundItems() const;
+    // Where a ground item's picture sits on the map screen, and the part of
+    // its image to draw; nullptr if it has no picture.
+    const Texture* groundItemPicture(const world::Loot::GroundItem& g, SDL_FRect& src, SDL_FRect& at) const;
+    const world::Loot::GroundItem* itemAt(float x, float y) const;
+    void approachItem(const world::Loot::GroundItem& g);
     void drawImage(const std::string& key, const render::RgbaImage* img, double left, double top,
                    bool lit = false) const;
     const chk::GizmoRecord* gizmoAt(float x, float y) const;
@@ -96,6 +109,10 @@ private:
     world::Rng rng_;
     std::unique_ptr<world::Foes> foes_;
     std::unique_ptr<Cutscene> cutscene_;
+    std::unique_ptr<world::Loot> loot_;
+    uint32_t pendingPickup_ = 0;  // a ground item the player is walking to (Loot::GroundItem::id)
+    std::vector<uint16_t> carried_;
+    uint32_t money_ = 0;
     bool wasCinematic_ = false;
     const chk::GizmoRecord* pendingUse_ = nullptr;  // walking up to use it
     int screenW_, screenH_;

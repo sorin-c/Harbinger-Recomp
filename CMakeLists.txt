@@ -20,6 +20,7 @@ add_library(harbinger_formats
   src/formats/agt.cpp
   src/formats/anm.cpp
   src/formats/gsc.cpp
+  src/formats/gig.cpp
   src/formats/fnt.cpp
   src/formats/gim.cpp
   src/formats/itf.cpp
@@ -66,6 +67,7 @@ add_library(harbinger_core
   src/world/foes.cpp
   src/world/walkmap.cpp
   src/world/script.cpp
+  src/world/loot.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
 target_include_directories(harbinger_core SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/_deps/dr_libs)

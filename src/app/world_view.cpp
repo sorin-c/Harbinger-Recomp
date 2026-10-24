@@ -30,6 +30,7 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     rng_.seed(uint32_t(SDL_GetTicksNS()));
     foes_ = std::make_unique<world::Foes>(assets.vfs(), *level_, rng_);
     cutscene_ = std::make_unique<Cutscene>(assets, ren, character, *level_, screenW, screenH);
+    loot_ = std::make_unique<world::Loot>(assets.vfs(), assets.ini(), character, *level_, *walk_, rng_);
     const auto p = world::toScreen(player_->x(), player_->y());
     camX_ = p.x, camY_ = p.y;
 
@@ -69,7 +70,7 @@ WorldView::~WorldView() {
 
 void WorldView::steer(float dx, float dy) {
     if (cinematic()) return;
-    if (dx != 0 || dy != 0) pendingUse_ = nullptr;
+    if (dx != 0 || dy != 0) pendingUse_ = nullptr, pendingPickup_ = 0;
     // A screen direction to a map one: invert screen = ((x - y) * 64, (x + y) * 32).
     const double mx = dx / 64.0 + dy / 32.0, my = dy / 32.0 - dx / 64.0;
     player_->steer(mx, my);
@@ -82,7 +83,7 @@ world::WalkMap::Point WorldView::mapPoint(float x, float y) const {
 
 void WorldView::walkTo(float x, float y) {
     if (cinematic()) return;
-    pendingUse_ = nullptr;
+    pendingUse_ = nullptr, pendingPickup_ = 0;
     const auto p = mapPoint(x, y);
     player_->walkTo(p.x, p.y);
 }
@@ -106,7 +107,7 @@ bool WorldView::attackAt(float x, float y) {
     }
     if (best < 0) return false;
     const auto& f = foes_->all()[size_t(best)];
-    pendingUse_ = nullptr;
+    pendingUse_ = nullptr, pendingPickup_ = 0;
     player_->attack(best, f.record->x, f.record->y);
     return true;
 }
@@ -116,7 +117,7 @@ bool WorldView::attackNearest() {
     const int id = foes_->nearest(player_->x(), player_->y(), 4.0, player_->facing());
     if (id < 0) return false;
     const auto& f = foes_->all()[size_t(id)];
-    pendingUse_ = nullptr;
+    pendingUse_ = nullptr, pendingPickup_ = 0;
     player_->attack(id, f.record->x, f.record->y);
     return true;
 }
@@ -160,10 +161,52 @@ void WorldView::approach(const chk::GizmoRecord& g) {
         }
     player_->walkTo(to.x, to.y);
     pendingUse_ = &g;
+    pendingPickup_ = 0;
+}
+
+void WorldView::approachItem(const world::Loot::GroundItem& g) {
+    player_->walkTo(g.x, g.y);
+    pendingPickup_ = g.id;
+    pendingUse_ = nullptr;
+}
+
+const Texture* WorldView::groundItemPicture(const world::Loot::GroundItem& g, SDL_FRect& src, SDL_FRect& at) const {
+    // The item's image (itemimg.mgr) holds frameCount pictures stacked
+    // vertically; the rebuild lays the first one on the ground, centred on
+    // the item's point (how the original draws a dropped item is not read).
+    if (!g.item) return nullptr;
+    std::string path;
+    try {
+        path = assets_.itemImagePath(g.item->image);
+    } catch (const std::exception&) {
+        return nullptr;
+    }
+    const Texture& t = assets_.itemTexture(path);
+    if (!t.tex) return nullptr;
+    const int frames = std::max<int>(1, g.item->frameCount);
+    src = {0, 0, float(t.w), float(t.h / frames)};
+    const auto p = world::toScreen(g.x, g.y);
+    at = {float(std::floor(p.x - src.w / 2)), float(std::floor(p.y - src.h / 2)), src.w, src.h};
+    return &t;
+}
+
+const world::Loot::GroundItem* WorldView::itemAt(float x, float y) const {
+    const double sx = x - screenW_ / 2.0 + camX_, sy = y - screenH_ / 2.0 + camY_;
+    for (auto it = loot_->ground().rbegin(); it != loot_->ground().rend(); ++it) {
+        if (!loot_->landed(*it, elapsedMs_)) continue;
+        SDL_FRect src, at;
+        if (!groundItemPicture(*it, src, at)) continue;
+        if (sx >= at.x && sx < at.x + at.w && sy >= at.y && sy < at.y + at.h) return &*it;
+    }
+    return nullptr;
 }
 
 bool WorldView::useAt(float x, float y) {
     if (cinematic()) return false;
+    if (const auto* item = itemAt(x, y)) {
+        approachItem(*item);
+        return true;
+    }
     const chk::GizmoRecord* g = gizmoAt(x, y);
     if (!g) return false;
     approach(*g);
@@ -172,6 +215,10 @@ bool WorldView::useAt(float x, float y) {
 
 bool WorldView::useNearest() {
     if (cinematic()) return false;
+    if (const auto* item = loot_->nearest(player_->x(), player_->y(), kUseRange, elapsedMs_)) {
+        approachItem(*item);
+        return true;
+    }
     const chk::GizmoRecord* best = nullptr;
     double bestD = kUseRange * kUseRange;
     for (const auto& o : objects_) {
@@ -210,6 +257,7 @@ void WorldView::update(uint64_t nowMs) {
     elapsedMs_ = nowMs - startMs_;
     // Gizmos first: a door that has just opened can be walked through.
     for (const chk::GizmoRecord* g : level_->update(elapsedMs_)) walk_->repaint(*level_, *g);
+    loot_->update(elapsedMs_);
     if (const auto* f = foes_->find(player_->target())) player_->trackTarget(f->record->x, f->record->y, !f->dead);
     const double x0 = player_->x(), y0 = player_->y();
     if (const auto blow = player_->update(elapsedMs_)) {
@@ -226,6 +274,17 @@ void WorldView::update(uint64_t nowMs) {
         if (d <= kUseReach)
             level_->useGizmo(*pendingUse_, elapsedMs_, [&](const chk::GizmoRecord& o) { return occupied(o); });
         pendingUse_ = nullptr;
+    }
+    if (pendingPickup_ && player_->path().empty()) {
+        // Picked up on arrival (a rebuild stand-in for GPickUpAction).
+        if (const auto* g = loot_->find(pendingPickup_))
+            if (std::hypot(g->x - player_->x(), g->y - player_->y()) <= kUseReach)
+                if (const auto d = loot_->take(pendingPickup_)) {
+                    const itm::Item* item = loot_->item(d->item);
+                    if (item && item->classId == itm::Money) money_ += d->amount;
+                    else carried_.push_back(d->item);
+                }
+        pendingPickup_ = 0;
     }
     // The level's event triggers, and the script one of them started.
     cutscene_->update(elapsedMs_, x0, y0, player_->x(), player_->y(),
@@ -318,6 +377,17 @@ void WorldView::drawPlayer() const {
     drawImage(pose.key, pose.image, p.x - pose.anchorX, p.y - pose.anchorY);
 }
 
+void WorldView::drawGroundItems() const {
+    for (const auto& g : loot_->ground()) {
+        if (!loot_->landed(g, elapsedMs_)) continue;
+        SDL_FRect src, at;
+        const Texture* t = groundItemPicture(g, src, at);
+        if (!t) continue;
+        at.x = float(std::floor(at.x - camX_ + screenW_ / 2.0)), at.y = float(std::floor(at.y - camY_ + screenH_ / 2.0));
+        SDL_RenderTexture(ren_, t->tex, &src, &at);
+    }
+}
+
 void WorldView::drawTargetBar() const {
     // A small hit-point bar over the enemy being fought (a rebuild stand-in
     // for the HUD's enemy bar, GCtrlEnemyHealthBar).
@@ -369,6 +439,7 @@ void WorldView::draw() const {
     // through Direct3D with a depth buffer, see docs/formats/level.md).
     for (int x = 0; x < m.width; ++x)
         for (int y = 0; y < m.height; ++y) drawLayer(x, y, 0);
+    drawGroundItems();  // they lie on the floor, under the walls and everything standing
 
     // The order of the pictures: a picture that another hides where they
     // overlap draws first; otherwise the smaller depth key first. Node n =

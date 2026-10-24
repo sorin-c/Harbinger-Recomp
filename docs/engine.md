@@ -216,12 +216,20 @@ agents that spawners create, and spawners are not rebuilt yet. On Refuse
 Disposal (level 11), walking up to the portal plays the whole scene.
 Evidence: `docs/formats/script.md`, "Running a script".
 
+## Milestone 16: chest loot (done)
+
+Chests drop what the original rolls for them: a number of picks from the
+chest's item group, by weight, money with its amount, and the chest's own
+item, one every half second, on the floor beside the chest. A click on an
+item, or E, Space or the pad's A, walks there and picks it up; money adds
+to a counter shown at the top left. Evidence: `docs/formats/loot.md`.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
-3. The other classes' states (breakers, key consoles, lifts), chest loot.
+3. The other classes' states (breakers, key consoles, lifts); the inventory.
 4. Spawners (and the scripts' agent commands with them). The room graph.
 5. Enemy AI (thinkers, their attacks), the player's ranged attack, hit
    points and death, experience.
