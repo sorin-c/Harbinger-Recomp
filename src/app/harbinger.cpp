@@ -4,7 +4,7 @@
 // music and UI sounds. Play opens the first level with the chosen character
 // standing on its entry point, ready to walk.
 //
-//   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id] [--entry id]
+//   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y]
 //             [--character human|gladiator|culibine] [--no-audio] [--settings config.cfg] [--run-ms ms]
 //             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--use]]
 //
@@ -53,6 +53,7 @@ struct Options {
     bool use = false;     // screenshot mode: the use button at 0 ms and every 1.5 s
     uint64_t timeMs = 0, runMs = 0;
     std::optional<SDL_FPoint> mouse, click, stick;  // screenshot mode: pointer, a click at 0 ms, a held stick
+    std::optional<SDL_FPoint> at;  // the player's start, map cells (a testing aid)
     world::Character character = world::Character::Human;
 };
 
@@ -102,6 +103,7 @@ public:
         }
         level_ = opt.level;
         entry_ = opt.entry;
+        if (opt.at) at_ = world::WalkMap::Point{opt.at->x, opt.at->y};
         character_ = opt.character;
         if (opt.screen == "new") openNew();
         else if (opt.screen == "options") openOptions();
@@ -193,7 +195,7 @@ public:
         if (world_) {
             world_->draw();
             SDL_SetRenderDrawColor(ren_, 160, 255, 160, 255);
-            const std::string title = world_->level().map().name + "  (walking, melee, trigger scripts and loot: no HUD or enemy AI yet)";
+            const std::string title = world_->level().map().name + "  (walking, melee, enemies fighting back, trigger scripts and loot: no HUD yet)";
             SDL_RenderDebugText(ren_, 8, 8, title.c_str());
             const std::string carried = "Uan: " + std::to_string(world_->money()) + "   items picked up: " +
                                         std::to_string(world_->carried().size());
@@ -228,7 +230,7 @@ private:
     // (Harbinger.ini [Video] HiRes; the front end is always 800x600).
     void startGame() {
         const int w = highRes_ ? 1024 : kScreenW, h = highRes_ ? 768 : kScreenH;
-        world_ = std::make_unique<WorldView>(assets_, ren_, level_, character_, w, h, entry_);
+        world_ = std::make_unique<WorldView>(assets_, ren_, level_, character_, w, h, entry_, at_);
         world_->setSound(sound_.get());
         SDL_SetRenderLogicalPresentation(ren_, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
         gameW_ = w, gameH_ = h;
@@ -246,6 +248,13 @@ private:
     }
 
     void handleWorld(const SDL_Event& e) {
+        if (world_->gameOver() && (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+                                   (e.type == SDL_EVENT_KEY_DOWN && e.key.key != SDLK_ESCAPE && !e.key.repeat))) {
+            // The rebuild's game over: the level starts again (saving and
+            // loading are not rebuilt).
+            mouseHeld_ = false;
+            return startGame();
+        }
         switch (e.type) {
             case SDL_EVENT_QUIT: running_ = false; break;
             case SDL_EVENT_GAMEPAD_ADDED: SDL_OpenGamepad(e.gdevice.which); break;
@@ -555,6 +564,7 @@ private:
     std::unique_ptr<WorldView> world_;
     std::optional<std::string> introMusic_;
     uint16_t level_ = 1, entry_ = 0;
+    std::optional<world::WalkMap::Point> at_;
     int gameW_ = kScreenW, gameH_ = kScreenH;
     SDL_FPoint stick_{0, 0};
     world::Character character_ = world::Character::Human;
@@ -597,6 +607,10 @@ Options parseArgs(int argc, char** argv) {
             else if (v == "gladiator") o.character = world::Character::Gladiator;
             else if (v == "culibine") o.character = world::Character::Culibine;
             else throw std::runtime_error("--character expects human, gladiator or culibine");
+        } else if (a == "--at") {
+            const auto comma = v.find(',');
+            if (comma == std::string::npos) throw std::runtime_error("--at expects x,y");
+            o.at = SDL_FPoint{std::stof(v.substr(0, comma)), std::stof(v.substr(comma + 1))};
         } else if (a == "--click" || a == "--stick") {
             const auto comma = v.find(',');
             if (comma == std::string::npos) throw std::runtime_error(a + " expects x,y");
@@ -617,7 +631,7 @@ Options parseArgs(int argc, char** argv) {
             }
     }
     if (o.data.empty()) throw std::runtime_error("Harbinger.ini not found. Put harbinger.exe in the Harbinger folder, or run:\n"
-                                                 "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--no-audio] "
+                                                 "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y] [--no-audio] "
                                                  "[--character human|gladiator|culibine] [--settings config.cfg] "
                                                  "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--use]]");
     return o;

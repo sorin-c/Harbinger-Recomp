@@ -136,7 +136,7 @@ static void testRealData(const char* dir) {
     world::Level level(vfs, ini, 3);
     world::WalkMap walk(level);
     world::Rng rng(7);
-    world::Foes foes(vfs, level, rng);
+    world::Foes foes(vfs, ini, level, walk, rng);
     CHECK(!foes.all().empty());
     world::Player player(vfs, ini, world::Character::Human, walk, level.map().entries[0]);
     CHECK(player.weapon().find(wpn::Melee) != nullptr);
@@ -144,11 +144,11 @@ static void testRealData(const char* dir) {
     CHECK(id >= 0);
     if (id < 0) return;
     const auto& foe = foes.all()[size_t(id)];
-    player.attack(id, foe.record->x, foe.record->y);
+    player.attack(id, foe.x, foe.y);
     int blows = 0;
     uint64_t t = 0;
     for (; t < 60000 && !foe.dead; t += 10) {
-        player.trackTarget(foe.record->x, foe.record->y, !foe.dead);
+        player.trackTarget(foe.x, foe.y, !foe.dead);
         if (const auto b = player.update(t)) {
             ++blows;
             CHECK(foes.blow(b->target, player.x(), player.y(), b->x, b->y, player.meleeRating(), player.weapon(), t));
@@ -161,17 +161,80 @@ static void testRealData(const char* dir) {
     CHECK(foes.pose(*foe.record, t + 5000).image != nullptr);  // the corpse stays
     // The swing ends once the target is dead, and the player stands idle.
     for (int i = 0; i < 200; ++i) {
-        player.trackTarget(foe.record->x, foe.record->y, !foe.dead);
+        player.trackTarget(foe.x, foe.y, !foe.dead);
         player.update(t += 10);
     }
     CHECK(player.state() == agt::Idle && player.target() == -1);
+}
+
+// Junkyard: the enemies notice a player who stands still within sight, walk
+// up to it and hit it until it dies; then they settle down.
+static void testEnemies(const char* dir) {
+    Vfs vfs(dir);
+    const Ini ini = Ini::fromBytes(*vfs.read("Harbinger.ini"));
+    world::Level level(vfs, ini, 2);
+    world::WalkMap walk(level);
+    world::Rng rng(11);
+    world::Foes foes(vfs, ini, level, walk, rng);
+    CHECK(!foes.all().empty());
+    // The Human's defence is its armour's class: Alpha Advance, 40.
+    world::Player probe(vfs, ini, world::Character::Human, walk, level.map().entries[0]);
+    CHECK(probe.defender().defence == 40 && probe.defender().player);
+    CHECK(probe.hitPoints() == 70 && probe.visibility() == 128);
+    // Stand the player two cells from the first enemy that can reach it.
+    int id = -1;
+    chk::EntryPoint spot;
+    for (size_t i = 0; i < foes.all().size() && id < 0; ++i) {
+        const auto& f = foes.all()[i];
+        if (!f.armed) continue;
+        for (int k = 0; k < 8 && id < 0; ++k) {
+            const double a = k * 0.785398;
+            const double px = f.x + 2 * std::cos(a), py = f.y + 2 * std::sin(a);
+            if (!walk.passableAt(px, py, 2) || walk.findPath({f.x, f.y}, {px, py}, f.limit).empty()) continue;
+            spot.x = px, spot.y = py;
+            id = int(i);
+        }
+    }
+    CHECK(id >= 0);
+    if (id < 0) return;
+    world::Player player(vfs, ini, world::Character::Human, walk, spot);
+    const auto& foe = foes.all()[size_t(id)];
+    CHECK(foe.mind.role == 0 && foe.mind.emotion[2] == 127 && foe.rating > 0);
+    uint64_t t = 1, firstBlow = 0, deathAt = 0;
+    int blows = 0, hits = 0;
+    double closest = 1e9;
+    for (; t < 120000 && !player.dead(); t += 10) {
+        player.update(t);
+        world::Quarry q;
+        q.x = player.x(), q.y = player.y(), q.radius = player.radius();
+        q.visibility = player.visibility(), q.alive = !player.dead(), q.defender = &player.defender();
+        for (const auto& h : foes.update(t, q)) {
+            ++blows;
+            if (!firstBlow) firstBlow = t;
+            if (h.strike.hit) ++hits, player.takeDamage(h.strike.damage, t);
+        }
+        closest = std::min(closest, std::hypot(foe.x - player.x(), foe.y - player.y()));
+    }
+    deathAt = t;
+    CHECK(blows > 0 && hits > 0);
+    CHECK(closest < 1.0);
+    CHECK(foe.mind.engaged && foe.mind.role == 2);
+    CHECK(player.dead() && player.hitPoints() == 0 && player.visibility() == 0);
+    std::printf("enemies: first blow at %.1f s, %d blows, %d hits, the player died at %.1f s\n", firstBlow / 1000.0,
+                blows, hits, deathAt / 1000.0);
+    CHECK(player.state() == agt::Die);
+    // A dead player is no target: the foes lose it and go back to resting.
+    world::Quarry gone;
+    gone.x = player.x(), gone.y = player.y(), gone.radius = player.radius();
+    for (uint64_t u = 0; u < 20000; u += 10) CHECK(foes.update(t + u, gone).empty());
+    CHECK(!foes.all()[size_t(id)].mind.engaged && foes.all()[size_t(id)].mind.policy != world::Foes::Policy::Attack);
 }
 
 int main() {
     testWeapon();
     testArithmetic();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
-        testRealData(dir);
+        testRealData(dir), testEnemies(dir);
     else
         std::printf("HARBINGER_DATA not set; skipping real-data checks\n");
     if (failures) std::fprintf(stderr, "%d check(s) failed\n", failures);

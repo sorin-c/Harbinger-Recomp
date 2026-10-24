@@ -8,6 +8,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,9 +28,10 @@ namespace harbinger::app {
 class WorldView {
 public:
     // Loads level `id`, stands the player's character on its entry point
-    // `entry` (0, "Default", for a new game) and centres the camera on it.
+    // `entry` (0, "Default", for a new game), or at map point `at` (a testing
+    // aid), and centres the camera on it.
     WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world::Character character, int screenW,
-              int screenH, uint16_t entry = 0);
+              int screenH, uint16_t entry = 0, std::optional<world::WalkMap::Point> at = {});
     ~WorldView();
     WorldView(const WorldView&) = delete;
     WorldView& operator=(const WorldView&) = delete;
@@ -73,6 +75,10 @@ public:
     void update(uint64_t nowMs);
     void draw() const;
 
+    // The player died a while ago (a rebuild choice: 3 s, time for the
+    // death animation): the game is over, any button starts the level again.
+    bool gameOver() const { return player_->dead() && elapsedMs_ >= player_->diedAt() + 3000; }
+
     const world::Level& level() const { return *level_; }
     const world::Player& player() const { return *player_; }
     const world::Foes& foes() const { return *foes_; }
@@ -89,6 +95,7 @@ private:
     void drawAgent(const chk::AgentRecord& a) const;
     void drawPlayer() const;
     void drawTargetBar() const;
+    void drawHealth() const;
     void drawGroundItems() const;
     // Where a ground item's picture sits on the map screen, and the part of
     // its image to draw; nullptr if it has no picture.

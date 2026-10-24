@@ -45,7 +45,17 @@ struct Template {
     // Damage taken per damage type, in percent (template+0x204, read by
     // FUN_004085a0); a type that is not listed does no damage.
     std::vector<std::pair<uint16_t, uint16_t>> resistances;
-    std::vector<uint8_t> rest;    // the fields after the animations, undecoded
+    // FUN_00407170 (version 1.8 on): four bytes to template+0xa..+0xd
+    // (flags[2], +0xc, set: an enemy leaves faction 9 alone, GEnemyPlug_v97),
+    // the faction (+0x21c: 1 the player's side, 2 NPCs, 4 Vantir, 8 biters,
+    // ...), a word (+0x220), the thinker that runs the agent's mind (+0x58,
+    // the GIThinker id: 1 stationary, 3 repair, 5 animal, 6 predator,
+    // 7 trooper, 8 commander, 9 boss, 10 mechanized) and from 1.86 a byte
+    // (+0xe). See docs/enemies.md.
+    uint8_t flags[4] = {};
+    uint16_t faction = 0, word220 = 0, thinker = 0;
+    uint8_t byteE = 0;
+    std::vector<uint8_t> rest;    // the fields after the animations (raw)
 
     // The animations filed under `state`, in file order (the variant numbers
     // FUN_00407950 picks from).

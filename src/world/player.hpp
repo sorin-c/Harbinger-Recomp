@@ -17,6 +17,8 @@
 #include "formats/mgr.hpp"
 #include "formats/wpn.hpp"
 #include "render/sprite.hpp"
+#include "world/actor.hpp"
+#include "world/combat.hpp"
 #include "world/sprite_cache.hpp"
 #include "world/walkmap.hpp"
 
@@ -82,6 +84,28 @@ public:
     const wpn::Weapon& weapon() const { return weapon_; }
     int meleeRating() const { return 15; }
 
+    // Hit points (plug+0x88) and their maximum (+0x90): each character's
+    // constructor sets its own (Human 70, FUN_004f26c0; Gladiator 80,
+    // FUN_004baa80; Culibine 60, FUN_0046fe50).
+    double hitPoints() const { return hitPoints_; }
+    double maxHitPoints() const { return maxHitPoints_; }
+    bool dead() const { return dead_; }
+    uint64_t diedAt() const { return diedAt_; }
+    // Takes a hit (GAgentPlug_v61): at 0 hit points the player dies, plays
+    // its death animation once (GDieAction) and lies still.
+    void takeDamage(int damage, uint64_t nowMs);
+    // How the player stands against an attack roll: the template's defence
+    // and resistances, with the armour's class added to the defence
+    // (FUN_004f0f40, FUN_004f0fb0) and its levels per damage type.
+    const Defender& defender() const { return defender_; }
+    // The box half-size blows are tested against (template+0x20, slot 0x90).
+    double radius() const { return template_.d20; }
+    // How easily enemies notice the player (plug+0x38): an agent sees it
+    // only above its threshold (FUN_00424700). It rises while the player
+    // walks and fights and settles back while it stands (see docs/enemies.md);
+    // 0 once dead.
+    uint8_t visibility() const { return visibility_; }
+
     // The sprite to draw at `nowMs`: the layers of the current state's
     // animation in the facing's direction, composited, and the point in it
     // that sits on the player's map position. `key` names it for caches.
@@ -97,13 +121,11 @@ public:
 
 private:
     void setState(agt::State s, uint64_t nowMs);
-    void stepPath(double step);
     void stepSteer(double step);
     std::optional<Blow> stepMelee(uint64_t nowMs);
     void faceTarget();
+    void noticeLoops(uint64_t nowMs);
     std::vector<const anm::Animation*> layerAnims(agt::State s);
-    // The map offset of the blow tag at `frame` in direction `dir`, if any.
-    std::optional<WalkMap::Point> blowOffset(size_t dir, uint16_t frame);
 
     const WalkMap& walk_;
     SpriteCache sprites_;
@@ -127,7 +149,14 @@ private:
     int target_ = -1;
     double targetX_ = 0, targetY_ = 0;
     bool targetAlive_ = false;
-    int64_t meleeFrame_ = -1;  // the last melee frame whose tags have run
+    Swing swing_;
+
+    double hitPoints_ = 0, maxHitPoints_ = 0;
+    bool dead_ = false;
+    uint64_t diedAt_ = 0;
+    Defender defender_;
+    uint8_t visibility_ = 128, baseVisibility_ = 128;  // plug+0x38, +0x39
+    uint64_t loops_ = 0;  // idle or walk animation loops completed in this state
 };
 
 }  // namespace harbinger::world

@@ -54,6 +54,12 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
     const auto weapons = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Weapons")));
     std::string slots[3];
     int weaponRank = -1;
+    // Armour and helmet (plug+0x2d4, +0x2d8): their armour class (type 9,
+    // level plus the third word) adds to the defence when worn (FUN_004f0f40,
+    // FUN_004f0fb0), and their level for each damage type can stop it
+    // (FUN_004f10e0). The gladiator's torso is taken as its armour (guessed).
+    defender_ = defenderOf(template_);
+    defender_.player = true;
     for (uint16_t id : startingItems(character)) {
         const std::string* path = items.find(id);
         if (!path) continue;
@@ -61,6 +67,15 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
         const uint16_t cls = data.size() < 2 ? 0 : uint16_t(data[0] | data[1] << 8);
         if (cls < itm::HumanWeapon || cls > itm::RightGauntlet) continue;  // mod chips: in a socket
         const itm::Item item = itm::parse(data);
+        if (cls == itm::HumanArmor || cls == itm::HumanHelmet || cls == itm::GladiatorTorso) {
+            if (const std::string* w = weapons.find(item.socketed->word38)) {
+                const wpn::Weapon armour = wpn::parse(readOrThrow(vfs, *w));
+                for (const auto& d : armour.damage) {
+                    if (d.type == wpn::ArmourClass) defender_.defence += d.level + d.extra;
+                    else if (d.type < 11) defender_.armour[d.type] += d.level;
+                }
+            }
+        }
         // The blows' weapon: the melee one where there is a choice (the
         // gladiator's blade over its gun, the right gauntlet over the left).
         // The original's choice (FUN_004213a0) is not traced: guessed.
@@ -88,9 +103,33 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
     x_ = start.x;
     y_ = start.y;
     facing_ = uint8_t(start.facing & 0xff);
+    switch (character) {
+        case Character::Human: maxHitPoints_ = 70; break;
+        case Character::Gladiator: maxHitPoints_ = 80; break;
+        case Character::Culibine: maxHitPoints_ = 60; break;
+    }
+    hitPoints_ = maxHitPoints_;
+}
+
+void Player::takeDamage(int damage, uint64_t nowMs) {
+    if (dead_ || damage <= 0) return;
+    // GAgentPlug_v61: what is left above 0 stays (slot 0xa4); at 0 or below
+    // the hit points are set to 0 and the die action starts (action 6).
+    hitPoints_ -= damage;
+    if (hitPoints_ > 0) return;
+    hitPoints_ = 0;
+    dead_ = true;
+    diedAt_ = nowMs;
+    visibility_ = 0;  // GAgentPlug_v73: an agent with no hit points cannot be seen
+    path_.clear();
+    steerX_ = steerY_ = 0;
+    target_ = -1;
+    state_ = agt::Idle;
+    setState(agt::Die, nowMs);
 }
 
 bool Player::walkTo(double x, double y) {
+    if (dead_) return false;
     steerX_ = steerY_ = 0;
     target_ = -1;
     path_ = walk_.findPath({x_, y_}, {x, y}, limit_);
@@ -98,12 +137,14 @@ bool Player::walkTo(double x, double y) {
 }
 
 void Player::steer(double dx, double dy) {
+    if (dead_) return;
     steerX_ = dx;
     steerY_ = dy;
     if (dx != 0 || dy != 0) path_.clear(), target_ = -1;
 }
 
 void Player::attack(int id, double x, double y) {
+    if (dead_) return;
     steerX_ = steerY_ = 0;
     if (target_ == id && state_ == agt::Melee) return;  // already swinging at it
     target_ = id;
@@ -121,14 +162,35 @@ void Player::trackTarget(double x, double y, bool alive) {
 }
 
 void Player::faceTarget() {
-    // GAgentPlug_v58: an attack turns the attacker to its target.
+    // GAgentPlug_v58: an attack turns the attacker to its target, and makes
+    // it more noticeable: +25, up to 220.
     if (targetX_ != x_ || targetY_ != y_) facing_ = facingTowards(targetX_ - x_, targetY_ - y_);
+    if (visibility_ < 220) visibility_ = uint8_t(std::min(220, visibility_ + 25));
 }
 
 void Player::setState(agt::State s, uint64_t nowMs) {
     if (s == state_) return;
     state_ = s;
     stateStart_ = nowMs;  // a new state starts its animation from the first frame
+    loops_ = 0;
+}
+
+void Player::noticeLoops(uint64_t nowMs) {
+    // Each time the idle or walk animation comes round (FUN_0042c020
+    // returning 1): standing settles the visibility 10 back towards its base
+    // (GIdleAction_v2), walking raises it by 10 up to 176 (GMoveAction_v2).
+    if (state_ != agt::Idle && state_ != agt::Move) return;
+    const auto anims = layerAnims(state_);
+    if (anims.empty() || anims[0]->directions.empty() || anims[0]->directions[0].frames.empty()) return;
+    const uint64_t loopMs = anims[0]->directions[0].frames.size() * kFrameMs;
+    const uint64_t loops = (nowMs - std::min(nowMs, stateStart_)) / loopMs;
+    for (; loops_ < loops; ++loops_) {
+        if (state_ == agt::Idle) {
+            if (visibility_ > baseVisibility_) visibility_ = uint8_t(std::max<int>(baseVisibility_, visibility_ - 10));
+        } else if (visibility_ < 176) {
+            visibility_ = uint8_t(std::min(176, visibility_ + 10));
+        }
+    }
 }
 
 std::optional<Player::Blow> Player::update(uint64_t nowMs) {
@@ -143,6 +205,7 @@ std::optional<Player::Blow> Player::update(uint64_t nowMs) {
     const double halfDt = double(dt) * 0.5;
     const double step = speed_ * (halfLastDt_ + halfDt);
     halfLastDt_ = halfDt;
+    if (dead_) return std::nullopt;
     // A new order (walking, steering) cuts the swing short.
     if (state_ == agt::Melee && target_ < 0 && (steerX_ != 0 || steerY_ != 0 || !path_.empty())) setState(agt::Idle, nowMs);
     if (state_ == agt::Melee) return stepMelee(nowMs);
@@ -154,105 +217,34 @@ std::optional<Player::Blow> Player::update(uint64_t nowMs) {
             path_.clear();
             faceTarget();
             setState(agt::Melee, nowMs);
-            meleeFrame_ = -1;
+            swing_.start(nowMs);
             return stepMelee(nowMs);
         } else if (path_.empty()) {
             target_ = -1;  // nowhere left to walk: give up
         }
     }
     if (steerX_ != 0 || steerY_ != 0) stepSteer(step);
-    else if (!path_.empty()) stepPath(step);
+    else if (!path_.empty()) followPath(path_, x_, y_, facing_, step);
     setState((steerX_ != 0 || steerY_ != 0 || !path_.empty()) ? agt::Move : agt::Idle, nowMs);
+    noticeLoops(nowMs);
     return std::nullopt;
 }
 
 std::optional<Player::Blow> Player::stepMelee(uint64_t nowMs) {
     const auto anims = layerAnims(agt::Melee);
-    if (anims.empty() || anims[0]->directions.empty() || anims[0]->directions[0].frames.empty()) {
-        setState(agt::Idle, nowMs);
-        return std::nullopt;
-    }
-    const int64_t frames = int64_t(anims[0]->directions[0].frames.size());
+    // At the -3 tag: another swing while the target can still be hit.
+    const auto r = swing_.advance(anims, facing_, nowMs, kFrameMs, [&] {
+        if (target_ < 0 || !targetAlive_ || std::hypot(targetX_ - x_, targetY_ - y_) > kReach + 0.25) return false;
+        faceTarget();
+        return true;
+    });
     std::optional<Blow> blow;
-    // Run the tags of every frame reached since the last step (GAgentPlug_v9
-    // looks them up in the body's animation, which holds the layers' tags too).
-    for (;;) {
-        const int64_t frame = int64_t((nowMs - std::min(nowMs, stateStart_)) / kFrameMs);
-        if (frame <= meleeFrame_) break;
-        const int64_t f = meleeFrame_ + 1;
-        if (f >= frames) {
-            setState(agt::Idle, nowMs);  // the swing is over
-            if (!targetAlive_) target_ = -1;
-            return blow;
-        }
-        meleeFrame_ = f;
-        const size_t dir = anm::directionFor(facing_, anims[0]->directions.size());
-        bool looped = false;
-        for (const anm::Animation* a : anims) {
-            if (dir >= a->directions.size()) continue;
-            for (const auto& raw : a->directions[dir].actions) {
-                const anm::Action act = anm::action(raw);
-                if (act.frame != f) continue;
-                if (act.x == -3) {
-                    // Another swing while the target can be hit: jump y
-                    // frames (start time moves by y frames) and face it again.
-                    if (target_ >= 0 && targetAlive_ && std::hypot(targetX_ - x_, targetY_ - y_) <= kReach + 0.25) {
-                        stateStart_ += uint64_t(-int64_t(act.y)) * kFrameMs;
-                        meleeFrame_ += act.y;
-                        faceTarget();
-                        looped = true;
-                    }
-                } else if (act.x >= 0 && target_ >= 0) {
-                    if (auto off = blowOffset(dir, act.frame)) blow = Blow{target_, x_ + off->x, y_ + off->y};
-                }
-            }
-        }
-        if (looped) continue;
+    if (r.blow && target_ >= 0) blow = Blow{target_, x_ + r.blow->x, y_ + r.blow->y};
+    if (r.ended) {
+        setState(agt::Idle, nowMs);  // the swing is over
+        if (!targetAlive_) target_ = -1;
     }
     return blow;
-}
-
-std::optional<WalkMap::Point> Player::blowOffset(size_t dir, uint16_t frame) {
-    // FUN_0042a6a0: the tags of one frame, across all directions, circle the
-    // agent; their mean |y| is the circle's centre row. A tag's offset from
-    // it, (dx, dy) = ((x - hotspot x) / 128, (|y| - mean) / 64), is a screen
-    // offset turned into the map: (dy + dx, dy - dx).
-    const auto anims = layerAnims(agt::Melee);
-    if (anims.empty() || !anims[0]->hotspot) return std::nullopt;
-    const int refX = anims[0]->hotspot->first;
-    int sum = 0, count = 0;
-    std::optional<anm::Action> mine;
-    for (const anm::Animation* a : anims)
-        for (size_t d = 0; d < a->directions.size(); ++d)
-            for (const auto& raw : a->directions[d].actions) {
-                const anm::Action act = anm::action(raw);
-                if (act.frame != frame || act.x < 0) continue;
-                sum += std::abs(int(act.y));
-                ++count;
-                if (d == dir) mine = act;
-            }
-    if (!mine || count == 0) return std::nullopt;
-    const double mean = double(sum) / count;
-    const double dx = (mine->x - refX) / 128.0, dy = (std::abs(int(mine->y)) - mean) / 64.0;
-    return WalkMap::Point{dy + dx, dy - dx};
-}
-
-void Player::stepPath(double step) {
-    const WalkMap::Point target = path_.front();
-    const double dx = target.x - x_, dy = target.y - y_;
-    if (dx != 0 || dy != 0) facing_ = facingTowards(dx, dy);
-    const double mx = facingCos(facing_) * step, my = facingSin(facing_) * step;
-    x_ += mx;
-    y_ += my;
-    // FUN_0041e200: an axis that went past the waypoint snaps onto it (moves
-    // under 0.00001 count as none). GAgentPlug_v80 takes the first snap as
-    // reaching the waypoint, even if the other axis has not got there.
-    const double restX = target.x - x_, restY = target.y - y_;
-    bool reached = restX == 0 && restY == 0;
-    const double sx = std::fabs(mx) < 1e-5 ? 0 : mx, sy = std::fabs(my) < 1e-5 ? 0 : my;
-    if ((sx < 0 && restX > 0) || (sx > 0 && restX < 0)) x_ = target.x, reached = true;
-    if ((sy < 0 && restY > 0) || (sy > 0 && restY < 0)) y_ = target.y, reached = true;
-    if (reached) path_.erase(path_.begin());
 }
 
 void Player::stepSteer(double step) {
@@ -297,7 +289,10 @@ Player::Pose Player::pose(uint64_t nowMs) {
     // FUN_0042c020: 100 ms a frame, looping over the first direction's count.
     const size_t frames = base.directions.empty() ? 0 : base.directions[0].frames.size();
     if (frames == 0 || dir >= base.directions.size() || base.directions[dir].frames.empty()) return pose;
-    const size_t frame = size_t((nowMs - std::min(nowMs, stateStart_)) / kFrameMs % frames);
+    const uint64_t start = state_ == agt::Melee ? swing_.startMs() : stateStart_;
+    const size_t step = size_t((nowMs - std::min(nowMs, start)) / kFrameMs);
+    // The death animation plays once and keeps its last frame.
+    const size_t frame = state_ == agt::Die ? std::min(step, frames - 1) : step % frames;
     pose.key = "player#" + std::to_string(int(state_)) + "#" + std::to_string(dir) + "#" + std::to_string(frame);
     pose.image = sprites_.compose(pose.key, anims, dir, frame);
     if (!pose.image) return pose;
