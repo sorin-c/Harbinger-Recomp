@@ -195,6 +195,11 @@ static void testGizmo() {
 }
 
 static void testAgents() {
+    // FUN_004e12d0's tables, at their edges.
+    CHECK(anm::directionFor(0, 16) == 0 && anm::directionFor(8, 16) == 0 && anm::directionFor(9, 16) == 1);
+    CHECK(anm::directionFor(246, 16) == 15 && anm::directionFor(247, 16) == 0);
+    CHECK(anm::directionFor(14, 10) == 0 && anm::directionFor(15, 10) == 1 && anm::directionFor(241, 10) == 9);
+    CHECK(anm::directionFor(242, 10) == 0 && anm::directionFor(100, 8) == 0);
     {  // Marker entries 0-5 of an agent sheet, in both channel orders seen in the files.
         gim::Image img;
         img.palette = {{0, 255, 0, 255}, {255, 0, 0, 255}, {0, 171, 0, 255}, {0, 85, 0, 255},

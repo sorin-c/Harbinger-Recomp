@@ -73,10 +73,11 @@ public:
     // Draws a visible gizmo's first frame into `dst` (see drawLayer for the origin).
     void drawGizmo(render::RgbaImage& dst, const chk::GizmoRecord& g, int originX, int originY);
 
-    // An agent's standing pose: the first frame of its first animation's
-    // first direction with frames, and the point in it that sits on the
-    // agent's map position.
+    // An agent's standing pose: the first frame of its first animation in
+    // the direction it faces (or the first direction with frames), and the
+    // point in it that sits on the agent's map position.
     struct Pose {
+        std::string sheet;
         const render::RgbaImage* image = nullptr;
         int anchorX = 0, anchorY = 0;
     };
@@ -97,7 +98,7 @@ private:
     std::map<uint16_t, LoadedBrush> brushes_;
     std::map<uint16_t, giz::Template> gizmos_;
     std::map<uint16_t, agt::Template> agents_;
-    std::map<uint16_t, Pose> poses_;  // by agent.mgr id
+    std::map<std::pair<uint16_t, uint8_t>, Pose> poses_;  // by agent.mgr id and facing
     std::map<std::string, std::unique_ptr<render::RgbaImage>> agentImages_;  // by sheet path
     std::map<std::string, std::unique_ptr<render::RgbaImage>> images_;  // by tile path
     std::map<std::string, std::unique_ptr<render::RgbaImage>> gizmoImages_;  // by frame path

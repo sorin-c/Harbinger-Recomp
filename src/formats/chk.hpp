@@ -62,7 +62,7 @@ struct Variant {
 struct AgentRecord {
     uint16_t agent = 0;     // id in agent.mgr
     uint16_t instance = 0;
-    uint8_t facing = 0;     // plug+0x3a; multiples of 8 in shipped levels, likely 256 steps a turn
+    uint8_t facing = 0;     // plug+0x3a; 256 steps a turn, see anm::directionFor
     uint8_t unknown = 0;
     std::vector<uint16_t> slots;  // slot 18 (0x4e6590)
     double x = 0, y = 0;    // map position, in cells

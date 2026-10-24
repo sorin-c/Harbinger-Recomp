@@ -29,6 +29,11 @@ struct Animation {
     const Direction* firstDirection() const;
 };
 
+// The direction index for a facing (0-255, one full turn) in an animation
+// with `count` directions (FUN_004e12d0). Only 10 and 16 directions have a
+// table; other counts give 0, as in the original.
+size_t directionFor(uint8_t facing, size_t count);
+
 // Throws std::runtime_error on malformed data or trailing bytes.
 Animation parse(const std::vector<uint8_t>& data);
 

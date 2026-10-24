@@ -45,6 +45,22 @@ Animation parse(const std::vector<uint8_t>& data) {
     return a;
 }
 
+size_t directionFor(uint8_t facing, size_t count) {
+    // The tables at 0x556154 (16 directions) and 0x556354 (10) as the last
+    // facing of each direction; facings past the last entry wrap to 0. The
+    // steps are uneven because the view is isometric.
+    static constexpr uint8_t last16[] = {8, 21, 31, 42, 55, 72, 95, 118, 136, 149, 159, 171, 182, 200, 223, 246};
+    static constexpr uint8_t last10[] = {14, 31, 48, 77, 113, 142, 159, 176, 205, 241};
+    auto find = [facing](const uint8_t* last, size_t n) -> size_t {
+        for (size_t i = 0; i < n; ++i)
+            if (facing <= last[i]) return i;
+        return 0;
+    };
+    if (count == 16) return find(last16, 16);
+    if (count == 10) return find(last10, 10);
+    return 0;
+}
+
 const Direction* Animation::firstDirection() const {
     for (const auto& d : directions)
         if (!d.frames.empty()) return &d;

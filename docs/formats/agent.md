@@ -97,7 +97,7 @@ u32  count
 repeat count:           0x420520 and the class's slots
   u16  agent            agent.mgr id
   u16  instance
-  u8   facing           likely 256 steps a turn (not yet mapped to directions)
+  u8   facing           plug+0x3a; 256 steps a turn (see Drawing)
   u8   unknown
   u16  n, n x u16       slot 18 (0x4e6590)
   f64  x, y             map position in cells
@@ -113,8 +113,15 @@ gizmos. What follows the agents (triggers, sounds, rooms; loaders
 
 ## Drawing
 
-The rebuild draws each agent's first animation, first direction with frames,
-frame 0, with the frame's hotspot on the agent's map position (the frame's
+The facing picks the direction through `FUN_004e12d0`, which looks it up in a
+256-entry table: `0x556154` for 16-direction animations, `0x556354` for
+10-direction ones (any other count gives direction 0). The steps are uneven
+because the view is isometric; `anm::directionFor` holds the tables as the
+last facing of each direction. `GAgentPlug_v9` calls it with plug+0x3a and the
+animation's direction count.
+
+The rebuild draws each agent's first animation in its facing's direction
+(falling back to the first direction with frames), frame 0, with the frame's hotspot on the agent's map position (the frame's
 bottom centre when there is no hotspot). Agents are sorted with the gizmos and
 walls by x + y.
 
@@ -147,11 +154,10 @@ rebuild draws that as translucent black and drops the rest
 | Hotspot is the ground point | guessed | it sits near the frame bottom in every animation that has one; Vantir Checkpoint troopers stand plausibly |
 | Entries 0-5 are markers in agent sheets | proven | `FUN_004c2710` treats indices <= 5 as below art; survey of every frame sheet's first eight palette entries |
 | Entry 1 is the shadow, 2-3 figure edge, 4-5 shadow edge | likely | where the pixels sit (shadow blob, outline of the figure, outline of the blob); drawing it so removes the green and red fringes |
-| Facing byte = 256 steps a turn | guessed | values seen; mapping not decoded |
+| Facing to direction | proven | `FUN_004e12d0` and its two tables; the record's byte reaches plug+0x3a in `0x420520` |
 
 ## Open questions
 
-- Facing to direction index (10 or 16 directions), and which animation is the
-  idle one.
+- Which animation an agent starts in (the rebuild takes the first).
 - The stats words, the fields after the animations, sound and action tags.
 - The rest of the record fields (slot 18 words, the flag byte and words).

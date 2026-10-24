@@ -188,16 +188,19 @@ const agt::Template& Level::agentTemplate(const chk::AgentRecord& a) const {
 }
 
 Level::Pose Level::agentPose(const chk::AgentRecord& a) {
-    if (auto it = poses_.find(a.agent); it != poses_.end()) return it->second;
-    Pose& pose = poses_[a.agent];
+    const auto key = std::make_pair(a.agent, a.facing);
+    if (auto it = poses_.find(key); it != poses_.end()) return it->second;
+    Pose& pose = poses_[key];
     const agt::Template& t = agentTemplate(a);
     if (t.anims.empty()) return pose;
     const auto anmData = vfs_.read(t.anims[0].path);
     if (!anmData) return pose;
     const anm::Animation anim = anm::parse(*anmData);
-    const anm::Direction* dir = anim.firstDirection();
+    const anm::Direction* dir = &anim.directions[anm::directionFor(a.facing, anim.directions.size())];
+    if (dir->frames.empty()) dir = anim.firstDirection();
     if (!dir) return pose;
     const std::string sheet = anm::sheetPath(dir->frames[0]);
+    pose.sheet = sheet;
     auto& slot = agentImages_[sheet];
     if (!slot) {
         auto data = vfs_.read(sheet);

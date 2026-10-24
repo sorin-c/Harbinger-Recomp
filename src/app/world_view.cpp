@@ -97,7 +97,7 @@ void WorldView::drawAgent(const chk::AgentRecord& a) const {
     const auto pose = level_->agentPose(a);
     if (!pose.image) return;
     const auto p = world::toScreen(a.x, a.y);
-    drawImage("agent:" + std::to_string(a.agent), pose.image, p.x - pose.anchorX, p.y - pose.anchorY);
+    drawImage(pose.sheet, pose.image, p.x - pose.anchorX, p.y - pose.anchorY);
 }
 
 void WorldView::draw() const {
