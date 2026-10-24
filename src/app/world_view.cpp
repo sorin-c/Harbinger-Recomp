@@ -10,7 +10,7 @@
 namespace harbinger::app {
 
 WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world::Character character, int screenW,
-                     int screenH)
+                     int screenH, uint16_t entry)
     : assets_(assets), ren_(ren), level_(std::make_unique<world::Level>(assets.vfs(), assets.ini(), levelId)),
       screenW_(screenW), screenH_(screenH) {
     const auto& m = level_->map();
@@ -19,7 +19,7 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     chk::EntryPoint start;
     start.x = m.width / 2.0, start.y = m.height / 2.0;
     for (const auto& e : m.entries)
-        if (e.id == 0 || e.name == "Default") {
+        if (e.id == entry || (entry == 0 && e.name == "Default")) {
             start = e;
             break;
         }
@@ -29,6 +29,7 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     // from the clock so fights differ from game to game.
     rng_.seed(uint32_t(SDL_GetTicksNS()));
     foes_ = std::make_unique<world::Foes>(assets.vfs(), *level_, rng_);
+    cutscene_ = std::make_unique<Cutscene>(assets, ren, character, *level_, screenW, screenH);
     const auto p = world::toScreen(player_->x(), player_->y());
     camX_ = p.x, camY_ = p.y;
 
@@ -67,6 +68,7 @@ WorldView::~WorldView() {
 }
 
 void WorldView::steer(float dx, float dy) {
+    if (cinematic()) return;
     if (dx != 0 || dy != 0) pendingUse_ = nullptr;
     // A screen direction to a map one: invert screen = ((x - y) * 64, (x + y) * 32).
     const double mx = dx / 64.0 + dy / 32.0, my = dy / 32.0 - dx / 64.0;
@@ -79,12 +81,14 @@ world::WalkMap::Point WorldView::mapPoint(float x, float y) const {
 }
 
 void WorldView::walkTo(float x, float y) {
+    if (cinematic()) return;
     pendingUse_ = nullptr;
     const auto p = mapPoint(x, y);
     player_->walkTo(p.x, p.y);
 }
 
 bool WorldView::attackAt(float x, float y) {
+    if (cinematic()) return false;
     // An enemy's picture stands up from its feet: take the click as on it
     // when it falls in a box around the feet's screen point (a rebuild
     // choice, roughly a body's size).
@@ -108,6 +112,7 @@ bool WorldView::attackAt(float x, float y) {
 }
 
 bool WorldView::attackNearest() {
+    if (cinematic()) return false;
     const int id = foes_->nearest(player_->x(), player_->y(), 4.0, player_->facing());
     if (id < 0) return false;
     const auto& f = foes_->all()[size_t(id)];
@@ -158,6 +163,7 @@ void WorldView::approach(const chk::GizmoRecord& g) {
 }
 
 bool WorldView::useAt(float x, float y) {
+    if (cinematic()) return false;
     const chk::GizmoRecord* g = gizmoAt(x, y);
     if (!g) return false;
     approach(*g);
@@ -165,6 +171,7 @@ bool WorldView::useAt(float x, float y) {
 }
 
 bool WorldView::useNearest() {
+    if (cinematic()) return false;
     const chk::GizmoRecord* best = nullptr;
     double bestD = kUseRange * kUseRange;
     for (const auto& o : objects_) {
@@ -204,6 +211,7 @@ void WorldView::update(uint64_t nowMs) {
     // Gizmos first: a door that has just opened can be walked through.
     for (const chk::GizmoRecord* g : level_->update(elapsedMs_)) walk_->repaint(*level_, *g);
     if (const auto* f = foes_->find(player_->target())) player_->trackTarget(f->record->x, f->record->y, !f->dead);
+    const double x0 = player_->x(), y0 = player_->y();
     if (const auto blow = player_->update(elapsedMs_)) {
         const auto hit = foes_->blow(blow->target, player_->x(), player_->y(), blow->x, blow->y,
                                      player_->meleeRating(), player_->weapon(), elapsedMs_);
@@ -219,10 +227,22 @@ void WorldView::update(uint64_t nowMs) {
             level_->useGizmo(*pendingUse_, elapsedMs_, [&](const chk::GizmoRecord& o) { return occupied(o); });
         pendingUse_ = nullptr;
     }
+    // The level's event triggers, and the script one of them started.
+    cutscene_->update(elapsedMs_, x0, y0, player_->x(), player_->y(),
+                      [&](const chk::GizmoRecord& o) { return occupied(o); });
+    if (cinematic() && !wasCinematic_) {
+        // Rebuild choice: the player stops where it stands for the cutscene.
+        pendingUse_ = nullptr;
+        player_->steer(0, 0);
+        player_->walkTo(player_->x(), player_->y());
+    }
+    wasCinematic_ = cinematic();
     // The camera stays centred on the player (FUN_00498250 and the per-frame
-    // view update: the followed agent's screen position minus half the view).
-    const auto p = world::toScreen(player_->x(), player_->y());
-    camX_ = std::floor(p.x), camY_ = std::floor(p.y);
+    // view update: the followed agent's screen position minus half the view),
+    // unless a script has moved it. A shake moves the whole view.
+    const auto cam = cutscene_->camera();
+    const auto p = cam ? world::toScreen(cam->x, cam->y) : world::toScreen(player_->x(), player_->y());
+    camX_ = std::floor(p.x) + cutscene_->shakeX(), camY_ = std::floor(p.y) + cutscene_->shakeY();
 }
 
 const Texture* WorldView::tile(const chk::Layer& layer) const {
@@ -251,7 +271,8 @@ void WorldView::drawLayer(int x, int y, int layer) const {
     SDL_RenderTexture(ren_, t->tex, nullptr, &dst);
 }
 
-void WorldView::drawImage(const std::string& key, const render::RgbaImage* img, double left, double top) const {
+void WorldView::drawImage(const std::string& key, const render::RgbaImage* img, double left, double top,
+                          bool lit) const {
     auto it = objectTextures_.find(key);
     if (it == objectTextures_.end()) {
         Texture t;
@@ -265,6 +286,13 @@ void WorldView::drawImage(const std::string& key, const render::RgbaImage* img, 
     if (x > screenW_ || x + float(t.w) < 0 || y > screenH_ || y + float(t.h) < 0) return;
     const SDL_FRect dst{x, y, float(t.w), float(t.h)};
     SDL_RenderTexture(ren_, t.tex, nullptr, &dst);
+    if (lit) {
+        // A script's Highlight: how the original lights the gizmo up is not
+        // read yet; the rebuild draws it a second time, added on.
+        SDL_SetTextureBlendMode(t.tex, SDL_BLENDMODE_ADD);
+        SDL_RenderTexture(ren_, t.tex, nullptr, &dst);
+        SDL_SetTextureBlendMode(t.tex, SDL_BLENDMODE_BLEND);
+    }
 }
 
 void WorldView::drawGizmo(const chk::GizmoRecord& g) const {
@@ -272,7 +300,7 @@ void WorldView::drawGizmo(const chk::GizmoRecord& g) const {
     for (const size_t i : level_->gizmoLayers(g, level_->gizmoFrame(g, elapsedMs_))) {
         const auto tl = level_->gizmoFrameTopLeft(g, i);
         drawImage(std::to_string(g.gizmo) + ":" + std::to_string(i) + ":" + frames[i].path,
-                  level_->gizmoFrameImage(g, i), tl.x, tl.y);
+                  level_->gizmoFrameImage(g, i), tl.x, tl.y, cutscene_->highlighted(g.instance));
     }
 }
 
@@ -407,6 +435,7 @@ void WorldView::draw() const {
     }
     wallsUpTo(1e9);
     drawTargetBar();
+    cutscene_->draw();
 }
 
 }  // namespace harbinger::app

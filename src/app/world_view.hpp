@@ -13,6 +13,8 @@
 #include <vector>
 
 #include "app/assets.hpp"
+#include "app/cutscene.hpp"
+#include "app/sound.hpp"
 #include "world/combat.hpp"
 #include "world/foes.hpp"
 #include "world/level.hpp"
@@ -23,13 +25,24 @@ namespace harbinger::app {
 
 class WorldView {
 public:
-    // Loads level `id`, stands the player's character on its "Default"
-    // entry point and centres the camera on it.
+    // Loads level `id`, stands the player's character on its entry point
+    // `entry` (0, "Default", for a new game) and centres the camera on it.
     WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world::Character character, int screenW,
-              int screenH);
+              int screenH, uint16_t entry = 0);
     ~WorldView();
     WorldView(const WorldView&) = delete;
     WorldView& operator=(const WorldView&) = delete;
+
+    // Where the level's trigger scripts play their sounds and voice lines.
+    void setSound(SoundSystem* sound) { cutscene_->setSound(sound); }
+    // A trigger script's cinematic mode: the player takes no orders, and
+    // steer, walkTo, attack and use do nothing.
+    bool cinematic() const { return cutscene_->cinematic(); }
+    // Closes a script's thought bubble: a click on it at view pixel (x, y),
+    // or the close button (pad or key). False if nothing was closed.
+    bool clickBubble(float x, float y) { return cutscene_->click(x, y); }
+    bool closeBubble() { return cutscene_->dismiss(); }
+    const Cutscene& cutscene() const { return *cutscene_; }
 
     // Direct control from a stick or keys: walk towards screen direction
     // (dx, dy) (any length; 0, 0 stops).
@@ -69,7 +82,8 @@ private:
     void drawAgent(const chk::AgentRecord& a) const;
     void drawPlayer() const;
     void drawTargetBar() const;
-    void drawImage(const std::string& key, const render::RgbaImage* img, double left, double top) const;
+    void drawImage(const std::string& key, const render::RgbaImage* img, double left, double top,
+                   bool lit = false) const;
     const chk::GizmoRecord* gizmoAt(float x, float y) const;
     void approach(const chk::GizmoRecord& g);
     bool occupied(const chk::GizmoRecord& g) const;
@@ -81,6 +95,8 @@ private:
     std::unique_ptr<world::Player> player_;
     world::Rng rng_;
     std::unique_ptr<world::Foes> foes_;
+    std::unique_ptr<Cutscene> cutscene_;
+    bool wasCinematic_ = false;
     const chk::GizmoRecord* pendingUse_ = nullptr;  // walking up to use it
     int screenW_, screenH_;
     double camX_ = 0, camY_ = 0;  // map screen position at the centre of the view

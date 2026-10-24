@@ -25,6 +25,7 @@
 #include "render/sprite.hpp"
 #include "world/gizmo_state.hpp"
 #include "world/level.hpp"
+#include "world/script.hpp"
 #include "world/walkmap.hpp"
 
 using namespace harbinger;
@@ -518,6 +519,15 @@ static void testRealData(const char* dir) {
     }
     CHECK(voiced > 50 && unvoiced == 0);
 
+    // Refuse Disposal: walking up to the portal sets off trigger 4, whose
+    // script (id 11) is the portal scene with seven thought bubbles.
+    {
+        world::Level trash(vfs, ini, 11);
+        world::TriggerWatch watch(trash.map());
+        const auto fired = watch.step(68.48, 54.58, 62.0, 57.0);
+        CHECK(fired.size() == 1 && fired[0]->id == 4 && fired[0]->script == 11);
+    }
+
     // A sheet holds one frame per frame of its direction (all but a few
     // editor leftovers).
     size_t agentFiles = 0, anims = 0, sheets = 0, sheetMismatch = 0;
@@ -700,6 +710,49 @@ static void testScript() {
     CHECK(threw);
 }
 
+static void testScriptRunning() {
+    // FUN_0048b390: a move that starts inside, crosses, or only nears the circle.
+    CHECK(world::entersCircle(0.5, 0, 0.5, 0, 0, 0, 1));    // standing inside
+    CHECK(world::entersCircle(-3, 0, 3, 0, 0, 0, 1));       // straight through
+    CHECK(world::entersCircle(-3, 0, -0.9, 0, 0, 0, 1));    // stops just inside
+    CHECK(!world::entersCircle(-3, 0, -1.1, 0, 0, 0, 1));   // stops short
+    CHECK(!world::entersCircle(-3, 1.5, 3, 1.5, 0, 0, 1));  // passes by
+    CHECK(!world::entersCircle(2, 0, 2, 0, 0, 0, 1));       // standing outside
+
+    chk::Level level;
+    chk::EventTrigger t;
+    t.x = 10, t.y = 10, t.radius = 2, t.id = 7;
+    level.eventTriggers.push_back(t);
+    world::TriggerWatch watch(level);
+    CHECK(watch.step(0, 0, 1, 1).empty());
+    const auto fired = watch.step(5, 5, 9, 9);
+    CHECK(fired.size() == 1 && fired[0]->id == 7);
+    CHECK(watch.step(9, 9, 10, 10).empty());  // once only
+
+    // FUN_004fd8a0: each command runs until it says it is done; done or
+    // skipped commands hand on to the next one in the same frame.
+    auto script = std::make_shared<gsc::Script>(gsc::parse(
+        "Version 0.1\r\nWait(100)\r\nSound(5, NoWait)\r\nWait(50)\r\nShake(1, 1, 10, Rndm, Rndm, Wait)\r\n"));
+    world::ScriptRunner runner;
+    std::vector<std::pair<int, bool>> calls;  // (line, first call)
+    uint64_t until = 0;
+    auto host = [&](const gsc::Line& l, bool first, uint64_t now) {
+        calls.emplace_back(l.lineNumber, first);
+        if (l.command == gsc::Command::Sound) return world::CommandResult::Skip;
+        if (first) until = now + uint64_t(l.number(l.command == gsc::Command::Wait ? 0 : 2));
+        return now >= until ? world::CommandResult::Done : world::CommandResult::Running;
+    };
+    runner.start(script);
+    CHECK(!runner.update(host, 0) && runner.line() == 0);
+    CHECK(!runner.update(host, 50) && runner.line() == 0);
+    CHECK(!runner.update(host, 100) && runner.line() == 2);  // Wait done, Sound skipped, Wait(50) started
+    CHECK(!runner.update(host, 150) && runner.line() == 3);
+    CHECK(runner.update(host, 160) && !runner.running());
+    const std::vector<std::pair<int, bool>> expect{{2, true},  {2, false}, {2, false}, {3, true},
+                                                   {4, true},  {4, false}, {5, true},  {5, false}};
+    CHECK(calls == expect);
+}
+
 int main() {
     testBrush();
     testLevel();
@@ -707,6 +760,7 @@ int main() {
     testGizmoStates();
     testAgents();
     testScript();
+    testScriptRunning();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
         testRealData(dir);
     else
