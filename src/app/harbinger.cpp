@@ -4,7 +4,7 @@
 // music and UI sounds. Play opens the first level with the chosen character
 // standing on its entry point, ready to walk.
 //
-//   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id]
+//   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id] [--entry id]
 //             [--character human|gladiator|culibine] [--no-audio] [--settings config.cfg] [--run-ms ms]
 //             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack]]
 //
@@ -47,6 +47,7 @@ constexpr const char* kLoadItf = "res/common/interface/start/load.itf";
 struct Options {
     std::string data, screen = "startup", screenshot, settings;
     uint16_t level = 1;  // a new game starts in level 1 (FUN_00497850)
+    uint16_t entry = 0;  // the level's entry point (0 = "Default"; a testing aid)
     bool audio = true;
     bool attack = false;  // screenshot mode: the attack button at 0 ms
     uint64_t timeMs = 0, runMs = 0;
@@ -99,6 +100,7 @@ public:
             playMusic(introMusic_ ? &*introMusic_ : nullptr);
         }
         level_ = opt.level;
+        entry_ = opt.entry;
         character_ = opt.character;
         if (opt.screen == "new") openNew();
         else if (opt.screen == "options") openOptions();
@@ -190,9 +192,9 @@ public:
         if (world_) {
             world_->draw();
             SDL_SetRenderDrawColor(ren_, 160, 255, 160, 255);
-            const std::string title = world_->level().map().name + "  (walking and melee only: no HUD, scripts or enemy AI yet)";
+            const std::string title = world_->level().map().name + "  (walking, melee and trigger scripts: no HUD or enemy AI yet)";
             SDL_RenderDebugText(ren_, 8, 8, title.c_str());
-            SDL_RenderDebugText(ren_, 8, 20, "Walk: stick / WASD / click   Hit: click enemy / F / X / RT   Menu: Esc / B");
+            SDL_RenderDebugText(ren_, 8, 20, "Walk: stick / WASD / click   Hit: click enemy / F / X / RT   Use, close bubble: E / Space / A   Menu: Esc / B");
         } else {
             screen_->draw(ren_);
         }
@@ -206,6 +208,7 @@ public:
     }
     // Screenshot mode: walk to a view pixel, or hold the stick in a direction.
     void clickWorld(SDL_FPoint p) {
+        if (world_ && world_->clickBubble(p.x, p.y)) return;
         if (world_ && !world_->attackAt(p.x, p.y) && !world_->useAt(p.x, p.y)) world_->walkTo(p.x, p.y);
     }
     void attackWorld() {
@@ -218,7 +221,8 @@ private:
     // (Harbinger.ini [Video] HiRes; the front end is always 800x600).
     void startGame() {
         const int w = highRes_ ? 1024 : kScreenW, h = highRes_ ? 768 : kScreenH;
-        world_ = std::make_unique<WorldView>(assets_, ren_, level_, character_, w, h);
+        world_ = std::make_unique<WorldView>(assets_, ren_, level_, character_, w, h, entry_);
+        world_->setSound(sound_.get());
         SDL_SetRenderLogicalPresentation(ren_, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
         gameW_ = w, gameH_ = h;
         mouse_ = {w / 2.0f, h / 2.0f};
@@ -249,6 +253,8 @@ private:
                     showCursor_ = true;
                     // On an enemy: go and hit it (GAttackAction); on a console or
                     // chest: go and use it; elsewhere walk.
+                    // A thought bubble takes the click that lands on it.
+                    if (world_->clickBubble(mouse_.x, mouse_.y)) break;
                     mouseHeld_ = !world_->attackAt(mouse_.x, mouse_.y) && !world_->useAt(mouse_.x, mouse_.y);
                     if (mouseHeld_) world_->walkTo(mouse_.x, mouse_.y);
                     lastRetarget_ = now_;
@@ -267,7 +273,8 @@ private:
                 } else if (e.key.key == SDLK_F && !e.key.repeat) {
                     world_->attackNearest();
                 } else if (e.key.key == SDLK_E || e.key.key == SDLK_SPACE) {
-                    world_->useNearest();  // use the nearest console or chest
+                    // Close a thought bubble, or use the nearest console or chest.
+                    if (!world_->closeBubble()) world_->useNearest();
                 }
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
@@ -275,7 +282,8 @@ private:
                 // Attack (rebuild controls, D3-style): X / Square, or the right trigger.
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_WEST) world_->attackNearest();
                 // Use (rebuild controls): A / Cross, the nearest console or chest.
-                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) world_->useNearest();
+                // It also closes a thought bubble first.
+                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH && !world_->closeBubble()) world_->useNearest();
                 break;
             case SDL_EVENT_GAMEPAD_AXIS_MOTION:
                 if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) stick_.x = e.gaxis.value / 32767.0f;
@@ -539,7 +547,7 @@ private:
     SDL_FPoint mouse_{kScreenW / 2.0f, kScreenH / 2.0f};
     std::unique_ptr<WorldView> world_;
     std::optional<std::string> introMusic_;
-    uint16_t level_ = 1;
+    uint16_t level_ = 1, entry_ = 0;
     int gameW_ = kScreenW, gameH_ = kScreenH;
     SDL_FPoint stick_{0, 0};
     world::Character character_ = world::Character::Human;
@@ -568,6 +576,7 @@ Options parseArgs(int argc, char** argv) {
         if (a == "--data") o.data = v;
         else if (a == "--screen") o.screen = v;
         else if (a == "--level") o.level = uint16_t(std::stoul(v));
+        else if (a == "--entry") o.entry = uint16_t(std::stoul(v));
         else if (a == "--screenshot") o.screenshot = v;
         else if (a == "--settings") o.settings = v;
         else if (a == "--time") o.timeMs = std::stoull(v);
@@ -597,7 +606,7 @@ Options parseArgs(int argc, char** argv) {
             }
     }
     if (o.data.empty()) throw std::runtime_error("Harbinger.ini not found. Put harbinger.exe in the Harbinger folder, or run:\n"
-                                                 "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--no-audio] "
+                                                 "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--no-audio] "
                                                  "[--character human|gladiator|culibine] [--settings config.cfg] "
                                                  "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack]]");
     return o;
