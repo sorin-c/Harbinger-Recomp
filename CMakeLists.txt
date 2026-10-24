@@ -82,7 +82,8 @@ if(HARBINGER_BUILD_APPS)
     FetchContent_MakeAvailable(SDL3)
   endif()
 
-  add_executable(harbinger src/app/harbinger.cpp src/app/assets.cpp src/app/screen.cpp src/app/sound.cpp)
+  add_executable(harbinger src/app/harbinger.cpp src/app/assets.cpp src/app/screen.cpp src/app/sound.cpp
+    src/app/world_view.cpp)
   target_link_libraries(harbinger PRIVATE harbinger_core SDL3::SDL3)
   target_compile_options(harbinger PRIVATE ${HARBINGER_WARNINGS})
   if(WIN32)

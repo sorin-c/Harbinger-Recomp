@@ -58,6 +58,22 @@ const render::RgbaImage* Level::image(const chk::Layer& layer) {
     return slot.get();
 }
 
+render::RgbaImage Level::cutCentre(const chk::Layer& layer) {
+    render::RgbaImage out;
+    const render::RgbaImage* img = image(layer);
+    if (!img || !img->width || !img->height || layer.tile >> 12 != brs::Centre) return out;
+    out.width = kTileW;
+    out.height = kTileH;
+    out.pixels.assign(size_t(kTileW) * kTileH, 0);
+    const brs::Offset o = brs::centreOffset(layer.tile);
+    for (int v = 0; v < kTileH; ++v)
+        for (int u = 0; u < kTileW; ++u)
+            if (inDiamond(u, v))
+                out.pixels[size_t(v) * kTileW + size_t(u)] =
+                    img->pixels[size_t((o.y + v) % img->height) * size_t(img->width) + size_t((o.x + u) % img->width)];
+    return out;
+}
+
 void Level::drawLayer(render::RgbaImage& dst, int x, int y, int layer, int originX, int originY) {
     const chk::Cell& cell = map_.at(x, y);
     if (layer >= cell.count) return;
@@ -66,19 +82,12 @@ void Level::drawLayer(render::RgbaImage& dst, int x, int y, int layer, int origi
     if (!img || !img->width || !img->height) return;
     const ScreenPoint top = toScreen(x, y);
     const int left = int(top.x) - kTileW / 2 - originX, boxTop = int(top.y) - originY;
-    if (l.tile >> 12 == brs::Centre) {
-        const brs::Offset o = brs::centreOffset(l.tile);
-        for (int v = 0; v < kTileH; ++v)
-            for (int u = 0; u < kTileW; ++u)
-                if (inDiamond(u, v))
-                    put(dst, left + u, boxTop + v,
-                        img->pixels[size_t((o.y + v) % img->height) * size_t(img->width) + size_t((o.x + u) % img->width)]);
-        return;
-    }
-    const int imgTop = boxTop + kTileH - img->height;
-    for (int v = 0; v < img->height; ++v)
-        for (int u = 0; u < img->width; ++u)
-            put(dst, left + u, imgTop + v, img->pixels[size_t(v) * size_t(img->width) + size_t(u)]);
+    const render::RgbaImage cut = l.tile >> 12 == brs::Centre ? cutCentre(l) : render::RgbaImage{};
+    const render::RgbaImage& src = cut.width ? cut : *img;
+    const int imgTop = boxTop + kTileH - src.height;
+    for (int v = 0; v < src.height; ++v)
+        for (int u = 0; u < src.width; ++u)
+            put(dst, left + u, imgTop + v, src.pixels[size_t(v) * size_t(src.width) + size_t(u)]);
 }
 
 }  // namespace harbinger::world

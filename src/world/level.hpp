@@ -38,6 +38,10 @@ public:
     // The decoded image for a layer's tile (cached), or nullptr.
     const render::RgbaImage* image(const chk::Layer& layer);
 
+    // A centre tile's 128x64 diamond cut from its texture (transparent outside
+    // the diamond), or an empty image if `layer` is not a centre tile.
+    render::RgbaImage cutCentre(const chk::Layer& layer);
+
     // Draws one layer of cell (x, y) into `dst`, whose pixel (0, 0) is map
     // screen position (originX, originY). Centre tiles are cut from their
     // texture as a diamond; other tiles are drawn whole, bottom-aligned on the

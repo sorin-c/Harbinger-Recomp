@@ -1,15 +1,19 @@
-// harbinger: the rebuilt game. For now it boots to the front end: the main menu
+// harbinger: the rebuilt game. It boots to the front end: the main menu
 // (startup.itf), the character screen (new.itf), Options and Load Game, drawn
 // from the original interface, font, item and cursor files, with the menu
-// music and UI sounds.
+// music and UI sounds. Play opens the first level, so far as a map to look
+// around: floor and walls, no objects or characters yet.
 //
-//   harbinger [--data <install dir>] [--screen startup|new|options|load] [--no-audio]
-//             [--settings config.cfg] [--run-ms ms] [--screenshot out.bmp [--time ms] [--mouse x,y]]
+//   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id]
+//             [--no-audio] [--settings config.cfg] [--run-ms ms]
+//             [--screenshot out.bmp [--time ms] [--mouse x,y]]
 //
 // Mouse, keyboard (up/down to move, left/right for sliders, Enter, Esc = back)
-// and gamepad (D-pad/stick, A, B = back) all drive the menus.
+// and gamepad (D-pad/stick, A, B = back) all drive the menus. In the level,
+// arrows/WASD, the screen edges or the left stick move the camera.
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -21,6 +25,7 @@
 #include "app/assets.hpp"
 #include "app/screen.hpp"
 #include "app/sound.hpp"
+#include "app/world_view.hpp"
 #include "engine/display.hpp"
 #include "engine/settings.hpp"
 
@@ -37,6 +42,7 @@ constexpr const char* kLoadItf = "res/common/interface/start/load.itf";
 
 struct Options {
     std::string data, screen = "startup", screenshot, settings;
+    uint16_t level = 1;  // a new game starts in level 1 (FUN_00497850)
     bool audio = true;
     uint64_t timeMs = 0, runMs = 0;
     std::optional<SDL_FPoint> mouse;
@@ -91,15 +97,18 @@ public:
                 }
             }
         }
+        level_ = opt.level;
         if (opt.screen == "new") openNew();
         else if (opt.screen == "options") openOptions();
         else if (opt.screen == "load") openLoad();
         else open(kStartupItf);
+        if (opt.screen == "game") startGame();
     }
 
     bool running() const { return running_; }
 
     void handle(const SDL_Event& e) {
+        if (world_) return handleWorld(e);
         switch (e.type) {
             case SDL_EVENT_QUIT: running_ = false; break;
             case SDL_EVENT_GAMEPAD_ADDED: SDL_OpenGamepad(e.gdevice.which); break;
@@ -160,6 +169,7 @@ public:
 
     void update(uint64_t nowMs) {
         now_ = nowMs;
+        if (world_) return updateWorld(nowMs);
         if (pending_) {
             const std::string next = *pending_;
             pending_.reset();
@@ -175,7 +185,15 @@ public:
     void draw() {
         SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
         SDL_RenderClear(ren_);
-        screen_->draw(ren_);
+        if (world_) {
+            world_->draw();
+            SDL_SetRenderDrawColor(ren_, 160, 255, 160, 255);
+            const std::string title = world_->level().map().name + "  (preview: floor and walls only)";
+            SDL_RenderDebugText(ren_, 8, 8, title.c_str());
+            SDL_RenderDebugText(ren_, 8, 20, "Move: arrows / WASD / screen edge / left stick    Back to menu: Esc / B");
+        } else {
+            screen_->draw(ren_);
+        }
         if (showCursor_) cursor_.draw(ren_, mouse_.x, mouse_.y, now_);
     }
 
@@ -186,6 +204,74 @@ public:
     }
 
 private:
+    // The game runs at 1024x768 with High Resolution on, 800x600 without
+    // (Harbinger.ini [Video] HiRes; the front end is always 800x600).
+    void startGame() {
+        const int w = highRes_ ? 1024 : kScreenW, h = highRes_ ? 768 : kScreenH;
+        world_ = std::make_unique<WorldView>(assets_, ren_, level_, w, h);
+        SDL_SetRenderLogicalPresentation(ren_, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+        gameW_ = w, gameH_ = h;
+        mouse_ = {w / 2.0f, h / 2.0f};
+        SDL_Log("level %u: %s (%s)", level_, world_->level().map().name.c_str(), world_->level().path().c_str());
+    }
+    void endGame() {
+        world_.reset();
+        SDL_SetRenderLogicalPresentation(ren_, kScreenW, kScreenH, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+        mouse_ = {kScreenW / 2.0f, kScreenH / 2.0f};
+        open(kStartupItf);
+    }
+
+    void handleWorld(const SDL_Event& e) {
+        switch (e.type) {
+            case SDL_EVENT_QUIT: running_ = false; break;
+            case SDL_EVENT_GAMEPAD_ADDED: SDL_OpenGamepad(e.gdevice.which); break;
+            case SDL_EVENT_MOUSE_MOTION:
+                mouse_ = {e.motion.x, e.motion.y};
+                showCursor_ = mouseInWindow_ = true;
+                break;
+            case SDL_EVENT_WINDOW_MOUSE_LEAVE: mouseInWindow_ = false; break;
+            case SDL_EVENT_KEY_DOWN:
+                if (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT)) {
+                    display_.fullscreen = !display_.fullscreen;
+                    applyDisplay(win_, display_);
+                    saveDisplay();
+                } else if (e.key.key == SDLK_ESCAPE) {
+                    endGame();
+                }
+                break;
+            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) endGame();
+                break;
+            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+                if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) stick_.x = e.gaxis.value / 32767.0f;
+                if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) stick_.y = e.gaxis.value / 32767.0f;
+                if (e.gaxis.value > -8000 && e.gaxis.value < 8000) {  // dead zone
+                    if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) stick_.x = 0;
+                    if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) stick_.y = 0;
+                }
+                break;
+            default: break;
+        }
+    }
+
+    void updateWorld(uint64_t nowMs) {
+        const bool* keys = SDL_GetKeyboardState(nullptr);
+        float dx = stick_.x, dy = stick_.y;
+        if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]) dx -= 1;
+        if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) dx += 1;
+        if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) dy -= 1;
+        if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]) dy += 1;
+        if (mouseInWindow_ && showCursor_) {  // the pointer at a screen edge scrolls too
+            constexpr float edge = 8;
+            if (mouse_.x < edge) dx -= 1;
+            if (mouse_.x > gameW_ - edge) dx += 1;
+            if (mouse_.y < edge) dy -= 1;
+            if (mouse_.y > gameH_ - edge) dy += 1;
+        }
+        world_->setScroll(std::clamp(dx, -1.0f, 1.0f), std::clamp(dy, -1.0f, 1.0f));
+        world_->update(nowMs);
+    }
+
     void open(const std::string& itf) {
         current_ = itf;
         screen_.reset();
@@ -280,7 +366,7 @@ private:
         } else if (current_ == kNewItf) {
             switch (action) {
                 case 1: pending_ = kStartupItf; break;  // Back
-                case 0: SDL_Log("Play: the game itself is not rebuilt yet"); break;
+                case 0: startGame(); return;  // Play
                 case 2: case 3: case 4:  // Human / Gladiator / Culibine
                     screen_->select(uint32_t(action));
                     screen_->setDisabled(kPlay, false);
@@ -396,6 +482,11 @@ private:
     size_t choice_ = 0, displayChoice_ = 0;
     bool swapChanged_ = false, highResChanged_ = false, highRes_ = true;
     SDL_FPoint mouse_{kScreenW / 2.0f, kScreenH / 2.0f};
+    std::unique_ptr<WorldView> world_;
+    uint16_t level_ = 1;
+    int gameW_ = kScreenW, gameH_ = kScreenH;
+    SDL_FPoint stick_{0, 0};
+    bool mouseInWindow_ = false;
     bool showCursor_ = false, running_ = true, stickX_ = false, stickY_ = false;
     uint64_t now_ = 0;
 };
@@ -412,6 +503,7 @@ Options parseArgs(int argc, char** argv) {
         const std::string v = argv[++i];
         if (a == "--data") o.data = v;
         else if (a == "--screen") o.screen = v;
+        else if (a == "--level") o.level = uint16_t(std::stoul(v));
         else if (a == "--screenshot") o.screenshot = v;
         else if (a == "--settings") o.settings = v;
         else if (a == "--time") o.timeMs = std::stoull(v);
@@ -432,7 +524,7 @@ Options parseArgs(int argc, char** argv) {
             }
     }
     if (o.data.empty()) throw std::runtime_error("Harbinger.ini not found. Put harbinger.exe in the Harbinger folder, or run:\n"
-                                                 "harbinger --data <Harbinger install dir> [--screen startup|new|options|load] [--no-audio] "
+                                                 "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--no-audio] "
                                                  "[--settings config.cfg] "
                                                  "[--screenshot out.bmp [--time ms] [--mouse x,y]]");
     return o;
