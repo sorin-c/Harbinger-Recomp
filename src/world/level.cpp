@@ -79,6 +79,7 @@ Level::Level(Vfs& vfs, const Ini& ini, uint16_t id) : vfs_(vfs) {
         }
         return &it->second;
     });
+    chk::parseRest(map_, chkData);
 }
 
 const brs::Brush* Level::brush(uint16_t id) const {

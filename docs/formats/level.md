@@ -3,9 +3,10 @@
 A level ("chunk", class `GChunk`) is a grid of map cells. Each cell paints one
 or two tiles from the act's **brushes**: a floor, and on top of it a wall or an
 edge piece. Objects (gizmos), characters (agents), triggers and the rest are
-stored after the cells. The set gizmos (`docs/formats/gizmo.md`) and agents
-(`docs/formats/agent.md`) are decoded;
-triggers and the rest are not yet.
+stored after the cells. Every section is decoded to the last byte of every
+shipped level: set gizmos (`docs/formats/gizmo.md`), agents
+(`docs/formats/agent.md`), and triggers, sounds, attachments, power,
+beacons and rooms (below).
 
 Parsers: `src/formats/chk.cpp`, `src/formats/brs.cpp`. Loader and drawing:
 `src/world/level.cpp`. Tests: `tests/test_world.cpp`. Tool: `levelshot`
@@ -55,8 +56,8 @@ repeat variantCount-1:  variants 1.., FUN_00448080
                         (docs/formats/gizmo.md)
 ...                     per-variant agent lists and agents
                         (docs/formats/agent.md)
-...                     triggers, sounds, attachments, rooms,
-                        path cells (not decoded)
+...                     triggers, sounds, attachments, power, beacons,
+                        rooms (see "After the agents")
 ```
 
 `str` is the engine string (u32 length without the NUL, the characters, a NUL).
@@ -66,6 +67,63 @@ pairs: the brush id in the act's brush.mgr and the brush's tile id.
 Cells are stored **column-major**: cell (x, y) is at index `x * height + y`
 (`FUN_00447360` indexes `cells[a * dim24 + b]` and `FUN_004e2eb0` puts vertex
 x at `a`).
+
+## After the agents
+
+`chk::parseRest`. The chunk load (`0x448..`, after `FUN_00418c40` loads the
+agents) calls these in order:
+
+```
+-- FUN_0051a6a0: triggers --
+u32  eventTriggers
+u32  gizmoTriggers
+repeat eventTriggers:   GEventTrigger, FUN_0048d200
+  trigger               GGizmoTrigger_v6 (0x51a440): f64 x, y, radius; u16; u16 id
+  f64  radius2          trigger+0x48 (equal to radius in the files seen)
+  -- GEvent, FUN_0048c980 --
+  u16  n                FUN_0048ca20
+  n x u16               gizmo instances
+  n x 8 bytes           undecoded
+  u32, u8, u16          event+0x2c, +0x28, +0x34
+  u16  n                FUN_0048cd20
+  n x (u16 id, sound)   sound: see below
+  u16  n                FUN_0048cbc0
+  n x u16               instances
+  u16  script           version > 1.19 (FUN_0048ce30): a script id, 0 = none;
+                        1.18-1.19 kept the script inline, 1.17 and older nothing
+repeat gizmoTriggers:   GGizmoTrigger, FUN_004baa50
+  trigger
+  u16  gizmo            the gizmo instance it fires
+-- FUN_00504a90: placed sounds (none in the shipped levels) --
+u32  n
+n x sound               GSoundInfo, FUN_005037c0: f64 x, y; u16 sound; u16; u32
+-- FUN_0044ab80: links between gizmos --
+repeat until id == 0:   GIAttacher (FUN_004bdcc0)
+  u16 id, u32 n, n x u16    the gizmos it carries
+repeat until id == 0:   GIPowerable (0x4d4ef0)
+  u16 id, u16 n, n x u16    the gizmos powering it
+-- GChunk_v3 (0x44b200), the chunk's slot 3 --
+u16                     chunk+6
+u16  n
+n x (u16 id, u16 level) power sources (GIPowerable gizmos) and their level
+-- FUN_00436460: beacons (GRoomBeacon) --
+u32  n
+repeat n:               GBeacon_v4 (0x436410), GRoomBeacon_v4 (0x4fb010)
+  f64  x, y
+  u16  room
+  u32  m
+  m x u16               linked beacons
+  m x u32               a cost per link
+-- FUN_004fb860: rooms (GRoom, FUN_004fad80) --
+u32  n
+n x (u16 id, 4 x u16, 4 x u16)
+```
+
+Every level has as many beacons as rooms, one beacon per room, each linked
+to its neighbours: a room graph, most likely for path finding across the map.
+The script ids name scripts in the character's script manager
+(`[Human|Gladiator|Culibine] Scripts`, e.g. `res\common\managers\hscript.mgr`),
+not decoded yet.
 
 ## `.brs` layout
 
@@ -130,11 +188,15 @@ buffer, which the rebuild does not reproduce yet.
 | Brush height = wall height / 64 | likely | `brush+6 = height << 6`; wall images are 128x256 (64 floor + 192 = 3 * 64 wall) on brushes with height 3 |
 | Projection | proven / likely | vertex and UV order in `FUN_004e2eb0` (proven); the 64/32 pixel scale matches the 128x64 tiles and the original's screenshots (likely) |
 | Header word at chunk+0x32 is the level music | proven | `FUN_00497cd0` passes it to `FUN_005056c0`; it is a sound.mgr id of an MP3 in every level (Torvus Junction: 302 = `Haven.mp3`) |
+| Sections after the agents | proven | the functions above; all 93 level files parse to their last byte |
+| Beacons and rooms form a room graph | likely | counts equal in every level; links name nearby beacons |
 | Level 1 starts a new game | proven | `FUN_00497850` -> `FUN_00497cd0(this, 1)`; the original under Wine shows Torvus Junction |
 
 ## Open questions
 
-- The rest of the `.chk` after the agents: triggers, set sounds, attachments, rooms, path cells.
+- The undecoded fields after the agents: the 8-byte entries and words of an
+  event, the room words, the meaning of the beacon costs.
+- The scripts (`*script.mgr`) that event triggers run.
 - The three unknown header fields.
 - Lighting: the original darkens the floor away from lights and the player.
 - What the F* tile groups are.

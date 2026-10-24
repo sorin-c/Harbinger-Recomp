@@ -1,6 +1,7 @@
 // Tests for the level (.chk), brush (.brs) and gizmo template (.giz) parsers
 // and the level loader. Synthetic cases always run; with HARBINGER_DATA set,
 // every shipped level, brush and gizmo must parse.
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -333,7 +334,7 @@ static void testRealData(const char* dir) {
     std::map<std::pair<int, uint16_t>, giz::Template> loaded;
     std::map<uint16_t, agt::Template> agentTemplates;
     const auto agentIndex = mgr::parse(*vfs.read(ini.require("Paths", "Agents")));
-    size_t gizmos = 0, agents = 0;
+    size_t gizmos = 0, agents = 0, triggers = 0, scripted = 0;
     for (const auto& p : vfs.list("res/"))
         if (endsWith(p, ".chk")) {
             try {
@@ -353,12 +354,18 @@ static void testRealData(const char* dir) {
                     return path ? &agentTemplates.emplace(id, agt::parse(*vfs.read(*path))).first->second : nullptr;
                 });
                 agents += lv.agents.size();
+                chk::parseRest(lv, data);  // to the last byte
+                CHECK(lv.beacons.size() == lv.rooms.size());
+                triggers += lv.eventTriggers.size() + lv.gizmoTriggers.size();
+                scripted += std::count_if(lv.eventTriggers.begin(), lv.eventTriggers.end(),
+                                          [](const auto& t) { return t.script != 0; });
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "%s: %s\n", p.c_str(), e.what());
                 ++failures;
             }
         }
     CHECK(gizmos > 10000 && agents > 5000);
+    CHECK(triggers > 500 && scripted > 30);
 
     // Every agent template and animation parses, and every animation
     // direction's frame sheet exists.

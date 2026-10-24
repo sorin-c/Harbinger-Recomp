@@ -139,12 +139,16 @@ timing decoded from the original (`docs/formats/agent.md`,
 `docs/formats/gizmo.md`). `levelshot` takes a time to render a level at.
 Agents still stand still: states, movement and AI come with the game loop.
 
+The rest of the level file (triggers, attachments, power links, beacons and
+rooms, `docs/formats/level.md`) is decoded too: every shipped level now parses
+to its last byte. Nothing uses those sections yet.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
 3. Gizmo animation (frame sequences and codes) and states.
-4. The rest of the level file: triggers, sounds, rooms. Gizmo states.
-   The player on screen, walking.
+4. Scripts (`hscript.mgr` and friends) that triggers run; gizmo states.
+   The player on screen, walking, using the room graph.
 5. The in-game loop, HUD and lighting.
