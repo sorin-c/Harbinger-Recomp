@@ -13,6 +13,8 @@ set(HARBINGER_WARNINGS $<IF:$<CXX_COMPILER_ID:MSVC>,/W4,-Wall -Wextra -Wpedantic
 # File formats and engine core: no platform dependencies, used by tests and tools.
 add_library(harbinger_formats
   src/formats/acr.cpp
+  src/formats/brs.cpp
+  src/formats/chk.cpp
   src/formats/fnt.cpp
   src/formats/gim.cpp
   src/formats/itf.cpp
@@ -49,6 +51,7 @@ add_library(harbinger_core
   src/ui/controls.cpp
   src/ui/item_animation.cpp
   src/ui/text.cpp
+  src/world/level.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
 target_include_directories(harbinger_core SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/_deps/dr_libs)
@@ -59,6 +62,10 @@ target_link_libraries(sqhtool PRIVATE harbinger_formats)
 
 add_executable(gim2tga tools/gim2tga.cpp)
 target_link_libraries(gim2tga PRIVATE harbinger_formats)
+
+add_executable(levelshot tools/levelshot.cpp)
+target_link_libraries(levelshot PRIVATE harbinger_core)
+target_compile_options(levelshot PRIVATE ${HARBINGER_WARNINGS})
 
 if(HARBINGER_BUILD_APPS)
   find_package(SDL3 CONFIG QUIET)
@@ -91,7 +98,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-  foreach(t sqh gim core ui resources audio)
+  foreach(t sqh gim core ui resources audio world)
     add_executable(test_${t} tests/test_${t}.cpp)
     target_link_libraries(test_${t} PRIVATE harbinger_core)
     add_test(NAME ${t} COMMAND test_${t})
