@@ -120,10 +120,29 @@ because the view is isometric; `anm::directionFor` holds the tables as the
 last facing of each direction. `GAgentPlug_v9` calls it with plug+0x3a and the
 animation's direction count.
 
-The rebuild draws each agent's first animation in its facing's direction
-(falling back to the first direction with frames), frame 0, with the frame's hotspot on the agent's map position (the frame's
-bottom centre when there is no hotspot). Agents are sorted with the gizmos and
-walls by x + y.
+**Which animation.** An animation's `kind` is the agent state it plays in:
+`FUN_00406280` files each loaded animation in a per-state list at
+template+0x74 + kind * 0x10, and `FUN_00407950` (called when the state changes,
+`GAgentPlug_v83`) picks one of the state's animations at random. Idle is
+state 0 (every `Idle\*.anm` has kind 0; `Run\Move.anm` has 2, `Melee` 4,
+`Die` 5). The rebuild plays the idle animation and picks the variant by the
+agent's instance number, so a level looks the same every time.
+
+**Timing.** `FUN_0042c020` turns the time since the animation started into a
+frame: elapsed milliseconds divided by agent+0x1fa, which `GAgentPlug_v2` sets
+to 100 (in the melee state a template property can replace it), wrapped by the
+first direction's frame count. So animations run at 10 frames a second and
+loop. When the frame changes, `GAgentPlug_v9` looks up the direction's action
+tag for that frame: code -2 jumps to another frame, -3 holds the animation
+for a number of frames, anything else is an action point (where a shot or
+blow comes from) handed to the agent. The rebuild loops without the tags for
+now.
+
+The rebuild draws the current frame of the idle animation in the facing's
+direction (falling back to the first direction with frames), with the
+animation's hotspot on the agent's map position (the frame's bottom centre
+when there is no hotspot). Agents are sorted with the gizmos and walls by
+x + y.
 
 **Marker colours.** Agent sheets reserve palette entries 0 to 5. The layer
 compositor `FUN_004c2710` (which stacks a torso sheet on a base sheet) never
@@ -154,10 +173,14 @@ rebuild draws that as translucent black and drops the rest
 | Hotspot is the ground point | guessed | it sits near the frame bottom in every animation that has one; Vantir Checkpoint troopers stand plausibly |
 | Entries 0-5 are markers in agent sheets | proven | `FUN_004c2710` treats indices <= 5 as below art; survey of every frame sheet's first eight palette entries |
 | Entry 1 is the shadow, 2-3 figure edge, 4-5 shadow edge | likely | where the pixels sit (shadow blob, outline of the figure, outline of the blob); drawing it so removes the green and red fringes |
+| Animation kind = agent state; idle = 0 | proven / likely | `FUN_00406280`, `FUN_00407950` (proven); state 0 is idle by the file names (likely) |
+| 100 ms a frame, looping | proven | `FUN_0042c020`, `GAgentPlug_v2`, `FUN_0041dd10`; a sheet holds one frame per direction frame in 5,388 of 5,399 directions |
+| Action tags -2, -3 and action points | likely | `GAgentPlug_v9` branches; tag values in the files (most are pixel positions inside the frame) |
 | Facing to direction | proven | `FUN_004e12d0` and its two tables; the record's byte reaches plug+0x3a in `0x420520` |
 
 ## Open questions
 
-- Which animation an agent starts in (the rebuild takes the first).
-- The stats words, the fields after the animations, sound and action tags.
+- The other states (1, 3, 6 and up), and when an agent changes state.
+- Action tag playback (jumps, holds) and the sound tags.
+- The stats words and the fields after the animations.
 - The rest of the record fields (slot 18 words, the flag byte and words).

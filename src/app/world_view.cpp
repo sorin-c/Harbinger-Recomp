@@ -35,6 +35,8 @@ WorldView::~WorldView() {
 void WorldView::update(uint64_t nowMs) {
     const double dt = lastMs_ ? double(nowMs - lastMs_) / 1000.0 : 0.0;
     lastMs_ = nowMs;
+    if (!startMs_) startMs_ = nowMs;
+    elapsedMs_ = nowMs - startMs_;
     camX_ += scrollX_ * kScrollSpeed * dt;
     camY_ += scrollY_ * kScrollSpeed * dt;
     // Keep the view centre over the map's diamond bounding box.
@@ -88,16 +90,20 @@ void WorldView::drawImage(const std::string& key, const render::RgbaImage* img, 
 }
 
 void WorldView::drawGizmo(const chk::GizmoRecord& g) const {
-    const giz::Frame& frame = level_->gizmoTemplate(g).frames[0];
-    const auto tl = level_->gizmoTopLeft(g);
-    drawImage(frame.path, level_->gizmoImage(frame), tl.x, tl.y);
+    const auto& frames = level_->gizmoTemplate(g).frames;
+    auto draw = [&](size_t i) {
+        const auto tl = level_->gizmoFrameTopLeft(g, i);
+        drawImage(frames[i].path, level_->gizmoImage(frames[i]), tl.x, tl.y);
+    };
+    draw(0);
+    if (const size_t f = level_->gizmoFrame(g, elapsedMs_); f > 0) draw(f);
 }
 
 void WorldView::drawAgent(const chk::AgentRecord& a) const {
-    const auto pose = level_->agentPose(a);
+    const auto pose = level_->agentPose(a, elapsedMs_);
     if (!pose.image) return;
     const auto p = world::toScreen(a.x, a.y);
-    drawImage(pose.sheet, pose.image, p.x - pose.anchorX, p.y - pose.anchorY);
+    drawImage(pose.key, pose.image, p.x - pose.anchorX, p.y - pose.anchorY);
 }
 
 void WorldView::draw() const {

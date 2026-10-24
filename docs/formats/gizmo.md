@@ -142,8 +142,27 @@ left half of the gizmo's cell and runs towards +x and -y, and its bounding
 diamond is as wide as the image (Trailer: 6 by 8 half cells, 448 px).
 
 The rebuild draws each gizmo's first frame there, sorted with the walls by the
-x + y of its nearest footprint cell. Not done yet: animation (the frames after
-the first, their durations and codes), states (open, powered), lights.
+x + y of its nearest footprint cell.
+
+**Animation.** Frames after the first are mostly overlays: a small image placed
+at the frame's `(x, y)` on the first frame (the town generator's turning core,
+the crashed ship's flames), while the first frame, often with duration 0, is
+the whole object. So the rebuild draws the first frame and, over it, the frame
+the gizmo shows now. `GAnimatedGizmo_v8` finds that frame from a time:
+`FUN_004305b0` walks the frames adding up their durations and returns the
+first whose running total reaches the time, wrapping the time by the total.
+
+Looped gizmos (classes 1 and 9) play all the time (`GLoopedGizmoPlug_v28`
+advances them every tick). Their record gives a u32 (plug+0x34, 0 in every
+level; `GAnimatedGizmoPlug_v28` subtracts it from the start time, so a phase)
+and a mode word (plug+0x7c). `GLoopedGizmo_v4` notes the first frame whose code
+is 1 (gizmo+0xba, 0 if none), and `GLoopedGizmoPlug_v17` loops mode 3 gizmos
+from that frame to the last and the others over the frames before it (all
+frames when there is no code-1 frame). Class 9 also runs its loop backwards at
+times (`GLoopedGizmoPlug_v29`, a flag at gizmo+0xb8 set for class 9); the
+rebuild plays it forwards. The other classes animate when their state changes
+(doors opening, consoles powering up), which is not rebuilt yet, so they show
+their first frame.
 
 An Umbilical Shell's first frame is only an outline of its footprint (editor
 art); the original shows nothing there at rest, so the rebuild hides the
@@ -161,13 +180,17 @@ class until its states are decoded.
 | Chest record: 3 u16 at version 1.23 | proven | 0x445140 compares the version with 1.22 (`fcomp`, C0 set below 1.22 -> 4 words) |
 | Draw anchor | likely | `FUN_004b3690` (proven); Torvus Junction drawn this way matches the original's screen under Wine |
 | Instance lists select the gizmos a variant keeps | proven | `FUN_004477e0` (list per variant, seek past the others); `FUN_004495a0` compares each record's instance with the list and deletes the rest |
-| Frame codes, mask cell fields | guessed / open | see the text |
+| Frame lookup by running duration | proven | `GAnimatedGizmo_v8`, `FUN_004305b0` |
+| Looped range and code-1 frame | proven | `GLoopedGizmo_v4`, `GLoopedGizmoPlug_v17`; modes 0 (167 records) and 3 (27) in the levels |
+| Later frames are overlays at (x, y) | likely | the files (frame 0 whole, later frames small, same offset); the town generator lines up drawn this way |
+| Frame codes other than 1, mask cell fields | guessed / open | see the text |
 
 ## Open questions
 
-- Frame codes: the classes look for the frame whose code is 1 (Looped,
-  Pillar), 7 (ChargingStn, consoles, Umbilical) or 8 (Spawn), so a code likely
-  marks where an animation sequence starts.
+- Frame codes: code 1 starts a looped gizmo's second loop (proven); the
+  classes also look for 7 (ChargingStn, consoles, Umbilical) and 8 (Spawn), so
+  those likely mark where a state's sequence starts.
+- Where the original draws overlay frames (the draw call is not traced).
 - The mask cells' `kind`, `a`, `b` (walkability or occlusion), and the
   missing mask images.
 - The light block and the script blocks.

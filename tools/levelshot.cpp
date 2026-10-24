@@ -17,7 +17,7 @@ using namespace harbinger;
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        std::fprintf(stderr, "usage: %s <install dir> <level id> <out.tga> [layers]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <install dir> <level id> <out.tga> [layers] [ms]\n", argv[0]);
         return 2;
     }
     try {
@@ -27,6 +27,7 @@ int main(int argc, char** argv) {
         const Ini ini = Ini::fromBytes(*iniData);
         world::Level level(vfs, ini, uint16_t(std::atoi(argv[2])));
         const int layers = argc > 4 ? std::atoi(argv[4]) : 3;
+        const uint64_t ms = argc > 5 ? std::strtoull(argv[5], nullptr, 10) : 0;  // animation time
         const auto& m = level.map();
 
         // Bounds of every cell's diamond plus wall height.
@@ -55,9 +56,9 @@ int main(int argc, char** argv) {
         std::vector<Object> objects;
         if (layers > 2) {
             for (const auto& g : m.gizmos)
-                objects.push_back({level.gizmoDepth(g), [&] { level.drawGizmo(img, g, originX, originY); }});
+                objects.push_back({level.gizmoDepth(g), [&] { level.drawGizmo(img, g, originX, originY, ms); }});
             for (const auto& a : m.agents)
-                objects.push_back({level.agentDepth(a), [&] { level.drawAgent(img, a, originX, originY); }});
+                objects.push_back({level.agentDepth(a), [&] { level.drawAgent(img, a, originX, originY, ms); }});
         }
         std::stable_sort(objects.begin(), objects.end(), [](const auto& a, const auto& b) { return a.depth < b.depth; });
         size_t next = 0;

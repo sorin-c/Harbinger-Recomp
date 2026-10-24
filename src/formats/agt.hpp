@@ -18,9 +18,16 @@ enum Class : uint16_t {
     ClassCount = 42,
 };
 
+// What an agent is doing. An animation's kind is the state it plays in:
+// FUN_00406280 files each animation under template+0x74 + kind * 0x10, and
+// FUN_00407950 picks one of a state's animations at random. Names from the
+// shipped files (Idle\Idle.anm is kind 0, Run\Move.anm 2, Bite\Melee.anm 4,
+// Die\Die.anm 5); the rest are not named yet.
+enum State : int16_t { Idle = 0, Move = 2, Melee = 4, Die = 5 };
+
 // GAgentAnimCtr (vtable 0x54a05c): one animation the agent can play.
 struct Anim {
-    int16_t kind = 0;     // ctr+4; kind 2 derives a speed from `param`
+    int16_t kind = 0;     // ctr+4: the State; kind 2 derives a speed from `param`
     int16_t param = 0;    // ctr+0xc
     std::string path;     // the .anm
 };
@@ -35,6 +42,15 @@ struct Template {
     std::string name;
     std::vector<Anim> anims;
     std::vector<uint8_t> rest;    // the fields after the animations, undecoded
+
+    // The animations filed under `state`, in file order (the variant numbers
+    // FUN_00407950 picks from).
+    std::vector<const Anim*> animsFor(int16_t state) const {
+        std::vector<const Anim*> out;
+        for (const auto& a : anims)
+            if (a.kind == state) out.push_back(&a);
+        return out;
+    }
 
     bool isNpc() const { return cls >= HumanNPC && cls <= ScintillaCaptive; }
     // Whether a level record of this class carries the GAgentPlug-derived

@@ -1,5 +1,6 @@
 #include "formats/giz.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 
@@ -194,6 +195,28 @@ size_t Template::recordExtra(const uint8_t* p, size_t avail) const {
     default: break;  // Static, Animated, UmbilicalShell, Flicker: nothing more
     }
     return n;
+}
+
+size_t Template::loopStart() const {
+    for (size_t i = 0; i < frames.size(); ++i)
+        if (frames[i].code == 1) return i;
+    return 0;
+}
+
+size_t Template::frameAt(uint64_t ms, size_t first, size_t last) const {
+    if (frames.empty()) return 0;
+    last = std::min(last, frames.size() - 1);
+    if (first > last) return last;
+    uint64_t total = 0;
+    for (size_t i = first; i <= last; ++i) total += frames[i].durationMs;
+    if (total == 0) return first;
+    if (ms > total) ms %= total;
+    uint64_t sum = 0;
+    for (size_t i = first; i <= last; ++i) {
+        sum += frames[i].durationMs;
+        if (ms <= sum) return i;
+    }
+    return last;
 }
 
 }  // namespace harbinger::giz

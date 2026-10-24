@@ -171,56 +171,111 @@ bool Level::gizmoVisible(const chk::GizmoRecord& g) const {
     return map_.keeps(g) && !t.frames.empty() && t.cls != giz::UmbilicalShell;
 }
 
-void Level::drawGizmo(render::RgbaImage& dst, const chk::GizmoRecord& g, int originX, int originY) {
+size_t Level::gizmoFrame(const chk::GizmoRecord& g, uint64_t ms) const {
+    const giz::Template& t = gizmoTemplate(g);
+    if (t.frames.size() < 2 || (t.cls != giz::Looped && t.cls != giz::Looped2)) return 0;
+    // The record's class data (GLoopedGizmoPlug_v22): a u32 start phase in
+    // milliseconds (plug+0x34, which GAnimatedGizmoPlug_v28 subtracts from
+    // the start time) and a u16 mode (plug+0x7c).
+    uint32_t phase = 0;
+    uint16_t mode = 0;
+    if (g.extra.size() >= 6) {
+        phase = uint32_t(g.extra[0]) | uint32_t(g.extra[1]) << 8 | uint32_t(g.extra[2]) << 16 | uint32_t(g.extra[3]) << 24;
+        mode = uint16_t(g.extra[4] | g.extra[5] << 8);
+    }
+    // GLoopedGizmoPlug_v17: mode 3 loops from the code-1 frame to the end;
+    // otherwise the frames before it, or all of them when there is none.
+    // (Looped2 also plays its loop backwards at times, GLoopedGizmoPlug_v29;
+    // not rebuilt yet.)
+    const size_t start = t.loopStart();
+    size_t first = 0, last = t.frames.size() - 1;
+    if (mode == 3) first = start;
+    else if (start > 0) last = start - 1;
+    return t.frameAt(ms + phase, first, last);
+}
+
+ScreenPoint Level::gizmoFrameTopLeft(const chk::GizmoRecord& g, size_t i) {
+    ScreenPoint tl = gizmoTopLeft(g);
+    if (i > 0) {
+        const giz::Frame& f = gizmoTemplate(g).frames[i];
+        tl.x += f.x;
+        tl.y += f.y;
+    }
+    return tl;
+}
+
+void Level::drawGizmo(render::RgbaImage& dst, const chk::GizmoRecord& g, int originX, int originY, uint64_t ms) {
     const giz::Template& t = gizmoTemplate(g);
     if (!gizmoVisible(g)) return;
-    const render::RgbaImage* img = gizmoImage(t.frames[0]);
-    if (!img) return;
-    const ScreenPoint tl = gizmoTopLeft(g);
-    const int left = int(std::lround(tl.x)) - originX, top = int(std::lround(tl.y)) - originY;
-    for (int v = 0; v < img->height; ++v)
-        for (int u = 0; u < img->width; ++u)
-            blend(dst, left + u, top + v, img->pixels[size_t(v) * size_t(img->width) + size_t(u)]);
+    auto draw = [&](size_t i) {
+        const render::RgbaImage* img = gizmoImage(t.frames[i]);
+        if (!img) return;
+        const ScreenPoint tl = gizmoFrameTopLeft(g, i);
+        const int left = int(std::lround(tl.x)) - originX, top = int(std::lround(tl.y)) - originY;
+        for (int v = 0; v < img->height; ++v)
+            for (int u = 0; u < img->width; ++u)
+                blend(dst, left + u, top + v, img->pixels[size_t(v) * size_t(img->width) + size_t(u)]);
+    };
+    draw(0);
+    if (const size_t f = gizmoFrame(g, ms); f > 0) draw(f);
 }
 
 const agt::Template& Level::agentTemplate(const chk::AgentRecord& a) const {
     return agents_.at(a.agent);  // parseAgents loaded every template the records name
 }
 
-Level::Pose Level::agentPose(const chk::AgentRecord& a) {
-    const auto key = std::make_pair(a.agent, a.facing);
-    if (auto it = poses_.find(key); it != poses_.end()) return it->second;
-    Pose& pose = poses_[key];
+const Level::AgentAnim& Level::agentAnim(const chk::AgentRecord& a) {
     const agt::Template& t = agentTemplate(a);
-    if (t.anims.empty()) return pose;
-    const auto anmData = vfs_.read(t.anims[0].path);
-    if (!anmData) return pose;
+    const auto idle = t.animsFor(agt::Idle);
+    // FUN_00407950 picks a state's animation at random; the rebuild picks by
+    // instance so a level looks the same every time.
+    const size_t variant = idle.empty() ? 0 : a.instance % idle.size();
+    const auto key = std::make_tuple(a.agent, a.facing, variant);
+    if (auto it = agentAnims_.find(key); it != agentAnims_.end()) return it->second;
+    AgentAnim& out = agentAnims_[key];
+    const agt::Anim* chosen = idle.empty() ? (t.anims.empty() ? nullptr : &t.anims[0]) : idle[variant];
+    if (!chosen) return out;
+    const auto anmData = vfs_.read(chosen->path);
+    if (!anmData) return out;
     const anm::Animation anim = anm::parse(*anmData);
     const anm::Direction* dir = &anim.directions[anm::directionFor(a.facing, anim.directions.size())];
     if (dir->frames.empty()) dir = anim.firstDirection();
-    if (!dir) return pose;
-    const std::string sheet = anm::sheetPath(dir->frames[0]);
-    pose.sheet = sheet;
-    auto& slot = agentImages_[sheet];
-    if (!slot) {
-        auto data = vfs_.read(sheet);
-        if (!data) return pose;
-        const auto img = gim::decode(*data);
-        slot = std::make_unique<render::RgbaImage>(
-            render::RgbaImage{img.width, img.height, render::toRgba(img, 0, render::KeyMode::Agent)});
+    if (!dir) return out;
+    out.sheet = anm::sheetPath(dir->frames[0]);
+    out.frames = anim.directions[0].frames.empty() ? dir->frames.size() : anim.directions[0].frames.size();
+    auto& sheet = agentSheets_[out.sheet];
+    if (sheet.empty()) {
+        if (auto data = vfs_.read(out.sheet)) {
+            const auto img = gim::decode(*data);
+            for (size_t f = 0; f < img.frames.size(); ++f)
+                sheet.push_back({img.width, img.height, render::toRgba(img, f, render::KeyMode::Agent)});
+        }
     }
-    pose.image = slot.get();
+    if (sheet.empty()) return out;
+    out.images = &sheet;
     // The hotspot sits near the bottom of the frame in every animation that
     // has one, so it is taken as the ground point (guess); without one, the
     // bottom centre.
-    pose.anchorX = anim.hotspot ? anim.hotspot->first : slot->width / 2;
-    pose.anchorY = anim.hotspot ? anim.hotspot->second : slot->height;
+    out.anchorX = anim.hotspot ? anim.hotspot->first : sheet[0].width / 2;
+    out.anchorY = anim.hotspot ? anim.hotspot->second : sheet[0].height;
+    return out;
+}
+
+Level::Pose Level::agentPose(const chk::AgentRecord& a, uint64_t ms) {
+    const AgentAnim& anim = agentAnim(a);
+    Pose pose;
+    if (!anim.images || anim.frames == 0) return pose;
+    const size_t frame = std::min(size_t(ms / kAgentFrameMs % anim.frames), anim.images->size() - 1);
+    pose.key = anim.sheet + "#" + std::to_string(frame);
+    pose.image = &(*anim.images)[frame];
+    pose.anchorX = anim.anchorX;
+    pose.anchorY = anim.anchorY;
     return pose;
 }
 
-void Level::drawAgent(render::RgbaImage& dst, const chk::AgentRecord& a, int originX, int originY) {
+void Level::drawAgent(render::RgbaImage& dst, const chk::AgentRecord& a, int originX, int originY, uint64_t ms) {
     if (!agentVisible(a)) return;
-    const Pose pose = agentPose(a);
+    const Pose pose = agentPose(a, ms);
     if (!pose.image) return;
     const ScreenPoint p = toScreen(a.x, a.y);
     const int left = int(std::lround(p.x)) - pose.anchorX - originX;

@@ -131,12 +131,20 @@ and walls. Every template, animation and level parses to the byte. Each agent
 shows one still frame of its first animation; facing, animation and behaviour
 come next.
 
+## Milestone 8: things move (done)
+
+Characters play their idle animations at the original's 10 frames a second,
+and looped gizmos (194 of them, the Torvus Junction generator among them) run, with the frame
+timing decoded from the original (`docs/formats/agent.md`,
+`docs/formats/gizmo.md`). `levelshot` takes a time to render a level at.
+Agents still stand still: states, movement and AI come with the game loop.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
 3. Gizmo animation (frame sequences and codes) and states.
-4. Agent facing (direction index) and animation playback; the player on
-   screen, walking. The rest of the level file: triggers, sounds, rooms.
+4. The rest of the level file: triggers, sounds, rooms. Gizmo states.
+   The player on screen, walking.
 5. The in-game loop, HUD and lighting.

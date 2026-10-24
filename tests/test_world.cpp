@@ -15,6 +15,7 @@
 #include "formats/anm.hpp"
 #include "formats/brs.hpp"
 #include "formats/chk.hpp"
+#include "formats/gim.hpp"
 #include "formats/giz.hpp"
 #include "formats/mgr.hpp"
 #include "render/sprite.hpp"
@@ -141,6 +142,19 @@ static void testLevel() {
 }
 
 static void testGizmo() {
+    {  // Frame timing (FUN_004305b0): a frame shows until its running total is reached.
+        giz::Template t;
+        for (uint16_t d : {0, 100, 100, 300}) {
+            giz::Frame f;
+            f.durationMs = d;
+            t.frames.push_back(f);
+        }
+        t.frames[2].code = 1;
+        CHECK(t.loopStart() == 2);
+        CHECK(t.frameAt(0, 0, 3) == 0 && t.frameAt(1, 0, 3) == 1 && t.frameAt(100, 0, 3) == 1);
+        CHECK(t.frameAt(101, 0, 3) == 2 && t.frameAt(250, 0, 3) == 3 && t.frameAt(501, 0, 3) == 1);
+        CHECK(t.frameAt(450, 2, 3) == 2 && t.frameAt(0, 1, 1) == 1);
+    }
     // A spawner with two slots and an empty script section.
     Bytes sp = gizHeader("Spawner", giz::HasScript | giz::Spawn);
     sp.u16(2).u16(50).u16(66).u16(7).u16(102).u16(40).u16(7);
@@ -348,7 +362,9 @@ static void testRealData(const char* dir) {
 
     // Every agent template and animation parses, and every animation
     // direction's frame sheet exists.
-    size_t agentFiles = 0, anims = 0, sheets = 0;
+    // A sheet holds one frame per frame of its direction (all but a few
+    // editor leftovers).
+    size_t agentFiles = 0, anims = 0, sheets = 0, sheetMismatch = 0;
     for (const auto& p : vfs.list("res/"))
         try {
             if (endsWith(p, ".agt")) {
@@ -361,13 +377,15 @@ static void testRealData(const char* dir) {
                         ++sheets;
                         const bool direct = vfs.exists(d.frames[0].substr(0, d.frames[0].size() - 4) + ".gim");
                         CHECK(vfs.exists(anm::sheetPath(d.frames[0])) || direct);
+                        if (const auto sd = vfs.read(anm::sheetPath(d.frames[0])))
+                            if (gim::decode(*sd).frames.size() != d.frames.size()) ++sheetMismatch;
                     }
             }
         } catch (const std::exception& e) {
             std::fprintf(stderr, "%s: %s\n", p.c_str(), e.what());
             ++failures;
         }
-    CHECK(agentFiles >= 112 && anims == 550 && sheets > 5000);
+    CHECK(agentFiles >= 112 && anims == 550 && sheets > 5000 && sheetMismatch <= 11);
 
     // A new game starts in level 1 (FUN_00497850 -> FUN_00497cd0(this, 1)).
     world::Level torvus(vfs, ini, 1);
@@ -384,6 +402,11 @@ static void testRealData(const char* dir) {
     CHECK(m.gizmos.size() == 51);
     CHECK(m.agents.size() == 2 && torvus.agentTemplate(m.agents[0]).name == "Torvus");
     for (const auto& a : m.agents) CHECK(torvus.agentPose(a).image != nullptr);
+    // The town generator (Looped) turns: its frame changes over time.
+    size_t looping = 0;
+    for (const auto& g : m.gizmos)
+        if (torvus.gizmoFrame(g, 150) != torvus.gizmoFrame(g, 450)) ++looping;
+    CHECK(looping > 0);
     for (const auto& g : m.gizmos)
         for (const auto& f : torvus.gizmoTemplate(g).frames) CHECK(torvus.gizmoImage(f) != nullptr);
 }

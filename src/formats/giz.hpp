@@ -70,6 +70,14 @@ struct Template {
     std::vector<uint8_t> light;      // HasLight: undecoded
     std::vector<uint8_t> script;     // HasScript: undecoded blocks
 
+    // The first frame whose code is 1, or 0 if none (GLoopedGizmo_v4 keeps
+    // it at gizmo+0xba): where a looped gizmo's second loop starts.
+    size_t loopStart() const;
+    // The frame shown `ms` into frames [first, last] played as a loop: the
+    // first frame whose running total of durations reaches `ms`
+    // (GAnimatedGizmo_v8, FUN_004305b0).
+    size_t frameAt(uint64_t ms, size_t first, size_t last) const;
+
     // Size of a set-gizmo record's class data in a level, after the shared
     // six bytes (see chk::parseGizmos).
     size_t recordExtra(const uint8_t* p, size_t avail) const;

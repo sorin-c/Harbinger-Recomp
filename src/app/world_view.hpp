@@ -1,6 +1,6 @@
-// The in-game view, as far as it is rebuilt: a level's floor, walls and
-// gizmos drawn from the original files, with a camera the player can move
-// around.
+// The in-game view, as far as it is rebuilt: a level's floor, walls, gizmos
+// and characters, drawn and animated from the original files, with a camera
+// the player can move around.
 #pragma once
 
 #include <SDL3/SDL.h>
@@ -46,6 +46,7 @@ private:
     double camX_ = 0, camY_ = 0;  // map screen position at the centre of the view
     float scrollX_ = 0, scrollY_ = 0;
     uint64_t lastMs_ = 0;
+    uint64_t startMs_ = 0, elapsedMs_ = 0;  // animation clock, from the first update
     // GPU copies of tile images, by brush, tile id (centre tiles are cut per id).
     mutable std::map<std::pair<uint16_t, uint16_t>, Texture> tiles_;
     // Visible gizmos and agents, back to front, with their depth keys.
