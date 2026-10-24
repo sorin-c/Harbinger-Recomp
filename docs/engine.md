@@ -162,12 +162,37 @@ to what they feed, as in the original. Frames draw over the gizmo's picture
 the way the original builds it. Using a gizmo (opening a door) comes with the
 game loop.
 
+## Milestone 11: walking (done)
+
+New Game puts the chosen character (Human, Gladiator or Culibine) on the
+level's Default entry point, facing its way, drawn from its body, armour and
+weapon layers (`*animgroup.mgr`). It walks at the original's speed (3.18 cells
+a second for the Human, measured under Wine) to where the mouse clicks, around
+walls and drops on the original's half-cell walk grid and path finder, or
+along a gamepad stick or the keys, sliding along walls. The camera follows it.
+Evidence and the parts still guessed: `docs/movement.md`.
+
+Each character starts in the equipment the original gives it (the start-item
+lists in each player plug), drawn from those items' animation groups.
+
+## Milestone 12: hitting enemies (done)
+
+Clicking an enemy (or F, the pad's X / Square or the right trigger) walks the
+player up to it and swings the melee animation, again and again, as the
+original's tags loop it. Each blow lands where the weapon's tag puts it and
+rolls to hit and for damage with the original's generator, damage table,
+defences and resistances; enemies get the original's hit-point rolls and,
+when those run out, play their death animation and stay as corpses.
+Evidence: `docs/combat.md`. Enemies do not fight back yet.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
-3. Using gizmos (consoles opening doors, chests), the other classes' states.
-4. Running scripts from triggers. The player on screen, walking, using the
-   room graph.
-5. The in-game loop, HUD and lighting.
+3. Using gizmos (consoles opening doors, chests), the other classes' states;
+   doors and lifts changing the walk grid.
+4. Running scripts from triggers. The room graph.
+5. Enemy AI (thinkers, their attacks), the player's ranged attack, hit
+   points and death, experience.
+6. The in-game loop, HUD and lighting.

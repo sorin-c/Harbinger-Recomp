@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace harbinger::agt {
@@ -36,11 +37,14 @@ struct Template {
     uint16_t cls = 0;
     uint16_t type = 0;    // agent+0x54
     double version = 0;   // 1.96 in most shipped files
-    uint16_t word10 = 0;
-    double d20 = 0, d28 = 0;
+    uint16_t word10 = 0;  // template+0x10: the defence an attack roll must reach (FUN_00452290)
+    double d20 = 0, d28 = 0;  // template+0x20: the half-size of the box a melee strike must cross
     std::vector<uint16_t> stats;  // 8 to 10 words (agent+0x38..)
     std::string name;
     std::vector<Anim> anims;
+    // Damage taken per damage type, in percent (template+0x204, read by
+    // FUN_004085a0); a type that is not listed does no damage.
+    std::vector<std::pair<uint16_t, uint16_t>> resistances;
     std::vector<uint8_t> rest;    // the fields after the animations, undecoded
 
     // The animations filed under `state`, in file order (the variant numbers

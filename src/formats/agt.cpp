@@ -68,7 +68,13 @@ Template parse(const std::vector<uint8_t>& data) {
         const uint16_t lists = r.u16();  // FUN_00406c30 per list
         for (uint16_t i = 0; i < lists; ++i) r.skip(size_t(r.u32()) * 2);
     }
-    if (t.version > 1.4) r.skip(size_t(r.u8()) * 4);
+    if (t.version > 1.4) {
+        const uint8_t k = r.u8();
+        for (uint8_t i = 0; i < k; ++i) {
+            const uint16_t type = r.u16();
+            t.resistances.emplace_back(type, r.u16());
+        }
+    }
     if (t.version > 1.8) r.skip(t.version > 1.86 ? 11 : 10);  // FUN_00407170
     t.rest.assign(data.begin() + long(rest), data.begin() + long(r.pos()));
     r.expectEnd();
