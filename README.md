@@ -23,9 +23,10 @@ What exists so far:
 - `harbinger`, the game: the front end (main menu, character screen,
   Options, Load Game), drawn from the original files, with the menu music and
   sounds, and mouse, keyboard and gamepad input. Play opens the first level
-  (floor, walls and music so far) to look around in
-- Level (`.chk`), brush (`.brs`) and gizmo (`.giz`) parsers, and `levelshot`,
-  which renders a whole level with its objects to an image
+  (floor, walls, objects, characters and music so far) to look around in
+- Level (`.chk`), brush (`.brs`), gizmo (`.giz`), agent (`.agt`) and animation
+  (`.anm`) parsers, and `levelshot`, which renders a whole level with its
+  objects and characters to an image
 - `harbinger-viewer`, an SDL3 sprite browser (keyboard or gamepad)
 
 ```

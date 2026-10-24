@@ -11,6 +11,8 @@
 
 #include "engine/ini.hpp"
 #include "engine/vfs.hpp"
+#include "formats/agt.hpp"
+#include "formats/anm.hpp"
 #include "formats/brs.hpp"
 #include "formats/chk.hpp"
 #include "formats/giz.hpp"
@@ -29,8 +31,9 @@ constexpr int kTileW = 128, kTileH = 64;
 
 class Level {
 public:
-    // Loads level `id` from level.mgr, and the brushes and gizmo templates of
-    // its act ([ActN] Brushes, [ActN] Gizmos).
+    // Loads level `id` from level.mgr, the brushes and gizmo templates of its
+    // act ([ActN] Brushes, [ActN] Gizmos) and the agent templates its agents
+    // use ([Paths] Agents).
     Level(Vfs& vfs, const Ini& ini, uint16_t id);
 
     const chk::Level& map() const { return map_; }
@@ -70,6 +73,19 @@ public:
     // Draws a visible gizmo's first frame into `dst` (see drawLayer for the origin).
     void drawGizmo(render::RgbaImage& dst, const chk::GizmoRecord& g, int originX, int originY);
 
+    // An agent's standing pose: the first frame of its first animation's
+    // first direction with frames, and the point in it that sits on the
+    // agent's map position.
+    struct Pose {
+        const render::RgbaImage* image = nullptr;
+        int anchorX = 0, anchorY = 0;
+    };
+    const agt::Template& agentTemplate(const chk::AgentRecord& a) const;
+    bool agentVisible(const chk::AgentRecord& a) const { return map_.keeps(a); }
+    Pose agentPose(const chk::AgentRecord& a);
+    double agentDepth(const chk::AgentRecord& a) const { return a.x + a.y; }
+    void drawAgent(render::RgbaImage& dst, const chk::AgentRecord& a, int originX, int originY);
+
 private:
     struct LoadedBrush {
         brs::Brush brush;
@@ -80,6 +96,9 @@ private:
     chk::Level map_;
     std::map<uint16_t, LoadedBrush> brushes_;
     std::map<uint16_t, giz::Template> gizmos_;
+    std::map<uint16_t, agt::Template> agents_;
+    std::map<uint16_t, Pose> poses_;  // by agent.mgr id
+    std::map<std::string, std::unique_ptr<render::RgbaImage>> agentImages_;  // by sheet path
     std::map<std::string, std::unique_ptr<render::RgbaImage>> images_;  // by tile path
     std::map<std::string, std::unique_ptr<render::RgbaImage>> gizmoImages_;  // by frame path
 };

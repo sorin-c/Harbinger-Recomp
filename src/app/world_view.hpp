@@ -36,6 +36,8 @@ private:
     const Texture* tile(const chk::Layer& layer) const;
     void drawLayer(int x, int y, int layer) const;
     void drawGizmo(const chk::GizmoRecord& g) const;
+    void drawAgent(const chk::AgentRecord& a) const;
+    void drawImage(const std::string& key, const render::RgbaImage* img, double left, double top) const;
 
     Assets& assets_;
     SDL_Renderer* ren_;
@@ -46,9 +48,14 @@ private:
     uint64_t lastMs_ = 0;
     // GPU copies of tile images, by brush, tile id (centre tiles are cut per id).
     mutable std::map<std::pair<uint16_t, uint16_t>, Texture> tiles_;
-    // Visible gizmos, back to front, with their depth keys.
-    std::vector<std::pair<double, const chk::GizmoRecord*>> gizmos_;
-    mutable std::map<std::string, Texture> gizmoTextures_;  // by frame path
+    // Visible gizmos and agents, back to front, with their depth keys.
+    struct Object {
+        double depth;
+        const chk::GizmoRecord* gizmo;
+        const chk::AgentRecord* agent;
+    };
+    std::vector<Object> objects_;
+    mutable std::map<std::string, Texture> objectTextures_;  // by image path
 };
 
 }  // namespace harbinger::app

@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "formats/binary.hpp"
+#include "formats/agt.hpp"
 #include "formats/giz.hpp"
 
 namespace harbinger::chk {
@@ -87,11 +88,15 @@ Level parse(const std::vector<uint8_t>& data) {
     return lv;
 }
 
-bool Level::keeps(const GizmoRecord& g, size_t v) const {
-    if (v >= instanceLists.size()) return false;
-    const auto& list = instanceLists[v];
-    return std::find(list.begin(), list.end(), g.instance) != list.end();
+namespace {
+bool listed(const std::vector<std::vector<uint16_t>>& lists, size_t v, uint16_t instance) {
+    if (v >= lists.size()) return false;
+    return std::find(lists[v].begin(), lists[v].end(), instance) != lists[v].end();
 }
+}  // namespace
+
+bool Level::keeps(const GizmoRecord& g, size_t v) const { return listed(instanceLists, v, g.instance); }
+bool Level::keeps(const AgentRecord& a, size_t v) const { return listed(agentLists, v, a.instance); }
 
 void parseGizmos(Level& lv, const std::vector<uint8_t>& data,
                  const std::function<const giz::Template*(uint16_t)>& lookup) {
@@ -122,6 +127,43 @@ void parseGizmos(Level& lv, const std::vector<uint8_t>& data,
         lv.gizmos.push_back(std::move(g));
     }
     lv.gizmosEnd = r.pos();
+}
+
+void parseAgents(Level& lv, const std::vector<uint8_t>& data,
+                 const std::function<const agt::Template*(uint16_t)>& lookup) {
+    ByteReader r(data, "chk");
+    r.skip(lv.gizmosEnd);
+    lv.agentLists.assign(lv.variants.size() + 1, {});
+    for (auto& list : lv.agentLists) {
+        const uint16_t n = r.u16();
+        for (uint16_t i = 0; i < n; ++i) list.push_back(r.u16());
+    }
+    const uint32_t count = r.u32();
+    if (count > r.remaining() / 30) r.fail("implausible agent count");
+    lv.agents.clear();
+    for (uint32_t i = 0; i < count; ++i) {
+        AgentRecord a;
+        a.agent = r.u16();
+        const agt::Template* t = lookup(a.agent);
+        if (!t) r.fail("agent id missing from agent.mgr");
+        // 0x420520: six bytes, the slot-18 words, the position, the label
+        // (slot 7), then a byte and two words (version >= 1.22).
+        a.instance = r.u16();
+        a.facing = r.u8();
+        a.unknown = r.u8();
+        const uint16_t slots = r.u16();
+        for (uint16_t k = 0; k < slots; ++k) a.slots.push_back(r.u16());
+        a.x = f64(r);
+        a.y = f64(r);
+        if (!(a.x >= 0 && a.x < lv.width && a.y >= 0 && a.y < lv.height)) r.fail("agent outside the map");
+        if (r.u8() == 1) a.label = r.string();
+        a.flag = r.u8();
+        a.words[0] = r.u16();
+        a.words[1] = r.u16();
+        if (t->recordHasExtraWord()) a.extra = r.u16();  // 0x4e6670
+        lv.agents.push_back(std::move(a));
+    }
+    lv.agentsEnd = r.pos();
 }
 
 }  // namespace harbinger::chk

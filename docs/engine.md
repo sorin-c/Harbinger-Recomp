@@ -4,11 +4,11 @@
 
 | Path | Role | Depends on |
 |---|---|---|
-| `src/formats/` | File formats (`.sqh`, `.gim`, `.mgr`, `.itf`, `.fnt`, `.acr`, `.itm`, `.chk`, `.brs`, `.giz`) | C++17 only |
+| `src/formats/` | File formats (`.sqh`, `.gim`, `.mgr`, `.itf`, `.fnt`, `.acr`, `.itm`, `.chk`, `.brs`, `.giz`, `.agt`, `.anm`) | C++17 only |
 | `src/engine/` | Engine core: `Vfs` (archive mounting, path rules), `Ini`, `Settings` (config.cfg) | formats |
 | `src/audio/` | WAV and MP3 decoding (dr_mp3, downloaded and hash-checked by CMake) | C++17 only |
 | `src/render/` | Platform-neutral rendering helpers (`.gim` frame to RGBA) | formats |
-| `src/world/` | The game world: `Level` (a level's cells, brushes, gizmos and projection) | formats, engine, render |
+| `src/world/` | The game world: `Level` (a level's cells, brushes, gizmos, agents and projection) | formats, engine, render |
 | `src/ui/` | Interface pieces with the engine's rules: text boxes and wrapping, buttons, check boxes, sliders, animated items | formats, render |
 | `src/app/` | SDL3 programs | everything + SDL3 |
 
@@ -122,12 +122,21 @@ as the original shows them. Every template and every level's records parse to
 the byte. Each gizmo shows its first frame; animation, states and lights come
 later.
 
+## Milestone 7: characters on the map (done)
+
+The level's agents (the player's start, enemies, NPCs, mines, cameras) are
+decoded from their `.agt` templates, `.anm` animations and the level's agent
+records (`docs/formats/agent.md`) and drawn in place, sorted with the objects
+and walls. Every template, animation and level parses to the byte. Each agent
+shows one still frame of its first animation; facing, animation and behaviour
+come next.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
 3. Gizmo animation (frame sequences and codes) and states.
-4. The rest of the level file: agents, triggers. Agents and `.anm`
-   animation: the player on screen, walking.
+4. Agent facing (direction index) and animation playback; the player on
+   screen, walking. The rest of the level file: triggers, sounds, rooms.
 5. The in-game loop, HUD and lighting.

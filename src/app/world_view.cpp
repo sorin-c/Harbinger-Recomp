@@ -20,14 +20,16 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, int sc
     camX_ = p.x, camY_ = p.y;
 
     for (const auto& g : m.gizmos)
-        if (level_->gizmoVisible(g)) gizmos_.emplace_back(level_->gizmoDepth(g), &g);
-    std::stable_sort(gizmos_.begin(), gizmos_.end(),
-                     [](const auto& a, const auto& b) { return a.first < b.first; });
+        if (level_->gizmoVisible(g)) objects_.push_back({level_->gizmoDepth(g), &g, nullptr});
+    for (const auto& a : m.agents)
+        if (level_->agentVisible(a)) objects_.push_back({level_->agentDepth(a), nullptr, &a});
+    std::stable_sort(objects_.begin(), objects_.end(),
+                     [](const auto& a, const auto& b) { return a.depth < b.depth; });
 }
 
 WorldView::~WorldView() {
     for (auto& [key, t] : tiles_) SDL_DestroyTexture(t.tex);
-    for (auto& [key, t] : gizmoTextures_) SDL_DestroyTexture(t.tex);
+    for (auto& [key, t] : objectTextures_) SDL_DestroyTexture(t.tex);
 }
 
 void WorldView::update(uint64_t nowMs) {
@@ -69,37 +71,48 @@ void WorldView::drawLayer(int x, int y, int layer) const {
     SDL_RenderTexture(ren_, t->tex, nullptr, &dst);
 }
 
-void WorldView::drawGizmo(const chk::GizmoRecord& g) const {
-    const giz::Frame& frame = level_->gizmoTemplate(g).frames[0];
-    auto it = gizmoTextures_.find(frame.path);
-    if (it == gizmoTextures_.end()) {
+void WorldView::drawImage(const std::string& key, const render::RgbaImage* img, double left, double top) const {
+    auto it = objectTextures_.find(key);
+    if (it == objectTextures_.end()) {
         Texture t;
-        if (const render::RgbaImage* img = level_->gizmoImage(frame))
-            t = assets_.upload(img->pixels, img->width, img->height);
-        it = gizmoTextures_.emplace(frame.path, t).first;
+        if (img) t = assets_.upload(img->pixels, img->width, img->height);
+        it = objectTextures_.emplace(key, t).first;
     }
     const Texture& t = it->second;
     if (!t.tex) return;
-    const auto tl = level_->gizmoTopLeft(g);
-    const float left = float(std::floor(tl.x - camX_ + screenW_ / 2.0));
-    const float top = float(std::floor(tl.y - camY_ + screenH_ / 2.0));
-    if (left > screenW_ || left + float(t.w) < 0 || top > screenH_ || top + float(t.h) < 0) return;
-    const SDL_FRect dst{left, top, float(t.w), float(t.h)};
+    const float x = float(std::floor(left - camX_ + screenW_ / 2.0));
+    const float y = float(std::floor(top - camY_ + screenH_ / 2.0));
+    if (x > screenW_ || x + float(t.w) < 0 || y > screenH_ || y + float(t.h) < 0) return;
+    const SDL_FRect dst{x, y, float(t.w), float(t.h)};
     SDL_RenderTexture(ren_, t.tex, nullptr, &dst);
+}
+
+void WorldView::drawGizmo(const chk::GizmoRecord& g) const {
+    const giz::Frame& frame = level_->gizmoTemplate(g).frames[0];
+    const auto tl = level_->gizmoTopLeft(g);
+    drawImage(frame.path, level_->gizmoImage(frame), tl.x, tl.y);
+}
+
+void WorldView::drawAgent(const chk::AgentRecord& a) const {
+    const auto pose = level_->agentPose(a);
+    if (!pose.image) return;
+    const auto p = world::toScreen(a.x, a.y);
+    drawImage("agent:" + std::to_string(a.agent), pose.image, p.x - pose.anchorX, p.y - pose.anchorY);
 }
 
 void WorldView::draw() const {
     const auto& m = level_->map();
-    // Floors, then walls, edges and gizmos back to front (rebuild order; the
+    // Floors, then walls, edges, gizmos and agents back to front (rebuild order; the
     // original draws through Direct3D with depth, see docs/formats/level.md).
     for (int x = 0; x < m.width; ++x)
         for (int y = 0; y < m.height; ++y) drawLayer(x, y, 0);
+    auto drawObject = [&](const Object& o) { o.gizmo ? drawGizmo(*o.gizmo) : drawAgent(*o.agent); };
     size_t next = 0;
     for (int d = 0; d < m.width + m.height; ++d) {
         for (int x = std::max(0, d - m.height + 1); x < m.width && x <= d; ++x) drawLayer(x, d - x, 1);
-        for (; next < gizmos_.size() && gizmos_[next].first < d + 1; ++next) drawGizmo(*gizmos_[next].second);
+        for (; next < objects_.size() && objects_[next].depth < d + 1; ++next) drawObject(objects_[next]);
     }
-    for (; next < gizmos_.size(); ++next) drawGizmo(*gizmos_[next].second);
+    for (; next < objects_.size(); ++next) drawObject(objects_[next]);
 }
 
 }  // namespace harbinger::app

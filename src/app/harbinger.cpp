@@ -183,7 +183,7 @@ public:
         if (world_) {
             world_->draw();
             SDL_SetRenderDrawColor(ren_, 160, 255, 160, 255);
-            const std::string title = world_->level().map().name + "  (preview: map and objects, no characters yet)";
+            const std::string title = world_->level().map().name + "  (preview: map, objects and characters; no gameplay yet)";
             SDL_RenderDebugText(ren_, 8, 8, title.c_str());
             SDL_RenderDebugText(ren_, 8, 20, "Move: arrows / WASD / screen edge / left stick    Back to menu: Esc / B");
         } else {

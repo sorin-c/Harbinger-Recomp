@@ -68,6 +68,17 @@ Level::Level(Vfs& vfs, const Ini& ini, uint16_t id) : vfs_(vfs) {
         }
         return &it->second;
     });
+
+    const auto agents = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Agents")));
+    chk::parseAgents(map_, chkData, [&](uint16_t agentId) -> const agt::Template* {
+        auto it = agents_.find(agentId);
+        if (it == agents_.end()) {
+            const std::string* agtPath = agents.find(agentId);
+            if (!agtPath) return nullptr;
+            it = agents_.emplace(agentId, agt::parse(readOrThrow(vfs, *agtPath))).first;
+        }
+        return &it->second;
+    });
 }
 
 const brs::Brush* Level::brush(uint16_t id) const {
@@ -170,6 +181,51 @@ void Level::drawGizmo(render::RgbaImage& dst, const chk::GizmoRecord& g, int ori
     for (int v = 0; v < img->height; ++v)
         for (int u = 0; u < img->width; ++u)
             blend(dst, left + u, top + v, img->pixels[size_t(v) * size_t(img->width) + size_t(u)]);
+}
+
+const agt::Template& Level::agentTemplate(const chk::AgentRecord& a) const {
+    return agents_.at(a.agent);  // parseAgents loaded every template the records name
+}
+
+Level::Pose Level::agentPose(const chk::AgentRecord& a) {
+    if (auto it = poses_.find(a.agent); it != poses_.end()) return it->second;
+    Pose& pose = poses_[a.agent];
+    const agt::Template& t = agentTemplate(a);
+    if (t.anims.empty()) return pose;
+    const auto anmData = vfs_.read(t.anims[0].path);
+    if (!anmData) return pose;
+    const anm::Animation anim = anm::parse(*anmData);
+    const anm::Direction* dir = anim.firstDirection();
+    if (!dir) return pose;
+    const std::string sheet = anm::sheetPath(dir->frames[0]);
+    auto& slot = agentImages_[sheet];
+    if (!slot) {
+        auto data = vfs_.read(sheet);
+        if (!data) return pose;
+        const auto img = gim::decode(*data);
+        slot = std::make_unique<render::RgbaImage>(
+            render::RgbaImage{img.width, img.height, render::toRgba(img, 0, render::KeyMode::Shadow)});
+    }
+    pose.image = slot.get();
+    // The hotspot sits near the bottom of the frame in every animation that
+    // has one, so it is taken as the ground point (guess); without one, the
+    // bottom centre.
+    pose.anchorX = anim.hotspot ? anim.hotspot->first : slot->width / 2;
+    pose.anchorY = anim.hotspot ? anim.hotspot->second : slot->height;
+    return pose;
+}
+
+void Level::drawAgent(render::RgbaImage& dst, const chk::AgentRecord& a, int originX, int originY) {
+    if (!agentVisible(a)) return;
+    const Pose pose = agentPose(a);
+    if (!pose.image) return;
+    const ScreenPoint p = toScreen(a.x, a.y);
+    const int left = int(std::lround(p.x)) - pose.anchorX - originX;
+    const int top = int(std::lround(p.y)) - pose.anchorY - originY;
+    const render::RgbaImage& img = *pose.image;
+    for (int v = 0; v < img.height; ++v)
+        for (int u = 0; u < img.width; ++u)
+            blend(dst, left + u, top + v, img.pixels[size_t(v) * size_t(img.width) + size_t(u)]);
 }
 
 }  // namespace harbinger::world

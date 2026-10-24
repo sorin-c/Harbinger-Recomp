@@ -3,8 +3,9 @@
 A level ("chunk", class `GChunk`) is a grid of map cells. Each cell paints one
 or two tiles from the act's **brushes**: a floor, and on top of it a wall or an
 edge piece. Objects (gizmos), characters (agents), triggers and the rest are
-stored after the cells. The set gizmos are decoded (`docs/formats/gizmo.md`);
-agents, triggers and the rest are not yet.
+stored after the cells. The set gizmos (`docs/formats/gizmo.md`) and agents
+(`docs/formats/agent.md`) are decoded;
+triggers and the rest are not yet.
 
 Parsers: `src/formats/chk.cpp`, `src/formats/brs.cpp`. Loader and drawing:
 `src/world/level.cpp`. Tests: `tests/test_world.cpp`. Tool: `levelshot`
@@ -52,7 +53,9 @@ repeat variantCount-1:  variants 1.., FUN_00448080
     cell                replaces that cell
 ...                     per-variant instance lists and set gizmos
                         (docs/formats/gizmo.md)
-...                     agents, triggers, sounds, attachments, rooms,
+...                     per-variant agent lists and agents
+                        (docs/formats/agent.md)
+...                     triggers, sounds, attachments, rooms,
                         path cells (not decoded)
 ```
 
@@ -131,8 +134,7 @@ buffer, which the rebuild does not reproduce yet.
 
 ## Open questions
 
-- The rest of the `.chk` after the set gizmos: agents (`FUN_00418c40`),
-  triggers, set sounds, attachments, rooms, path cells.
+- The rest of the `.chk` after the agents: triggers, set sounds, attachments, rooms, path cells.
 - The three unknown header fields.
 - Lighting: the original darkens the floor away from lights and the player.
 - What the F* tile groups are.

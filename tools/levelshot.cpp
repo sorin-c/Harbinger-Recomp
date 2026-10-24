@@ -1,11 +1,12 @@
 // levelshot: draw a level's floor, walls and gizmos to a .tga, for checking
 // the level, brush and gizmo formats against the original.
 //   levelshot <install dir> <level id> <out.tga> [layers=3]
-// layers: 1 = floors, 2 = and walls, 3 = and gizmos.
+// layers: 1 = floors, 2 = and walls, 3 = and gizmos and agents.
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <limits>
 
 #include "engine/ini.hpp"
@@ -46,28 +47,34 @@ int main(int argc, char** argv) {
         // walls, then the gizmos whose depth falls before the next diagonal.
         for (int x = 0; x < m.width; ++x)
             for (int y = 0; y < m.height; ++y) level.drawLayer(img, x, y, 0, originX, originY);
-        std::vector<const chk::GizmoRecord*> gizmos;
-        if (layers > 2)
-            for (const auto& g : m.gizmos) gizmos.push_back(&g);
-        std::stable_sort(gizmos.begin(), gizmos.end(), [&](auto* a, auto* b) {
-            return level.gizmoDepth(*a) < level.gizmoDepth(*b);
-        });
+        // Gizmos and agents, back to front.
+        struct Object {
+            double depth;
+            std::function<void()> draw;
+        };
+        std::vector<Object> objects;
+        if (layers > 2) {
+            for (const auto& g : m.gizmos)
+                objects.push_back({level.gizmoDepth(g), [&] { level.drawGizmo(img, g, originX, originY); }});
+            for (const auto& a : m.agents)
+                objects.push_back({level.agentDepth(a), [&] { level.drawAgent(img, a, originX, originY); }});
+        }
+        std::stable_sort(objects.begin(), objects.end(), [](const auto& a, const auto& b) { return a.depth < b.depth; });
         size_t next = 0;
         if (layers > 1)
             for (int d = 0; d < m.width + m.height; ++d) {
                 for (int x = 0; x < m.width; ++x)
                     if (int y = d - x; y >= 0 && y < m.height) level.drawLayer(img, x, y, 1, originX, originY);
-                for (; next < gizmos.size() && level.gizmoDepth(*gizmos[next]) < d + 1; ++next)
-                    level.drawGizmo(img, *gizmos[next], originX, originY);
+                for (; next < objects.size() && objects[next].depth < d + 1; ++next) objects[next].draw();
             }
-        for (; next < gizmos.size(); ++next) level.drawGizmo(img, *gizmos[next], originX, originY);
+        for (; next < objects.size(); ++next) objects[next].draw();
 
         for (const auto& e : m.entries) {
             const auto p = world::toScreen(e.x, e.y);
             std::printf("entry %u \"%s\" at (%.2f, %.2f) -> pixel (%d, %d)\n", e.id, e.name.c_str(), e.x, e.y,
                         int(p.x) - originX, int(p.y) - originY);
         }
-        std::printf("%zu gizmos\n", m.gizmos.size());
+        std::printf("%zu gizmos, %zu agents\n", m.gizmos.size(), m.agents.size());
         std::printf("%s: \"%s\" act %u, %ux%u cells, image %dx%d\n", level.path().c_str(), m.name.c_str(), m.act,
                     m.width, m.height, img.width, img.height);
 

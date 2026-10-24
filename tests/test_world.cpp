@@ -11,6 +11,8 @@
 
 #include "engine/ini.hpp"
 #include "engine/vfs.hpp"
+#include "formats/agt.hpp"
+#include "formats/anm.hpp"
 #include "formats/brs.hpp"
 #include "formats/chk.hpp"
 #include "formats/giz.hpp"
@@ -191,6 +193,62 @@ static void testGizmo() {
     CHECK(throws([&] { chk::parseGizmos(lv, c.d, [](uint16_t) { return nullptr; }); }));
 }
 
+static void testAgents() {
+    // .anm: header 0x0b = 10 directions with a hotspot; direction 0 has two frames.
+    Bytes a;
+    a.u16(0x0b).u16(22).u16(44).u32(0);
+    a.u32(2).u32(1).str("Res\\A\\Idle\\0\\00.tga").str("Res\\A\\Idle\\0\\01.tga");
+    for (int i = 0; i < 6; ++i) a.u8(0);
+    for (int d = 1; d < 10; ++d) a.u32(0).u32(0);
+    a.u32(0);
+    const anm::Animation anim = anm::parse(a.d);
+    CHECK(anim.directions.size() == 10 && anim.hotspot && anim.hotspot->second == 44);
+    CHECK(anim.directions[0].frames.size() == 2 && anim.directions[0].actions.size() == 1);
+    CHECK(anim.firstDirection() == &anim.directions[0]);
+    CHECK(anm::sheetPath("Res\\A\\Idle\\0\\00.tga") == "Res\\A\\Idle\\fsp\\Idle0FSP.gim");
+    Bytes plain;  // header 0: 16 directions, no hotspot
+    plain.u16(0).u32(0);
+    for (int d = 0; d < 16; ++d) plain.u32(0).u32(0);
+    plain.u32(0);
+    CHECK(anm::parse(plain.d).directions.size() == 16 && !anm::parse(plain.d).hotspot);
+
+    // .agt: an NPC (class 24) with one animation.
+    Bytes t;
+    t.u16(24).u16(24).f64(1.96).u16(100).f64(0).f64(100);
+    for (int i = 0; i < 10; ++i) t.u16(uint16_t(i));
+    t.str("Torvus").u8(1).u16(0).u16(19).u16(0);
+    t.u32(1).u16(0).u16(0).str("Res\\A\\Idle\\Idle.anm");
+    for (int i = 0; i < 3; ++i) t.u16(12);
+    t.u16(0).u16(0);
+    t.u16(1).u32(2).u16(393).u16(394);  // one list of two words
+    t.u8(1).u16(0).u16(100);
+    for (int i = 0; i < 11; ++i) t.u8(0);
+    const agt::Template npc = agt::parse(t.d);
+    CHECK(npc.name == "Torvus" && npc.isNpc() && npc.stats.size() == 10);
+    CHECK(npc.anims.size() == 1 && npc.anims[0].path == "Res\\A\\Idle\\Idle.anm");
+    CHECK(npc.recordHasExtraWord());
+    Bytes trailing = t;
+    trailing.u8(0);
+    CHECK(throws([&] { agt::parse(trailing.d); }));
+
+    // Agents after a level's gizmos.
+    Bytes c;
+    c.f64(1.23).u16(1).u16(2).u16(2).u16(0);
+    c.u16(0).u16(302).u16(0).str("Room").u16(0);
+    for (int i = 0; i < 4; ++i) c.u16(0);
+    c.u16(1).u16(0).u32(0);                       // one variant, no gizmos
+    c.u16(1).u16(3);                              // agent list: instance 3
+    c.u32(1).u16(51).u16(3).u8(64).u8(0).u16(1).u16(0).f64(1.5).f64(0.5);
+    c.u8(1).str("Torvus").u8(1).u16(0).u16(0).u16(24);
+    c.u16(0xAAAA);
+    chk::Level lv = chk::parse(c.d);
+    chk::parseGizmos(lv, c.d, [](uint16_t) { return nullptr; });
+    chk::parseAgents(lv, c.d, [&](uint16_t id) { return id == 51 ? &npc : nullptr; });
+    CHECK(lv.agents.size() == 1 && lv.agents[0].facing == 64 && lv.agents[0].x == 1.5);
+    CHECK(lv.agents[0].label == "Torvus" && lv.agents[0].extra == 24 && lv.keeps(lv.agents[0]));
+    CHECK(lv.agentsEnd == c.d.size() - 2);
+}
+
 static void testRealData(const char* dir) {
     Vfs vfs(dir);
     const auto ini = Ini::fromBytes(*vfs.read("Harbinger.ini"));
@@ -240,7 +298,9 @@ static void testRealData(const char* dir) {
 
     // Every level's set gizmos parse against its act's gizmo.mgr.
     std::map<std::pair<int, uint16_t>, giz::Template> loaded;
-    size_t gizmos = 0;
+    std::map<uint16_t, agt::Template> agentTemplates;
+    const auto agentIndex = mgr::parse(*vfs.read(ini.require("Paths", "Agents")));
+    size_t gizmos = 0, agents = 0;
     for (const auto& p : vfs.list("res/"))
         if (endsWith(p, ".chk")) {
             try {
@@ -254,12 +314,41 @@ static void testRealData(const char* dir) {
                     return path ? &loaded.emplace(key, giz::parse(*vfs.read(*path))).first->second : nullptr;
                 });
                 gizmos += lv.gizmos.size();
+                chk::parseAgents(lv, data, [&](uint16_t id) -> const agt::Template* {
+                    if (auto it = agentTemplates.find(id); it != agentTemplates.end()) return &it->second;
+                    const std::string* path = agentIndex.find(id);
+                    return path ? &agentTemplates.emplace(id, agt::parse(*vfs.read(*path))).first->second : nullptr;
+                });
+                agents += lv.agents.size();
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "%s: %s\n", p.c_str(), e.what());
                 ++failures;
             }
         }
-    CHECK(gizmos > 10000);
+    CHECK(gizmos > 10000 && agents > 5000);
+
+    // Every agent template and animation parses, and every animation
+    // direction's frame sheet exists.
+    size_t agentFiles = 0, anims = 0, sheets = 0;
+    for (const auto& p : vfs.list("res/"))
+        try {
+            if (endsWith(p, ".agt")) {
+                ++agentFiles;
+                agt::parse(*vfs.read(p));
+            } else if (endsWith(p, ".anm")) {
+                ++anims;
+                for (const auto& d : anm::parse(*vfs.read(p)).directions)
+                    if (!d.frames.empty()) {
+                        ++sheets;
+                        const bool direct = vfs.exists(d.frames[0].substr(0, d.frames[0].size() - 4) + ".gim");
+                        CHECK(vfs.exists(anm::sheetPath(d.frames[0])) || direct);
+                    }
+            }
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "%s: %s\n", p.c_str(), e.what());
+            ++failures;
+        }
+    CHECK(agentFiles >= 112 && anims == 550 && sheets > 5000);
 
     // A new game starts in level 1 (FUN_00497850 -> FUN_00497cd0(this, 1)).
     world::Level torvus(vfs, ini, 1);
@@ -274,6 +363,8 @@ static void testRealData(const char* dir) {
                 if (!torvus.image(m.at(x, y).layers[l])) ++missing;
     CHECK(missing == 0);
     CHECK(m.gizmos.size() == 51);
+    CHECK(m.agents.size() == 2 && torvus.agentTemplate(m.agents[0]).name == "Torvus");
+    for (const auto& a : m.agents) CHECK(torvus.agentPose(a).image != nullptr);
     for (const auto& g : m.gizmos)
         for (const auto& f : torvus.gizmoTemplate(g).frames) CHECK(torvus.gizmoImage(f) != nullptr);
 }
@@ -282,6 +373,7 @@ int main() {
     testBrush();
     testLevel();
     testGizmo();
+    testAgents();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
         testRealData(dir);
     else

@@ -14,6 +14,9 @@
 namespace harbinger::giz {
 struct Template;
 }
+namespace harbinger::agt {
+struct Template;
+}
 
 namespace harbinger::chk {
 
@@ -54,6 +57,21 @@ struct Variant {
     std::vector<std::pair<uint16_t, Cell>> cells;  // (index into Level::cells, replacement)
 };
 
+// An agent placed on the map (FUN_00418c40): an agent.mgr template id, then
+// the plug's chunk load (GAgentPlug 0x420520, NPCs and enemies 0x4e6670).
+struct AgentRecord {
+    uint16_t agent = 0;     // id in agent.mgr
+    uint16_t instance = 0;
+    uint8_t facing = 0;     // plug+0x3a; multiples of 8 in shipped levels, likely 256 steps a turn
+    uint8_t unknown = 0;
+    std::vector<uint16_t> slots;  // slot 18 (0x4e6590)
+    double x = 0, y = 0;    // map position, in cells
+    std::string label;      // slot 7: the name shown for the agent, often empty
+    uint8_t flag = 0;       // plug+0x1f3
+    uint16_t words[2] = {}; // plug+0x1f6, +0x1f8
+    uint16_t extra = 0;     // 0x4e6670's word (not cameras or players)
+};
+
 struct Level {
     double version = 0;  // 1.23 in every shipped level
     uint16_t act = 0;    // [ActN] section in Harbinger.ini: which brush and gizmo sets
@@ -72,11 +90,18 @@ struct Level {
     // (FUN_004477e0); FUN_004495a0 deletes every other gizmo it loads.
     std::vector<std::vector<uint16_t>> instanceLists;
     std::vector<GizmoRecord> gizmos;
-    size_t gizmosEnd = 0;     // file offset where the undecoded part starts
+    size_t gizmosEnd = 0;     // file offset after the gizmos
+
+    // Filled by parseAgents: per variant the agent instances it keeps
+    // (FUN_004479a0), then the agents.
+    std::vector<std::vector<uint16_t>> agentLists;
+    std::vector<AgentRecord> agents;
+    size_t agentsEnd = 0;     // file offset where the undecoded part starts
 
     const Cell& at(int x, int y) const { return cells[size_t(x) * height + size_t(y)]; }
-    // Whether variant `v` keeps a gizmo instance.
+    // Whether variant `v` keeps a gizmo or agent instance.
     bool keeps(const GizmoRecord& g, size_t v = 0) const;
+    bool keeps(const AgentRecord& a, size_t v = 0) const;
 };
 
 // Throws std::runtime_error on malformed data. Stops after the map cells.
@@ -87,5 +112,11 @@ Level parse(const std::vector<uint8_t>& data);
 // its template (nullptr if unknown, which fails the parse).
 void parseGizmos(Level& level, const std::vector<uint8_t>& data,
                  const std::function<const giz::Template*(uint16_t)>& lookup);
+
+// Parses the agent lists and agents after the gizmos (call parseGizmos
+// first). `lookup` maps an agent.mgr id to its template, whose class decides
+// the record's length.
+void parseAgents(Level& level, const std::vector<uint8_t>& data,
+                 const std::function<const agt::Template*(uint16_t)>& lookup);
 
 }  // namespace harbinger::chk

@@ -16,6 +16,8 @@ add_library(harbinger_formats
   src/formats/brs.cpp
   src/formats/chk.cpp
   src/formats/giz.cpp
+  src/formats/agt.cpp
+  src/formats/anm.cpp
   src/formats/fnt.cpp
   src/formats/gim.cpp
   src/formats/itf.cpp
