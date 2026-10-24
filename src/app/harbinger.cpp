@@ -89,13 +89,8 @@ public:
             sound_ = std::make_unique<SoundSystem>();
             applyVolumes();
             // The front end's music is [Paths] IntroMusic in Harbinger.ini (FUN_004a63c0).
-            if (auto music = assets_.ini().get("Paths", "IntroMusic")) {
-                try {
-                    sound_->playMusic(std::make_unique<audio::Mp3Stream>(assets_.read(*music)), true);
-                } catch (const std::exception& ex) {
-                    SDL_Log("music: %s", ex.what());
-                }
-            }
+            introMusic_ = assets_.ini().get("Paths", "IntroMusic");
+            playMusic(introMusic_ ? &*introMusic_ : nullptr);
         }
         level_ = opt.level;
         if (opt.screen == "new") openNew();
@@ -213,9 +208,12 @@ private:
         gameW_ = w, gameH_ = h;
         mouse_ = {w / 2.0f, h / 2.0f};
         SDL_Log("level %u: %s (%s)", level_, world_->level().map().name.c_str(), world_->level().path().c_str());
+        // The level's music (FUN_00497cd0 -> FUN_005056c0 with the header's music id).
+        if (sound_) playMusic(assets_.soundPath(world_->level().map().music));
     }
     void endGame() {
         world_.reset();
+        if (sound_) playMusic(introMusic_ ? &*introMusic_ : nullptr);
         SDL_SetRenderLogicalPresentation(ren_, kScreenW, kScreenH, SDL_LOGICAL_PRESENTATION_LETTERBOX);
         mouse_ = {kScreenW / 2.0f, kScreenH / 2.0f};
         open(kStartupItf);
@@ -270,6 +268,16 @@ private:
         }
         world_->setScroll(std::clamp(dx, -1.0f, 1.0f), std::clamp(dy, -1.0f, 1.0f));
         world_->update(nowMs);
+    }
+
+    void playMusic(const std::string* path) {
+        if (!path) return sound_->stopMusic();
+        try {
+            sound_->playMusic(std::make_unique<audio::Mp3Stream>(assets_.read(*path)), true);
+        } catch (const std::exception& ex) {
+            SDL_Log("music %s: %s", path->c_str(), ex.what());
+            sound_->stopMusic();
+        }
     }
 
     void open(const std::string& itf) {
@@ -483,6 +491,7 @@ private:
     bool swapChanged_ = false, highResChanged_ = false, highRes_ = true;
     SDL_FPoint mouse_{kScreenW / 2.0f, kScreenH / 2.0f};
     std::unique_ptr<WorldView> world_;
+    std::optional<std::string> introMusic_;
     uint16_t level_ = 1;
     int gameW_ = kScreenW, gameH_ = kScreenH;
     SDL_FPoint stick_{0, 0};

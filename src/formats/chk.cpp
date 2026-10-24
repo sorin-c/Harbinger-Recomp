@@ -42,7 +42,7 @@ Level parse(const std::vector<uint8_t>& data) {
         lv.entries.push_back(std::move(e));
     }
     lv.unknown1 = r.u16();
-    lv.unknown2 = r.u16();
+    lv.music = r.u16();
     lv.unknown3 = r.u16();
     lv.name = r.string();
     lv.unknown4 = r.u16();

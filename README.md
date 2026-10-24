@@ -20,9 +20,12 @@ What exists so far:
 - Parsers for interface layouts (`.itf`), fonts (`.fnt`), resource indexes
   (`.mgr`), cursors (`.acr`) and the animated button items (`.itm`)
 - Audio: `.wav` and `.mp3` decoding, `Harbinger.ini`, `config.cfg`
-- `harbinger`, the game: currently the front end (main menu, character
-  screen, Options, Load Game), drawn from the original files, with the menu
-  music and sounds, and mouse, keyboard and gamepad input
+- `harbinger`, the game: the front end (main menu, character screen,
+  Options, Load Game), drawn from the original files, with the menu music and
+  sounds, and mouse, keyboard and gamepad input. Play opens the first level
+  (floor, walls and music so far) to look around in
+- Level (`.chk`) and brush (`.brs`) parsers, and `levelshot`, which renders a
+  whole level to an image
 - `harbinger-viewer`, an SDL3 sprite browser (keyboard or gamepad)
 
 ```

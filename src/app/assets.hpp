@@ -53,6 +53,8 @@ public:
     itm::Item item(uint16_t id);
     std::string itemImagePath(uint16_t id);
     std::string cursorPath(uint16_t id);
+    // sound.mgr id -> path, or nullptr.
+    const std::string* soundPath(uint16_t id) const { return sounds_.find(id); }
     // sound.mgr id -> decoded PCM, or nullptr if the id is unknown or undecodable.
     const audio::Pcm* sound(uint16_t id);
 

@@ -4,10 +4,11 @@
 
 | Path | Role | Depends on |
 |---|---|---|
-| `src/formats/` | File formats (`.sqh`, `.gim`, `.mgr`, `.itf`, `.fnt`, `.acr`, `.itm`) | C++17 only |
+| `src/formats/` | File formats (`.sqh`, `.gim`, `.mgr`, `.itf`, `.fnt`, `.acr`, `.itm`, `.chk`, `.brs`) | C++17 only |
 | `src/engine/` | Engine core: `Vfs` (archive mounting, path rules), `Ini`, `Settings` (config.cfg) | formats |
 | `src/audio/` | WAV and MP3 decoding (dr_mp3, downloaded and hash-checked by CMake) | C++17 only |
 | `src/render/` | Platform-neutral rendering helpers (`.gim` frame to RGBA) | formats |
+| `src/world/` | The game world: `Level` (a level's cells, brushes and projection) | formats, engine, render |
 | `src/ui/` | Interface pieces with the engine's rules: text boxes and wrapping, buttons, check boxes, sliders, animated items | formats, render |
 | `src/app/` | SDL3 programs | everything + SDL3 |
 
@@ -100,9 +101,23 @@ harbinger --data <dir> --screen options|load [--settings file.cfg]
   `display.ini` next to `config.cfg`; Alt+Enter toggles fullscreen anywhere.
   The 800x600 screens are scaled to fit with black bars.
 
+## Milestone 5: the first level (done)
+
+Play on the character screen opens level 1, Torvus Junction, the level the
+original starts a new game in. The floor and walls are drawn from the level's
+map cells and the act's brushes (`docs/formats/level.md`) at the original's
+in-game size, 1024x768, with the level's own music. The camera starts on the
+level's Default entry point and moves with the arrows, WASD, the screen edges
+or the left stick; Esc or B returns to the menu. `--screen game --level N`
+opens any level directly, and `levelshot` renders a whole level to an image.
+
+Not there yet: objects (gizmos), characters, lighting, the HUD.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
-3. Start a game: levels, agents and `.anm` animation, the in-game loop.
+3. The rest of the level file: gizmos (objects), agents, triggers.
+4. Agents and `.anm` animation: the player on screen, walking.
+5. The in-game loop, HUD and lighting.

@@ -35,7 +35,9 @@ struct Level {
     uint16_t act = 0;    // [ActN] section in Harbinger.ini: which brush and gizmo sets
     uint16_t width = 0, height = 0;  // in cells
     std::vector<EntryPoint> entries;
-    uint16_t unknown1 = 0, unknown2 = 0, unknown3 = 0, unknown4 = 0;
+    uint16_t unknown1 = 0;
+    uint16_t music = 0;  // sound.mgr id of the level's music, e.g. 302 = Haven.mp3
+    uint16_t unknown3 = 0, unknown4 = 0;
     std::string name;    // shown to the player, e.g. "Torvus Junction"
     std::vector<Cell> cells;  // column-major: cells[x * height + y] (FUN_00447360)
     size_t cellsEnd = 0;      // file offset where the undecoded part starts

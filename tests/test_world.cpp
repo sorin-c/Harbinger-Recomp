@@ -89,7 +89,7 @@ static void testLevel() {
     Bytes c;
     c.f64(1.23).u16(1).u16(2).u16(1);  // version, act, 2x1 cells
     c.u16(1).u16(0).f64(1.5).f64(0.5).u16(4).str("Default").u32(0xFFFFFFFF);
-    c.u16(0).u16(3).u16(0).str("Test Room").u16(0);
+    c.u16(0).u16(302).u16(0).str("Test Room").u16(0);
     c.u16(1).u16(1).u16(0x15);
     c.u16(2).u16(1).u16(0x16).u16(3).u16(0x4001);
     c.u16(0xAAAA);  // the undecoded rest
@@ -97,7 +97,7 @@ static void testLevel() {
     CHECK(lv.act == 1 && lv.width == 2 && lv.height == 1);
     CHECK(lv.entries.size() == 1 && lv.entries[0].name == "Default" && lv.entries[0].x == 1.5);
     CHECK(lv.entries[0].link == -1);
-    CHECK(lv.name == "Test Room");
+    CHECK(lv.name == "Test Room" && lv.music == 302);
     CHECK(lv.at(0, 0).count == 1 && lv.at(0, 0).layers[0].tile == 0x15);
     CHECK(lv.at(1, 0).count == 2 && lv.at(1, 0).layers[1].brush == 3);
     CHECK(lv.cellsEnd == c.d.size() - 2);
@@ -148,6 +148,7 @@ static void testRealData(const char* dir) {
     world::Level torvus(vfs, ini, 1);
     const auto& m = torvus.map();
     CHECK(m.name == "Torvus Junction" && m.act == 1 && m.width == 48 && m.height == 48);
+    CHECK(m.music == 302);  // Res\\Common\\Music\\Haven.mp3 in sound.mgr
     CHECK(m.entries.size() == 2 && m.entries[0].name == "Default");
     size_t missing = 0;
     for (int x = 0; x < m.width; ++x)
