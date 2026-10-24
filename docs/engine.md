@@ -4,11 +4,11 @@
 
 | Path | Role | Depends on |
 |---|---|---|
-| `src/formats/` | File formats (`.sqh`, `.gim`, `.mgr`, `.itf`, `.fnt`, `.acr`, `.itm`, `.chk`, `.brs`) | C++17 only |
+| `src/formats/` | File formats (`.sqh`, `.gim`, `.mgr`, `.itf`, `.fnt`, `.acr`, `.itm`, `.chk`, `.brs`, `.giz`) | C++17 only |
 | `src/engine/` | Engine core: `Vfs` (archive mounting, path rules), `Ini`, `Settings` (config.cfg) | formats |
 | `src/audio/` | WAV and MP3 decoding (dr_mp3, downloaded and hash-checked by CMake) | C++17 only |
 | `src/render/` | Platform-neutral rendering helpers (`.gim` frame to RGBA) | formats |
-| `src/world/` | The game world: `Level` (a level's cells, brushes and projection) | formats, engine, render |
+| `src/world/` | The game world: `Level` (a level's cells, brushes, gizmos and projection) | formats, engine, render |
 | `src/ui/` | Interface pieces with the engine's rules: text boxes and wrapping, buttons, check boxes, sliders, animated items | formats, render |
 | `src/app/` | SDL3 programs | everything + SDL3 |
 
@@ -113,11 +113,21 @@ opens any level directly, and `levelshot` renders a whole level to an image.
 
 Not there yet: objects (gizmos), characters, lighting, the HUD.
 
+## Milestone 6: level objects (done)
+
+The level's gizmos (machinery, trash, consoles, the umbilical pit, the town
+generator) are decoded from their `.giz` templates and the level's set-gizmo
+records (`docs/formats/gizmo.md`) and drawn with the floor and walls, in place
+as the original shows them. Every template and every level's records parse to
+the byte. Each gizmo shows its first frame; animation, states and lights come
+later.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
-3. The rest of the level file: gizmos (objects), agents, triggers.
-4. Agents and `.anm` animation: the player on screen, walking.
+3. Gizmo animation (frame sequences and codes) and states.
+4. The rest of the level file: agents, triggers. Agents and `.anm`
+   animation: the player on screen, walking.
 5. The in-game loop, HUD and lighting.

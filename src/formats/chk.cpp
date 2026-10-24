@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "formats/binary.hpp"
+#include "formats/giz.hpp"
 
 namespace harbinger::chk {
 
@@ -61,6 +62,39 @@ Level parse(const std::vector<uint8_t>& data) {
     }
     lv.cellsEnd = r.pos();
     return lv;
+}
+
+void parseGizmos(Level& lv, const std::vector<uint8_t>& data,
+                 const std::function<const giz::Template*(uint16_t)>& lookup) {
+    ByteReader r(data, "chk");
+    r.skip(lv.cellsEnd);
+    // Lists of instance ids. Every shipped level has one, holding all or most
+    // of the instances below.
+    const uint16_t lists = r.u16();
+    lv.instanceLists.assign(lists, {});
+    for (auto& list : lv.instanceLists) {
+        const uint16_t n = r.u16();
+        for (uint16_t i = 0; i < n; ++i) list.push_back(r.u16());
+    }
+    // FUN_004495a0: i32 count, then per gizmo its template id and the plug's
+    // chunk load.
+    const int32_t count = r.i32();
+    if (count < 0 || size_t(count) > r.remaining() / 8) r.fail("implausible gizmo count");
+    lv.gizmos.clear();
+    lv.gizmos.reserve(size_t(count));
+    for (int32_t i = 0; i < count; ++i) {
+        GizmoRecord g;
+        g.gizmo = r.u16();
+        g.instance = r.u16();
+        g.x = r.u16();
+        g.y = r.u16();
+        if (g.x >= lv.width || g.y >= lv.height) r.fail("gizmo outside the map");
+        const giz::Template* t = lookup(g.gizmo);
+        if (!t) r.fail("gizmo id missing from gizmo.mgr");
+        g.extra = r.bytes(t->recordExtra(data.data() + r.pos(), r.remaining()));
+        lv.gizmos.push_back(std::move(g));
+    }
+    lv.gizmosEnd = r.pos();
 }
 
 }  // namespace harbinger::chk

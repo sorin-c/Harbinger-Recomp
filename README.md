@@ -24,8 +24,8 @@ What exists so far:
   Options, Load Game), drawn from the original files, with the menu music and
   sounds, and mouse, keyboard and gamepad input. Play opens the first level
   (floor, walls and music so far) to look around in
-- Level (`.chk`) and brush (`.brs`) parsers, and `levelshot`, which renders a
-  whole level to an image
+- Level (`.chk`), brush (`.brs`) and gizmo (`.giz`) parsers, and `levelshot`,
+  which renders a whole level with its objects to an image
 - `harbinger-viewer`, an SDL3 sprite browser (keyboard or gamepad)
 
 ```

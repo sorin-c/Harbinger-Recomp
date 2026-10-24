@@ -1,5 +1,6 @@
-// The in-game view, as far as it is rebuilt: a level's floor and walls drawn
-// from the original files, with a camera the player can move around.
+// The in-game view, as far as it is rebuilt: a level's floor, walls and
+// gizmos drawn from the original files, with a camera the player can move
+// around.
 #pragma once
 
 #include <SDL3/SDL.h>
@@ -8,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "app/assets.hpp"
 #include "world/level.hpp"
@@ -33,6 +35,7 @@ public:
 private:
     const Texture* tile(const chk::Layer& layer) const;
     void drawLayer(int x, int y, int layer) const;
+    void drawGizmo(const chk::GizmoRecord& g) const;
 
     Assets& assets_;
     SDL_Renderer* ren_;
@@ -43,6 +46,9 @@ private:
     uint64_t lastMs_ = 0;
     // GPU copies of tile images, by brush, tile id (centre tiles are cut per id).
     mutable std::map<std::pair<uint16_t, uint16_t>, Texture> tiles_;
+    // Visible gizmos, back to front, with their depth keys.
+    std::vector<std::pair<double, const chk::GizmoRecord*>> gizmos_;
+    mutable std::map<std::string, Texture> gizmoTextures_;  // by frame path
 };
 
 }  // namespace harbinger::app

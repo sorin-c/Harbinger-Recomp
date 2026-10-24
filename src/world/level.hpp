@@ -1,5 +1,6 @@
 // A loaded level: its map cells, the act's brushes and their decoded images,
-// and the isometric projection the original draws them with.
+// its gizmos (level objects) and their templates, and the isometric
+// projection the original draws them with.
 // Format notes and evidence: docs/formats/level.md
 #pragma once
 
@@ -12,6 +13,7 @@
 #include "engine/vfs.hpp"
 #include "formats/brs.hpp"
 #include "formats/chk.hpp"
+#include "formats/giz.hpp"
 #include "render/sprite.hpp"
 
 namespace harbinger::world {
@@ -27,7 +29,8 @@ constexpr int kTileW = 128, kTileH = 64;
 
 class Level {
 public:
-    // Loads level `id` from level.mgr and the brushes of its act ([ActN] Brushes).
+    // Loads level `id` from level.mgr, and the brushes and gizmo templates of
+    // its act ([ActN] Brushes, [ActN] Gizmos).
     Level(Vfs& vfs, const Ini& ini, uint16_t id);
 
     const chk::Level& map() const { return map_; }
@@ -48,6 +51,24 @@ public:
     // cell's diamond (walls rise above it).
     void drawLayer(render::RgbaImage& dst, int x, int y, int layer, int originX, int originY);
 
+    // The template a gizmo record places (loaded with the level).
+    const giz::Template& gizmoTemplate(const chk::GizmoRecord& g) const;
+    // The decoded image of a gizmo frame (cached), or nullptr if missing.
+    const render::RgbaImage* gizmoImage(const giz::Frame& frame);
+
+    // Where a gizmo's first frame is drawn: its top-left corner in map screen
+    // pixels. FUN_004b3690 maps image pixel (64, height - (rows + 1) * 32) to
+    // the gizmo's map position, `rows` being the first mask's row count.
+    ScreenPoint gizmoTopLeft(const chk::GizmoRecord& g);
+    // Draw order key: larger is nearer the viewer. Comparable with a cell's x + y.
+    double gizmoDepth(const chk::GizmoRecord& g) const;
+    // False for gizmos whose first frame is an editor placeholder: an
+    // umbilical shell's first image is only the outline of its footprint, and
+    // the original shows nothing there until the shell closes.
+    bool gizmoVisible(const chk::GizmoRecord& g) const;
+    // Draws a visible gizmo's first frame into `dst` (see drawLayer for the origin).
+    void drawGizmo(render::RgbaImage& dst, const chk::GizmoRecord& g, int originX, int originY);
+
 private:
     struct LoadedBrush {
         brs::Brush brush;
@@ -57,7 +78,9 @@ private:
     std::string path_;
     chk::Level map_;
     std::map<uint16_t, LoadedBrush> brushes_;
+    std::map<uint16_t, giz::Template> gizmos_;
     std::map<std::string, std::unique_ptr<render::RgbaImage>> images_;  // by tile path
+    std::map<std::string, std::unique_ptr<render::RgbaImage>> gizmoImages_;  // by frame path
 };
 
 }  // namespace harbinger::world

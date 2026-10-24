@@ -3,7 +3,8 @@
 A level ("chunk", class `GChunk`) is a grid of map cells. Each cell paints one
 or two tiles from the act's **brushes**: a floor, and on top of it a wall or an
 edge piece. Objects (gizmos), characters (agents), triggers and the rest are
-stored after the cells and are not decoded yet.
+stored after the cells. The set gizmos are decoded (`docs/formats/gizmo.md`);
+agents, triggers and the rest are not yet.
 
 Parsers: `src/formats/chk.cpp`, `src/formats/brs.cpp`. Loader and drawing:
 `src/world/level.cpp`. Tests: `tests/test_world.cpp`. Tool: `levelshot`
@@ -44,8 +45,9 @@ repeat width*height:    map cells, FUN_00448080 / FUN_004e2d60
   repeat layerCount:
     u16  brush          id in the act's brush.mgr
     u16  tile           brush tile id
-...                     the brush list, gizmos, agents, triggers, sounds,
-                        attachments, rooms, path cells (not decoded)
+...                     instance list and set gizmos (docs/formats/gizmo.md)
+...                     agents, triggers, sounds, attachments, rooms,
+                        path cells (not decoded)
 ```
 
 `str` is the engine string (u32 length without the NUL, the characters, a NUL).
@@ -120,9 +122,8 @@ buffer, which the rebuild does not reproduce yet.
 
 ## Open questions
 
-- The rest of the `.chk`: brush list, set gizmos (`FUN_004495a0`: i32 count,
-  then per gizmo a u16 class and the class's own data), agents
-  (`FUN_00418c40`), triggers, set sounds, attachments, rooms, path cells.
+- The rest of the `.chk` after the set gizmos: agents (`FUN_00418c40`),
+  triggers, set sounds, attachments, rooms, path cells.
 - The three unknown header fields.
 - Lighting: the original darkens the floor away from lights and the player.
 - What the F* tile groups are.

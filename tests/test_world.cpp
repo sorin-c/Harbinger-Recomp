@@ -1,9 +1,10 @@
-// Tests for the level (.chk) and brush (.brs) parsers and the level loader.
-// Synthetic cases always run; with HARBINGER_DATA set, every shipped level and
-// brush must parse.
+// Tests for the level (.chk), brush (.brs) and gizmo template (.giz) parsers
+// and the level loader. Synthetic cases always run; with HARBINGER_DATA set,
+// every shipped level, brush and gizmo must parse.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -12,6 +13,8 @@
 #include "engine/vfs.hpp"
 #include "formats/brs.hpp"
 #include "formats/chk.hpp"
+#include "formats/giz.hpp"
+#include "formats/mgr.hpp"
 #include "world/level.hpp"
 
 using namespace harbinger;
@@ -50,7 +53,26 @@ struct Bytes {
         d.insert(d.end(), s.begin(), s.end());
         return u8(0);
     }
+    // .giz strings: u16 length counting the NUL.
+    Bytes& gstr(const std::string& s) {
+        u16(uint16_t(s.size() + 1));
+        d.insert(d.end(), s.begin(), s.end());
+        return u8(0);
+    }
 };
+
+// A template header plus one mask and one frame.
+static Bytes gizHeader(const char* name, uint16_t flags) {
+    Bytes b;
+    b.f64(1.04).gstr(name).u16(flags).u16(0x401).u8(0);
+    b.u16(1).u16(1);                                          // one mask, one frame
+    b.gstr("m.tga").u16(2).u16(2);                            // rows 2, two cells
+    b.u16(0).u16(0).u16(0).u16(1).u16(0);
+    b.u16(1).u16(0xFFFF).u16(0).u16(1).u16(0);
+    b.u16(0).u16(5).u16(6).u16(100).u16(0).gstr("f.tga").u8(0);  // frame on mask 0 at (5, 6)
+    b.u16(0xFFFF).u16(0xFFFF);                                 // version > 1.03
+    return b;
+}
 
 static bool endsWith(const std::string& s, const char* suffix) {
     const size_t n = std::strlen(suffix);
@@ -111,6 +133,58 @@ static void testLevel() {
     CHECK(world::toScreen(0, 1).x == -64 && world::toScreen(0, 1).y == 32);
 }
 
+static void testGizmo() {
+    // A spawner with two slots and an empty script section.
+    Bytes sp = gizHeader("Spawner", giz::HasScript | giz::Spawn);
+    sp.u16(2).u16(50).u16(66).u16(7).u16(102).u16(40).u16(7);
+    sp.u16(0).u16(0);
+    const giz::Template t = giz::parse(sp.d);
+    CHECK(t.name == "Spawner" && t.cls == giz::Spawn && t.version == 1.04);
+    CHECK(t.masks.size() == 1 && t.masks[0].rows == 2 && t.masks[0].cells.size() == 2);
+    CHECK(t.masks[0].cells[1].dy == -1);
+    CHECK(t.frames.size() == 1 && t.frames[0].x == 5 && t.frames[0].y == 6 && t.frames[0].path == "f.tga");
+    CHECK(t.spawns.size() == 2 && t.spawns[1].a == 102);
+    CHECK(t.script.size() == 4);
+    const uint8_t rec[12] = {};
+    CHECK(t.recordExtra(rec, sizeof rec) == 12);  // 8 + a word per slot
+    CHECK(throws([&] { t.recordExtra(rec, 11); }));
+
+    // A chest: its label in the template; the record carries a flagged label too.
+    Bytes ch = gizHeader("Locker", giz::Chest);
+    ch.str("Floor Locker");
+    const giz::Template chest = giz::parse(ch.d);
+    CHECK(chest.label == "Floor Locker");
+    Bytes r;
+    r.u8(1).str("Floor Locker").u16(0x88).u16(0).u16(0).u16(0);
+    CHECK(chest.recordExtra(r.d.data(), r.d.size()) == r.d.size());
+    Bytes r0;
+    r0.u8(0).u16(0).u16(0).u16(0).u16(0);
+    CHECK(chest.recordExtra(r0.d.data(), r0.d.size()) == 9);
+
+    Bytes trailing = ch;
+    trailing.u8(0);
+    CHECK(throws([&] { giz::parse(trailing.d); }));
+
+    // Set gizmos after a level's cells.
+    Bytes c;
+    c.f64(1.23).u16(1).u16(2).u16(2).u16(0);
+    c.u16(0).u16(302).u16(0).str("Room").u16(0);
+    for (int i = 0; i < 4; ++i) c.u16(0);
+    c.u16(1).u16(2).u16(7).u16(9);                // one list: instances 7, 9
+    c.u32(2);
+    c.u16(40).u16(7).u16(1).u16(0);               // the spawner at (1, 0)
+    c.d.insert(c.d.end(), rec, rec + 12);
+    c.u16(41).u16(9).u16(0).u16(1).d.insert(c.d.end(), r.d.begin(), r.d.end());
+    c.u16(0xAAAA);
+    chk::Level lv = chk::parse(c.d);
+    chk::parseGizmos(lv, c.d, [&](uint16_t id) { return id == 40 ? &t : id == 41 ? &chest : nullptr; });
+    CHECK(lv.instanceLists.size() == 1 && lv.instanceLists[0].size() == 2);
+    CHECK(lv.gizmos.size() == 2 && lv.gizmos[0].x == 1 && lv.gizmos[1].instance == 9);
+    CHECK(lv.gizmos[1].extra.size() == r.d.size());
+    CHECK(lv.gizmosEnd == c.d.size() - 2);
+    CHECK(throws([&] { chk::parseGizmos(lv, c.d, [](uint16_t) { return nullptr; }); }));
+}
+
 static void testRealData(const char* dir) {
     Vfs vfs(dir);
     const auto ini = Ini::fromBytes(*vfs.read("Harbinger.ini"));
@@ -144,6 +218,43 @@ static void testRealData(const char* dir) {
         }
     CHECK(levels == 80);  // unique paths across res0 and res1
 
+    // Every gizmo template parses to its last byte.
+    size_t templates = 0;
+    for (const auto& p : vfs.list("res/"))
+        if (endsWith(p, ".giz")) {
+            ++templates;
+            try {
+                giz::parse(*vfs.read(p));
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "%s: %s\n", p.c_str(), e.what());
+                ++failures;
+            }
+        }
+    CHECK(templates > 700);
+
+    // Every level's set gizmos parse against its act's gizmo.mgr.
+    std::map<std::pair<int, uint16_t>, giz::Template> loaded;
+    size_t gizmos = 0;
+    for (const auto& p : vfs.list("res/"))
+        if (endsWith(p, ".chk")) {
+            try {
+                const auto data = *vfs.read(p);
+                auto lv = chk::parse(data);
+                const auto index = mgr::parse(*vfs.read(ini.require("Act" + std::to_string(lv.act), "Gizmos")));
+                chk::parseGizmos(lv, data, [&](uint16_t id) -> const giz::Template* {
+                    const auto key = std::make_pair(int(lv.act), id);
+                    if (auto it = loaded.find(key); it != loaded.end()) return &it->second;
+                    const std::string* path = index.find(id);
+                    return path ? &loaded.emplace(key, giz::parse(*vfs.read(*path))).first->second : nullptr;
+                });
+                gizmos += lv.gizmos.size();
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "%s: %s\n", p.c_str(), e.what());
+                ++failures;
+            }
+        }
+    CHECK(gizmos > 10000);
+
     // A new game starts in level 1 (FUN_00497850 -> FUN_00497cd0(this, 1)).
     world::Level torvus(vfs, ini, 1);
     const auto& m = torvus.map();
@@ -156,11 +267,15 @@ static void testRealData(const char* dir) {
             for (int l = 0; l < m.at(x, y).count; ++l)
                 if (!torvus.image(m.at(x, y).layers[l])) ++missing;
     CHECK(missing == 0);
+    CHECK(m.gizmos.size() == 51);
+    for (const auto& g : m.gizmos)
+        for (const auto& f : torvus.gizmoTemplate(g).frames) CHECK(torvus.gizmoImage(f) != nullptr);
 }
 
 int main() {
     testBrush();
     testLevel();
+    testGizmo();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
         testRealData(dir);
     else

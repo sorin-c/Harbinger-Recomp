@@ -37,6 +37,11 @@ public:
         return out;
     }
 
+    void skip(size_t n) {
+        need(n);
+        pos_ += n;
+    }
+
     // The engine's string encoding (FUN_0050fe60): u32 length, the characters,
     // then a NUL that the length does not count.
     std::string string() { return readString(u32() + size_t(1)); }

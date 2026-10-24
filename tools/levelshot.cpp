@@ -1,6 +1,8 @@
-// levelshot: draw a level's floor and walls to a .tga, for checking the level
-// and brush formats against the original.
-//   levelshot <install dir> <level id> <out.tga> [layers=2]
+// levelshot: draw a level's floor, walls and gizmos to a .tga, for checking
+// the level, brush and gizmo formats against the original.
+//   levelshot <install dir> <level id> <out.tga> [layers=3]
+// layers: 1 = floors, 2 = and walls, 3 = and gizmos.
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -23,7 +25,7 @@ int main(int argc, char** argv) {
         if (!iniData) throw std::runtime_error("Harbinger.ini not found");
         const Ini ini = Ini::fromBytes(*iniData);
         world::Level level(vfs, ini, uint16_t(std::atoi(argv[2])));
-        const int layers = argc > 4 ? std::atoi(argv[4]) : 2;
+        const int layers = argc > 4 ? std::atoi(argv[4]) : 3;
         const auto& m = level.map();
 
         // Bounds of every cell's diamond plus wall height.
@@ -40,19 +42,32 @@ int main(int argc, char** argv) {
         img.height = int(maxY - minY) + 256;
         img.pixels.assign(size_t(img.width) * size_t(img.height), render::packRgba(0, 0, 0, 255));
 
-        // Floors first, then the upper layer back to front.
+        // Floors first, then walls and gizmos back to front: a diagonal of
+        // walls, then the gizmos whose depth falls before the next diagonal.
         for (int x = 0; x < m.width; ++x)
             for (int y = 0; y < m.height; ++y) level.drawLayer(img, x, y, 0, originX, originY);
+        std::vector<const chk::GizmoRecord*> gizmos;
+        if (layers > 2)
+            for (const auto& g : m.gizmos) gizmos.push_back(&g);
+        std::stable_sort(gizmos.begin(), gizmos.end(), [&](auto* a, auto* b) {
+            return level.gizmoDepth(*a) < level.gizmoDepth(*b);
+        });
+        size_t next = 0;
         if (layers > 1)
-            for (int d = 0; d < m.width + m.height; ++d)
+            for (int d = 0; d < m.width + m.height; ++d) {
                 for (int x = 0; x < m.width; ++x)
                     if (int y = d - x; y >= 0 && y < m.height) level.drawLayer(img, x, y, 1, originX, originY);
+                for (; next < gizmos.size() && level.gizmoDepth(*gizmos[next]) < d + 1; ++next)
+                    level.drawGizmo(img, *gizmos[next], originX, originY);
+            }
+        for (; next < gizmos.size(); ++next) level.drawGizmo(img, *gizmos[next], originX, originY);
 
         for (const auto& e : m.entries) {
             const auto p = world::toScreen(e.x, e.y);
             std::printf("entry %u \"%s\" at (%.2f, %.2f) -> pixel (%d, %d)\n", e.id, e.name.c_str(), e.x, e.y,
                         int(p.x) - originX, int(p.y) - originY);
         }
+        std::printf("%zu gizmos\n", m.gizmos.size());
         std::printf("%s: \"%s\" act %u, %ux%u cells, image %dx%d\n", level.path().c_str(), m.name.c_str(), m.act,
                     m.width, m.height, img.width, img.height);
 

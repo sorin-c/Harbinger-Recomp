@@ -1,5 +1,6 @@
 #include "world/level.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -26,6 +27,23 @@ void put(render::RgbaImage& dst, int x, int y, uint32_t p) {
     dst.pixels[size_t(y) * size_t(dst.width) + size_t(x)] = p;
 }
 
+// Source-over blend of `p` onto pixel (x, y).
+void blend(render::RgbaImage& dst, int x, int y, uint32_t p) {
+    const uint32_t a = p >> 24;
+    if (x < 0 || y < 0 || x >= dst.width || y >= dst.height || !a) return;
+    uint32_t& d = dst.pixels[size_t(y) * size_t(dst.width) + size_t(x)];
+    if (a == 255) {
+        d = p;
+        return;
+    }
+    uint32_t out = 0xFF000000u;
+    for (int shift = 0; shift < 24; shift += 8) {
+        const uint32_t s = (p >> shift) & 0xFF, t = (d >> shift) & 0xFF;
+        out |= ((s * a + t * (255 - a)) / 255) << shift;
+    }
+    d = out;
+}
+
 }  // namespace
 
 Level::Level(Vfs& vfs, const Ini& ini, uint16_t id) : vfs_(vfs) {
@@ -33,11 +51,23 @@ Level::Level(Vfs& vfs, const Ini& ini, uint16_t id) : vfs_(vfs) {
     const std::string* path = levels.find(id);
     if (!path) throw std::runtime_error("level " + std::to_string(id) + " is not in level.mgr");
     path_ = *path;
-    map_ = chk::parse(readOrThrow(vfs, path_));
+    const auto chkData = readOrThrow(vfs, path_);
+    map_ = chk::parse(chkData);
 
     const auto brushes = mgr::parse(readOrThrow(vfs, ini.require("Act" + std::to_string(map_.act), "Brushes")));
     for (const auto& [brushId, brushPath] : brushes.entries)
         brushes_[brushId] = LoadedBrush{brs::parse(readOrThrow(vfs, brushPath))};
+
+    const auto gizmos = mgr::parse(readOrThrow(vfs, ini.require("Act" + std::to_string(map_.act), "Gizmos")));
+    chk::parseGizmos(map_, chkData, [&](uint16_t gizmoId) -> const giz::Template* {
+        auto it = gizmos_.find(gizmoId);
+        if (it == gizmos_.end()) {
+            const std::string* gizPath = gizmos.find(gizmoId);
+            if (!gizPath) return nullptr;
+            it = gizmos_.emplace(gizmoId, giz::parse(readOrThrow(vfs, *gizPath))).first;
+        }
+        return &it->second;
+    });
 }
 
 const brs::Brush* Level::brush(uint16_t id) const {
@@ -88,6 +118,58 @@ void Level::drawLayer(render::RgbaImage& dst, int x, int y, int layer, int origi
     for (int v = 0; v < src.height; ++v)
         for (int u = 0; u < src.width; ++u)
             put(dst, left + u, imgTop + v, src.pixels[size_t(v) * size_t(src.width) + size_t(u)]);
+}
+
+const giz::Template& Level::gizmoTemplate(const chk::GizmoRecord& g) const {
+    return gizmos_.at(g.gizmo);  // parseGizmos loaded every template the records name
+}
+
+const render::RgbaImage* Level::gizmoImage(const giz::Frame& frame) {
+    auto& slot = gizmoImages_[frame.path];
+    if (!slot) {
+        auto data = vfs_.read(frame.path);
+        if (!data) return nullptr;
+        const auto img = gim::decode(*data);
+        slot = std::make_unique<render::RgbaImage>(
+            render::RgbaImage{img.width, img.height, render::toRgba(img, 0, render::KeyMode::Shadow)});
+    }
+    return slot.get();
+}
+
+ScreenPoint Level::gizmoTopLeft(const chk::GizmoRecord& g) {
+    const giz::Template& t = gizmoTemplate(g);
+    const ScreenPoint p = toScreen(g.x, g.y);
+    const render::RgbaImage* img = t.frames.empty() ? nullptr : gizmoImage(t.frames[0]);
+    const int rows = t.masks.empty() ? 0 : t.masks[0].rows;
+    const int h = img ? img->height : 0;
+    return {p.x - kTileW / 2, p.y + (rows + 1) * (kTileH / 2) - h};
+}
+
+double Level::gizmoDepth(const chk::GizmoRecord& g) const {
+    // The footprint runs from the origin half-cell towards +x and -y, so its
+    // nearest half-cell is the one with the largest dx + dy.
+    const giz::Template& t = gizmoTemplate(g);
+    int front = 0;
+    if (!t.masks.empty())
+        for (const auto& c : t.masks[0].cells) front = std::max(front, c.dx + c.dy);
+    return g.x + g.y + front / 2.0;
+}
+
+bool Level::gizmoVisible(const chk::GizmoRecord& g) const {
+    const giz::Template& t = gizmoTemplate(g);
+    return !t.frames.empty() && t.cls != giz::UmbilicalShell;
+}
+
+void Level::drawGizmo(render::RgbaImage& dst, const chk::GizmoRecord& g, int originX, int originY) {
+    const giz::Template& t = gizmoTemplate(g);
+    if (!gizmoVisible(g)) return;
+    const render::RgbaImage* img = gizmoImage(t.frames[0]);
+    if (!img) return;
+    const ScreenPoint tl = gizmoTopLeft(g);
+    const int left = int(std::lround(tl.x)) - originX, top = int(std::lround(tl.y)) - originY;
+    for (int v = 0; v < img->height; ++v)
+        for (int u = 0; u < img->width; ++u)
+            blend(dst, left + u, top + v, img->pixels[size_t(v) * size_t(img->width) + size_t(u)]);
 }
 
 }  // namespace harbinger::world
