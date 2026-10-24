@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -17,6 +18,7 @@
 #include "formats/brs.hpp"
 #include "formats/chk.hpp"
 #include "formats/gim.hpp"
+#include "formats/gsc.hpp"
 #include "formats/giz.hpp"
 #include "formats/mgr.hpp"
 #include "render/sprite.hpp"
@@ -335,6 +337,7 @@ static void testRealData(const char* dir) {
     std::map<uint16_t, agt::Template> agentTemplates;
     const auto agentIndex = mgr::parse(*vfs.read(ini.require("Paths", "Agents")));
     size_t gizmos = 0, agents = 0, triggers = 0, scripted = 0;
+    std::set<uint16_t> scriptIds;
     for (const auto& p : vfs.list("res/"))
         if (endsWith(p, ".chk")) {
             try {
@@ -357,8 +360,8 @@ static void testRealData(const char* dir) {
                 chk::parseRest(lv, data);  // to the last byte
                 CHECK(lv.beacons.size() == lv.rooms.size());
                 triggers += lv.eventTriggers.size() + lv.gizmoTriggers.size();
-                scripted += std::count_if(lv.eventTriggers.begin(), lv.eventTriggers.end(),
-                                          [](const auto& t) { return t.script != 0; });
+                for (const auto& t : lv.eventTriggers)
+                    if (t.script) ++scripted, scriptIds.insert(t.script);
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "%s: %s\n", p.c_str(), e.what());
                 ++failures;
@@ -367,8 +370,42 @@ static void testRealData(const char* dir) {
     CHECK(gizmos > 10000 && agents > 5000);
     CHECK(triggers > 500 && scripted > 30);
 
-    // Every agent template and animation parses, and every animation
-    // direction's frame sheet exists.
+    // Every cutscene script parses, and every script an event trigger names
+    // exists in each character's script manager.
+    size_t scripts = 0;
+    for (const auto& p : vfs.list("res/"))
+        if (endsWith(p, ".gsc")) {
+            ++scripts;
+            try {
+                const auto d = *vfs.read(p);
+                gsc::parse(std::string_view(reinterpret_cast<const char*>(d.data()), d.size()));
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "%s: %s\n", p.c_str(), e.what());
+                ++failures;
+            }
+        }
+    CHECK(scripts > 200);
+    // ThoughtBubble's last number is a voice line in the same character's
+    // speech manager.
+    size_t voiced = 0, unvoiced = 0;
+    for (const char* who : {"Human", "Gladiator", "Culibine"}) {
+        const auto idx = mgr::parse(*vfs.read(ini.require(who, "Scripts")));
+        const auto speech = mgr::parse(*vfs.read(ini.require(who, "Speech")));
+        for (uint16_t id : scriptIds) {
+            const std::string* path = idx.find(id);
+            CHECK(path && vfs.exists(*path));
+            if (!path || !vfs.exists(*path)) continue;
+            const auto d = *vfs.read(*path);
+            for (const auto& l : gsc::parse(std::string_view(reinterpret_cast<const char*>(d.data()), d.size())).lines) {
+                if (l.command != gsc::Command::ThoughtBubble || l.args.size() < 6) continue;
+                const std::string* voice = speech.find(uint16_t(l.number(5)));
+                if (voice && vfs.exists(*voice)) ++voiced;
+                else ++unvoiced;
+            }
+        }
+    }
+    CHECK(voiced > 50 && unvoiced == 0);
+
     // A sheet holds one frame per frame of its direction (all but a few
     // editor leftovers).
     size_t agentFiles = 0, anims = 0, sheets = 0, sheetMismatch = 0;
@@ -418,11 +455,34 @@ static void testRealData(const char* dir) {
         for (const auto& f : torvus.gizmoTemplate(g).frames) CHECK(torvus.gizmoImage(f) != nullptr);
 }
 
+static void testScript() {
+    const auto s = gsc::parse(
+        "Version 0.1\r\n"
+        "Cinematic(On, Visible)\r\n"
+        "ThoughtBubble(\"So, this\\nis it.\", 265, 195, 0, 0, 50134)\r\n"
+        "PositionCamera(23.0, 16.0, 9.0, Wait)\r\n"
+        "\r\n"
+        "QuitGame()\r\n");
+    CHECK(s.version == 0.1 && s.lines.size() == 4);
+    CHECK(s.lines[1].command == gsc::Command::ThoughtBubble && s.lines[1].text(0) == "So, this\nis it.");
+    CHECK(s.lines[1].number(5) == 50134 && !s.lines[1].waits());
+    CHECK(s.lines[2].number(0) == 23.0 && s.lines[2].waits() && s.lines[2].lineNumber == 4);
+    CHECK(s.lines[3].command == gsc::Command::QuitGame && s.lines[3].args.empty());
+    bool threw = false;
+    try {
+        gsc::parse("Version 0.0\r\nThoughtBubble(\"x\", 1, 2, 3, 4, 5)\r\n");  // no voice id before 0.1
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    CHECK(threw);
+}
+
 int main() {
     testBrush();
     testLevel();
     testGizmo();
     testAgents();
+    testScript();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
         testRealData(dir);
     else

@@ -143,12 +143,20 @@ The rest of the level file (triggers, attachments, power links, beacons and
 rooms, `docs/formats/level.md`) is decoded too: every shipped level now parses
 to its last byte. Nothing uses those sections yet.
 
+## Milestone 9: cutscene scripts read (done)
+
+The scripts that the levels' triggers run (`.gsc`, `docs/formats/script.md`)
+parse: all 205, with each command's arguments checked against the original's
+parse function. Every script a trigger names exists for all three characters,
+and every thought bubble's voice line resolves in that character's speech
+index. Nothing runs them yet.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
-3. Gizmo animation (frame sequences and codes) and states.
-4. Scripts (`hscript.mgr` and friends) that triggers run; gizmo states.
-   The player on screen, walking, using the room graph.
+3. Gizmo states (doors, consoles, chests): frame codes and what using one does.
+4. Running scripts from triggers. The player on screen, walking, using the
+   room graph.
 5. The in-game loop, HUD and lighting.

@@ -64,6 +64,12 @@ static void testMgr() {
     CHECK(idx.find(6) == nullptr);
     b.u8(0);
     CHECK(throws([&] { mgr::parse(b.d); }));
+
+    // Negative count: a skipped word follows (speech, dialog, datacard).
+    Bytes n;
+    n.u32(uint32_t(-1)).u16(50000).u16(50000).strNul("v.mp3").str("..");
+    const auto neg = mgr::parse(n.d);
+    CHECK(neg.entries.size() == 1 && neg.find(50000) && *neg.find(50000) == "v.mp3");
 }
 
 static void testItf() {
@@ -186,8 +192,9 @@ static void testRealData(const char* dir) {
     CHECK(startup.controls[1].text == "New Game" && startup.controls[1].textBox->font == 15);
     CHECK(startup.controls[8].classId == itf::AnimatedBtn && startup.controls[8].values[0] == 743);
 
-    // Resource indexes with the plain layout.
-    for (const char* m : {"font", "item", "itemimg", "interface", "cursor", "sound", "weapons", "effects"}) {
+    // Resource indexes, plain and negative-count layouts.
+    for (const char* m : {"font", "item", "itemimg", "interface", "cursor", "sound", "weapons", "effects",
+                          "hspeech", "gspeech", "cspeech", "hdialog", "gdialog", "cdialog", "datacard"}) {
         try {
             mgr::parse(read(std::string("res/common/managers/") + m + ".mgr"));
         } catch (const std::exception& ex) {

@@ -21,6 +21,12 @@ u32  nameLength         the usual engine string: length without the NUL
 char name[nameLength + 1]   e.g. "Items.itm", "Font.fnt"
 ```
 
+**Negative count** (`GAgentMgr_v13`, `0x4b02b0`): when the count is negative
+the loader negates it and skips one more `u16` before the ids. The speech
+(`*speech.mgr`), dialog (`*dialog.mgr`) and `datacard.mgr` indexes use this;
+the skipped word equals the first id in the speech and datacard indexes (200
+in the dialog ones), and their name is `..`.
+
 Ids are not necessarily sorted. Lookup is by id (`FUN_004b0510`, a `std::map`).
 
 ## Evidence
@@ -29,4 +35,5 @@ Ids are not necessarily sorted. Lookup is by id (`FUN_004b0510`, a `std::map`).
 |---|---|---|
 | Layout | proven by test | 76 of 84 `.mgr` files parse to their exact length |
 | Id lookup | proven | `FUN_004b0510` returns the path for an id; `FUN_004d81a0` opens it to load an item, `FUN_005138c0` to load each font |
-| Other layouts | open | `*dialog.mgr`, `*speech.mgr`, `datacard.mgr` start differently, and the `*animgroup.mgr` files carry extra bytes after the name |
+| Negative count | proven | `0x4b02b0`; all seven such files (three speech, three dialog, datacard) parse to their exact length |
+| Other layouts | open | the `*animgroup.mgr` files carry extra bytes after the name |

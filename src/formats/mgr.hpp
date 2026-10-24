@@ -17,9 +17,10 @@ struct Index {
     const std::string* find(uint16_t id) const;
 };
 
-// Parses the plain id/path layout. Throws std::runtime_error on malformed data
-// or trailing bytes (the dialog, speech, datacard and *animgroup indexes use
-// other layouts that are not decoded yet).
+// Parses the id/path layout, including the negative-count form of the speech
+// indexes. Throws std::runtime_error on malformed data or trailing bytes (the
+// dialog, datacard and *animgroup indexes use other layouts that are not
+// decoded yet).
 Index parse(const std::vector<uint8_t>& data);
 
 }  // namespace harbinger::mgr

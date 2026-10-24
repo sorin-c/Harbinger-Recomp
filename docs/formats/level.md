@@ -123,7 +123,7 @@ Every level has as many beacons as rooms, one beacon per room, each linked
 to its neighbours: a room graph, most likely for path finding across the map.
 The script ids name scripts in the character's script manager
 (`[Human|Gladiator|Culibine] Scripts`, e.g. `res\common\managers\hscript.mgr`),
-not decoded yet.
+see `docs/formats/script.md`.
 
 ## `.brs` layout
 
@@ -196,7 +196,8 @@ buffer, which the rebuild does not reproduce yet.
 
 - The undecoded fields after the agents: the 8-byte entries and words of an
   event, the room words, the meaning of the beacon costs.
-- The scripts (`*script.mgr`) that event triggers run.
+- What the trigger fields around the script id do (the scripts themselves:
+  `docs/formats/script.md`).
 - The three unknown header fields.
 - Lighting: the original darkens the floor away from lights and the player.
 - What the F* tile groups are.
