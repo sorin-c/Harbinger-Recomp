@@ -55,5 +55,5 @@ sheets have `fsp` in their path; frame counts range from 3 to 73.
 | RLE palettes reserve entries 0-1 for pure green and pure red markers | proven by survey | 9,486 palettes have pure green at index 0, 5,141 have pure red at index 1, 372 have them swapped; no other slot carries them often |
 | Green marks the shadow, red is a one-pixel rim (hover highlight) | guessed | Green sits under characters' feet; red outlines figures exactly. Characters also show a green fringe, which suggests the art was rendered over a green key. Renderer code not yet traced |
 | Raw paletted images use pure green as a colour key | likely | Cursor frames and the character-choice portraits are raw with pure green at index 0; the original shows neither with green |
-| Encoding bit 2 means RLE, encoding 7 uses palette alpha | guessed | Encoding 7 palettes carry alpha values other than 0xFF; renderer not yet traced |
+| Encoding bit 2 means RLE, encoding 7 uses palette alpha | guessed | Encoding 7 palettes carry alpha values other than 0xFF; renderer not yet traced. Interface control images ignore it: the Options slider track (alpha 0x80/0xC0) shows opaque in the original |
 | Meaning of origin fields, `extra`, and `kind` 3 | unknown | |

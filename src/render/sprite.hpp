@@ -30,6 +30,10 @@ constexpr uint32_t packRgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     return uint32_t(r) | (uint32_t(g) << 8) | (uint32_t(b) << 16) | (uint32_t(a) << 24);
 }
 
-std::vector<uint32_t> toRgba(const gim::Image& img, size_t frame, KeyMode mode = KeyMode::Shadow);
+// `paletteAlpha` applies encoding 7's per-entry alpha. Interface art is drawn
+// without it: the original shows the Options slider track (alpha 0x80/0xC0)
+// fully opaque.
+std::vector<uint32_t> toRgba(const gim::Image& img, size_t frame, KeyMode mode = KeyMode::Shadow,
+                             bool paletteAlpha = true);
 
 }  // namespace harbinger::render

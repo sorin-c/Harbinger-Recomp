@@ -1,7 +1,11 @@
 // Tests for the front-end UI pieces: text boxes and animated item stepping.
 #include <cstdio>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
+#include "engine/settings.hpp"
+#include "ui/controls.hpp"
 #include "ui/item_animation.hpp"
 #include "ui/text.hpp"
 
@@ -60,6 +64,7 @@ static void testAnimation() {
 static void testTextBox() {
     fnt::Font font;
     font.ascent = 3;
+    font.lineHeight = 4;
     font.glyphs['I' - 0x20] = {2, 3, 2, 3, 0, 0};
     font.pixels = {2, 1, 2, 1, 2, 0};
     font.kerning.fill(-128);
@@ -86,9 +91,127 @@ static void testTextBox() {
     CHECK(ui::renderTextBox(font, palette, box, "I").pixels[size_t(1 * 10 + 9)] == ink);
 }
 
+// A font whose every printable glyph is a 2x3 block (1 px below the
+// baseline) advancing 3 px: default kerning 1.
+static fnt::Font blockFont() {
+    fnt::Font font;
+    font.ascent = 2;
+    font.lineHeight = 5;
+    font.pixels = {2, 2, 2, 2, 2, 2};
+    for (char c = '!'; c < 0x7F; ++c) font.glyphs[size_t(c - 0x20)] = {2, 3, 2, 2, 0, 0};
+    font.kerning.fill(-128);
+    font.defaultKerning = 1;
+    return font;
+}
+
+static void testWrap() {
+    const fnt::Font font = blockFont();
+    // "ab" is 5 px, "ab cd" 11 px (space has no glyph and takes no room).
+    CHECK(ui::measure(font, "ab").width == 5);
+    CHECK(ui::measure(font, "ab").height == 3 && ui::measure(font, "ab").ascent == 2);
+    using Lines = std::vector<std::string>;
+    CHECK(ui::wrapText(font, "ab cd", 11) == (Lines{"ab cd"}));
+    CHECK(ui::wrapText(font, "ab cd", 10) == (Lines{"ab", "cd"}));
+    CHECK(ui::wrapText(font, "ab cd ef", 10) == (Lines{"ab", "cd", "ef"}));
+    CHECK(ui::wrapText(font, "abcdef gh", 4) == (Lines{"abcdef", "gh"}));  // a long word stays whole
+    CHECK(ui::wrapText(font, "ab\ncd", 50) == (Lines{"ab", "cd"}));        // control characters end a line
+    CHECK(ui::wrapText(font, "", 50).empty());
+
+    // Only lines starting inside the box are drawn: "Swap Mouse Buttons"
+    // loses its second line in a box one line high.
+    std::vector<gim::Color> palette = {{0, 255, 0, 255}, {9, 9, 9, 255}, {10, 20, 30, 255}};
+    itf::TextBox box;
+    box.width = 10;
+    box.height = 5;
+    const auto one = ui::renderTextBox(font, palette, box, "ab cd");
+    const uint32_t ink = render::packRgba(10, 20, 30, 255);
+    CHECK(one.pixels[size_t(0 * 10 + 0)] == ink);
+    box.height = 10;
+    const auto two = ui::renderTextBox(font, palette, box, "ab cd");
+    CHECK(two.pixels[size_t(5 * 10 + 0)] == ink);  // second baseline = 2 + lineHeight 5
+    // A box grows to its background image.
+    render::RgbaImage bg{12, 6, std::vector<uint32_t>(72, render::packRgba(1, 2, 3, 255))};
+    box.height = 5;
+    const auto grown = ui::renderTextBox(ui::BoxFonts{&font, &font, &font}, palette, box, "", -1, &bg);
+    CHECK(grown.width == 12 && grown.height == 6 && grown.pixels[71] == bg.pixels[0]);
+
+    // TextBtn: caption centred, baseline (h - textHeight) / 2 - 1 + ascent.
+    render::RgbaImage face{20, 9, std::vector<uint32_t>(180, 0)};
+    const auto btn = ui::renderTextButton(face, font, palette, "ab");  // 5 px wide at 10 - 2 = 8
+    // baseline (9 - 3) / 2 - 1 + 2 = 4, so the glyphs cover rows 2..4
+    CHECK(btn.pixels[size_t(2 * 20 + 8)] == ink && btn.pixels[size_t(1 * 20 + 8)] == 0);
+    CHECK(btn.pixels[size_t(4 * 20 + 12)] == ink && btn.pixels[size_t(4 * 20 + 13)] == 0);
+}
+
+static void testControls() {
+    using E = ui::PointerEvent;
+    using S = ui::ButtonState;
+    ui::Button b;
+    CHECK(!b.event(E::Down) && b.state == S::Pressed);
+    CHECK(!b.event(E::Cancel) && b.state == S::Normal);  // released elsewhere: no click
+    b.event(E::Down);
+    CHECK(b.event(E::Up) && b.state == S::Normal);
+    b.state = b.saved = S::Disabled;
+    CHECK(!b.event(E::Down) && !b.event(E::Up) && b.state == S::Disabled);
+
+    ui::CheckBox c;
+    CHECK(c.image() == 1);  // off
+    c.event(E::Down);
+    CHECK(c.image() == 0);  // pressing previews "on"
+    CHECK(c.event(E::Up) && c.checked && c.state == S::Checked && c.image() == 0);
+    c.event(E::Down);
+    CHECK(c.state == S::Checked);  // no pressed look while checked
+    CHECK(c.event(E::Up) && !c.checked && c.state == S::Normal);
+    c.set(true);
+    CHECK(c.checked && c.image() == 0);
+
+    ui::SliderBar s;  // 400 wide, 25 px arrows: 350 steps of track
+    s.set(0.5);
+    CHECK(s.pos == 175 && s.changed() < 0);
+    CHECK(s.event(E::Down, 10, 0) && s.pos == 172 && s.leftHeld);  // left arrow: 3 px
+    CHECK(s.event(E::Held, 10, 20) && s.pos == 172);                // repeats only after 25 ms
+    CHECK(s.event(E::Held, 10, 26) && s.pos == 169);
+    s.event(E::Up, 10, 30);
+    CHECK(!s.leftHeld && s.changed() == 169.0 / 350);
+    s.event(E::Down, 100, 40);  // on the track: snaps to x - x % 3 - 25
+    CHECK(s.pos == 74 && !s.leftHeld && !s.rightHeld);
+    s.event(E::Down, 5, 40);
+    s.event(E::Up, 5, 40);
+    s.pos = 349;
+    s.event(E::Down, 390, 50);  // right arrow, clamped to the track
+    CHECK(s.pos == 350 && s.rightHeld && s.value() == 1.0);
+    s.event(E::Cancel, 390, 50);
+    s.nudge(-1);
+    CHECK(s.pos == 332);
+}
+
+static void testSettings() {
+    Settings s;
+    s.music = 0.25;
+    s.keys[0] = 0x2E;
+    s.altKeys[20] = 0x36;
+    s.swapMouse = true;
+    const auto bytes = s.serialize();
+    CHECK(bytes.size() == 67);
+    const Settings t = Settings::parse(bytes);
+    CHECK(t.music == 0.25 && t.sound == 1.0 && t.gamma == 0.5 && t.keys[0] == 0x2E && t.altKeys[20] == 0x36 && t.swapMouse);
+    CHECK(t.serialize() == bytes);
+    CHECK(s.musicGain() == 0.25 / 12 && Settings().displayGamma() == 1.0);
+    bool threw = false;
+    try {
+        Settings::parse(std::vector<uint8_t>(66));
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    CHECK(threw);
+}
+
 int main() {
     testAnimation();
     testTextBox();
+    testWrap();
+    testControls();
+    testSettings();
     if (failures) std::fprintf(stderr, "%d check(s) failed\n", failures);
     return failures ? 1 : 0;
 }

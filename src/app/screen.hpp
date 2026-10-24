@@ -1,5 +1,5 @@
-// One interface (.itf) brought to life: widgets, hover/press handling, focus
-// for keyboard and gamepad, drawing. Plus the animated mouse cursor.
+// One interface (.itf) brought to life: widgets, pointer handling, focus for
+// keyboard and gamepad, drawing. Plus the animated mouse cursor.
 #pragma once
 
 #include <SDL3/SDL.h>
@@ -11,7 +11,9 @@
 
 #include "app/assets.hpp"
 #include "formats/itf.hpp"
+#include "ui/controls.hpp"
 #include "ui/item_animation.hpp"
+#include "ui/text.hpp"
 
 namespace harbinger::app {
 
@@ -19,51 +21,88 @@ namespace harbinger::app {
 struct Widget {
     const itf::Control* control = nullptr;
     SDL_FRect rect{};
-    std::vector<const Texture*> images;  // Button: off, on, pressed
-    Texture text;                         // StaticTextBox, owned
-    // AnimatedBtn
+    std::vector<const Texture*> images;
+    std::string text;  // StaticTextBox text or TextBtn caption
+    Texture face[2];   // owned: StaticTextBox text; TextBtn normal and pressed faces
+    // AnimatedBtn, Icon
     const Texture* strip = nullptr;
     int frameH = 0;
     ui::ItemAnimation anim;
-    bool hovered = false, pressed = false, selected = false;
+    bool hovered = false, selected = false;
+    // Interactive controls
     uint32_t action = 0;
+    ui::Button button;
+    ui::CheckBox check;
+    ui::SliderBar slider;
 
+    uint16_t cls() const { return control->classId; }
     bool interactive() const;
+};
+
+// What a control tells its interface: the control's index in the .itf and
+// its action id (message 0x18).
+struct Notice {
+    size_t control;
+    long action;
 };
 
 class Screen {
 public:
     // Interface sound slots: 9 = hover, 10 = press (GCtrlAnimatedBtn_v9 / _v7).
     enum SoundSlot { kHoverSound = 9, kPressSound = 10 };
-    using SoundFn = std::function<void(int slot, uint16_t soundId)>;
+    // `restart` false leaves a slot that is still sounding alone (FUN_004c6720).
+    using SoundFn = std::function<void(int slot, uint16_t soundId, bool restart)>;
 
     Screen(Assets& assets, const std::string& itfPath, SoundFn sound = {});
     ~Screen();
     Screen(const Screen&) = delete;
     Screen& operator=(const Screen&) = delete;
 
-    // Hover tracking; on `click`, presses the topmost widget under the point and
-    // returns its action (else -1).
-    long pointer(float x, float y, bool click);
-    // Keyboard / gamepad: move the focus through the interactive widgets.
+    uint16_t id() const { return itf_.kind; }  // the interface id the handlers switch on
+
+    // Mouse, in 800x600 screen coordinates. A press is captured by the control
+    // under the pointer and ends on it: released over it, that is a click.
+    void pointerMove(float x, float y);
+    void pointerDown(float x, float y);
+    void pointerUp(float x, float y);
+
+    // Keyboard / gamepad: move the focus through the interactive controls,
+    // press the focused one, or step the focused slider.
     void moveFocus(int delta);
-    long activateFocus();
-    // Holds the AnimatedBtn with this action in its pressed pose (character choice).
-    void select(uint32_t action);
+    void activateFocus();
+    void adjustFocus(int dir);
+
+    // Notices since the last call, oldest first.
+    std::vector<Notice> takeNotices();
+    void playSlot(int slot, bool restart = true);
+
+    // What an interface handler does to its controls, by .itf index.
+    void select(uint32_t action);  // holds the AnimatedBtn with this action pressed
+    void setSlider(size_t control, uint32_t action, double value);
+    double sliderChanged(size_t control);  // message 0x28: -1 if unchanged
+    void setCheck(size_t control, uint32_t action, bool on);
+    bool checked(size_t control) const;
+    void setText(size_t control, const std::string& text);
+    void setDisabled(size_t control, bool disabled);
 
     void update(uint64_t nowMs);
     void draw(SDL_Renderer* ren) const;
 
 private:
+    Widget* at(float x, float y);
+    void event(Widget& w, ui::PointerEvent e);
     void setHover(Widget& w, bool on);
-    long activate(Widget& w);
-    void playSlot(int slot);
+    void renderFaces(Widget& w);
 
+    Assets& assets_;
     itf::Interface itf_;
     std::vector<gim::Color> palette_;
     std::vector<Widget> widgets_;
     std::vector<size_t> order_;
-    std::optional<size_t> focus_;
+    std::optional<size_t> focus_, captured_;
+    float pointerX_ = 0;
+    uint64_t now_ = 0;
+    std::vector<Notice> notices_;
     SoundFn sound_;
 };
 

@@ -229,6 +229,31 @@ static void testRealData(const char* dir) {
     const auto cursor = acr::parse(read(*cursors.find(1)));
     CHECK(cursor.hotX == 18 && cursor.hotY == 5 && cursor.frames.size() == 6);
     for (const auto& f : cursor.frames) CHECK(!gim::decode(read(f)).frames.empty());
+
+    // The controls the front-end handlers address by index (FUN_004c9180 and
+    // the rebuild's FrontEnd). res1's options.itf replaces res0's.
+    const auto options = itf::parse(read("res/common/interface/start/options.itf"));
+    CHECK(options.kind == 0x15 && options.controls.size() == 15);
+    CHECK(options.controls[6].classId == itf::CheckBox && options.controls[14].classId == itf::CheckBox);
+    for (size_t i : {8, 9, 10}) CHECK(options.controls[i].classId == itf::SliderBar && options.controls[i].images.size() == 6);
+    CHECK(options.controls[7].classId == itf::TextBtn && options.controls[7].values[0] == 0x9000A);
+    CHECK(options.controls[11].text == "Cancel" && int32_t(options.controls[11].values[1]) == -3);
+    CHECK(options.controls[12].text == "Accept" && int32_t(options.controls[12].values[1]) == -2);
+    // The slider track is 400 px with 25 px arrows: 350 px of travel, the
+    // engine's hard-coded maximum position (0x15e).
+    CHECK(gim::decode(read(options.controls[8].images[0])).width == 400);
+    CHECK(gim::decode(read(options.controls[8].images[3])).width == 25);
+
+    const auto load = itf::parse(read("res/common/interface/start/load.itf"));
+    CHECK(load.kind == 0xd && load.controls.size() == 13);
+    for (size_t i : {3, 8}) CHECK(load.controls[i].classId == itf::ScrollUp);
+    for (size_t i : {4, 9}) CHECK(load.controls[i].classId == itf::ScrollDown);
+    for (size_t i : {5, 10}) CHECK(load.controls[i].classId == itf::StaticTextBox);
+    CHECK(load.controls[11].classId == itf::Icon && load.controls[11].values[0] == 860);
+
+    const auto chooser = itf::parse(read("res/common/interface/start/new.itf"));
+    CHECK(chooser.controls[1].classId == itf::Button && chooser.controls[1].name == "Play Button");
+    CHECK(chooser.controls[6].classId == itf::StaticTextBox && chooser.controls[6].name == "Player Name");
 }
 
 int main() {

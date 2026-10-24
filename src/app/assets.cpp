@@ -39,11 +39,37 @@ const gim::Image& Assets::image(const std::string& path) {
     return it->second;
 }
 
-const Texture& Assets::texture(const std::string& path) {
-    auto it = textures_.find(path);
+render::RgbaImage Assets::rgba(const std::string& path, const std::vector<gim::Color>* palette) {
+    const gim::Image& img = image(path);
+    gim::Image swapped;
+    if (palette) {
+        swapped = img;
+        for (size_t i = 0; i < swapped.palette.size() && i < palette->size(); ++i) swapped.palette[i] = (*palette)[i];
+    }
+    render::RgbaImage out{img.width, img.height, render::toRgba(palette ? swapped : img, 0, render::KeyMode::Transparent, false)};
+    // Palette index 1 shows as (4,4,4) in the original's interface, as it does in its fonts.
+    const gim::Frame& f = img.frames[0];
+    for (size_t i = 0; i < out.pixels.size(); ++i)
+        if (f.opaque[i] && f.index[i] == 1 && out.pixels[i] >> 24) out.pixels[i] = render::packRgba(4, 4, 4, 255);
+    return out;
+}
+
+const Texture& Assets::texture(const std::string& path, const std::vector<gim::Color>* palette) {
+    std::string paletteKey;
+    if (palette) paletteKey.assign(reinterpret_cast<const char*>(palette->data()), palette->size() * sizeof(gim::Color));
+    const auto key = std::make_pair(path, paletteKey);
+    auto it = textures_.find(key);
+    if (it != textures_.end()) return it->second;
+    const render::RgbaImage img = rgba(path, palette);
+    return textures_[key] = upload(img.pixels, img.width, img.height);
+}
+
+const Texture& Assets::itemTexture(const std::string& path) {
+    const auto key = std::make_pair(path, std::string("item"));
+    auto it = textures_.find(key);
     if (it != textures_.end()) return it->second;
     const gim::Image& img = image(path);
-    return textures_[path] = upload(render::toRgba(img, 0, render::KeyMode::Transparent), img.width, img.height);
+    return textures_[key] = upload(render::toRgba(img, 0, render::KeyMode::Transparent), img.width, img.height);
 }
 
 Texture Assets::upload(const std::vector<uint32_t>& rgba, int w, int h) {

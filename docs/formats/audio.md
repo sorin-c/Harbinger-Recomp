@@ -23,8 +23,11 @@ An `.itf` interface carries a table of `sound.mgr` ids indexed by slot
 
 | Slot | Use | startup.itf | new.itf |
 |---|---|---|---|
-| 9 | pointer enters an animated button | 374 `Load.wav` | 375 |
+| 9 | pointer enters an animated button; Options plays it as the sound check when the Sound slider moves | 374 `Load.wav` | 375 |
 | 10 | animated button pressed | 373 `Exit.wav` | 376 |
+
+Volumes come from `config.cfg` (docs/formats/config.md): music plays at
+`music / 12`, sounds at `sound`.
 
 ## Evidence
 

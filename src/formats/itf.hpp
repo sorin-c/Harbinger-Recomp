@@ -43,9 +43,15 @@ struct Interface {
 enum Class : uint16_t {
     Backgd = 0x00,
     Button = 0x03,
+    ScrollUp = 0x0B,    // GCtrlScrollButton, scrolling up
+    ScrollDown = 0x0C,  // GCtrlScrollButton, scrolling down
     StaticTextBox = 0x0D,
     TextBtn = 0x3A,
+    KeyField = 0x3B,
+    CheckBox = 0x3C,
+    SliderBar = 0x3D,
     AnimatedBtn = 0x50,
+    Icon = 0x51,
 };
 
 // Engine class name without the "GCtrl" prefix, or nullptr for an unknown id.

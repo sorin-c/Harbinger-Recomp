@@ -4,7 +4,7 @@
 
 namespace harbinger::render {
 
-std::vector<uint32_t> toRgba(const gim::Image& img, size_t frame, KeyMode mode) {
+std::vector<uint32_t> toRgba(const gim::Image& img, size_t frame, KeyMode mode, bool paletteAlpha) {
     if (frame >= img.frames.size()) throw std::out_of_range("gim frame");
     const gim::Frame& f = img.frames[frame];
     // Paletted RLE images carry the marker colours, always in entries 0-1. Raw
@@ -19,7 +19,7 @@ std::vector<uint32_t> toRgba(const gim::Image& img, size_t frame, KeyMode mode) 
         return 0;
     };
     // Encoding 7 palettes carry per-entry alpha (guessed meaning, see gim.md).
-    const bool paletteAlpha = img.encoding() == 7;
+    paletteAlpha = paletteAlpha && img.encoding() == 7;
 
     std::vector<uint32_t> out(f.index.size(), 0);
     for (size_t i = 0; i < out.size(); ++i) {

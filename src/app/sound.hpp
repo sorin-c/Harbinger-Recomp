@@ -25,8 +25,10 @@ public:
     void stopMusic();
 
     // Plays a sound under `key`. Like the engine's interface sounds
-    // (FUN_004c6720), playing a key that is still sounding restarts it.
-    void play(int key, const audio::Pcm& pcm);
+    // (FUN_004c6720), a key that is still sounding is restarted, or with
+    // `restart` false left to finish.
+    void play(int key, const audio::Pcm& pcm, bool restart = true);
+    bool playing(int key) const;
 
     void setMusicVolume(float gain);
     void setSoundVolume(float gain);

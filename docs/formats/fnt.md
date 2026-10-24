@@ -55,5 +55,5 @@ takes each screen's colours. Index 0 is transparent.
 | RLE glyphs use .gim RLE rows | proven by test | Every row of every glyph in the 3 RLE fonts decodes exactly to the glyph width |
 | Layout and kerning rules | proven | Read from the three routines above. The four main menu labels rendered with them match the original's pixels exactly in position (9,303 glyph pixels compared) |
 | Text colour from the background palette | proven | Code above; "New Game" in the original is RGB (0,254,137), which is entry 4 of StartBkg's palette |
-| Index 1 drawn as a near-black fringe (4,4,4) | observed | All 534 differing pixels in that comparison are palette index 1, and the original shows (4,4,4) for every one of them whatever the background. The code responsible is not found yet |
+| Index 1 drawn as a near-black fringe (4,4,4) | observed | All 534 differing pixels in that comparison are palette index 1, and the original shows (4,4,4) for every one of them whatever the background. Interface images do the same (docs/formats/itf.md). The code responsible is not found yet |
 | `lineHeight` (offset 0x2a12) used for line spacing | likely | `FUN_005144f0` returns it to the text box, which steps lines by it |

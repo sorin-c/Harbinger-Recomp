@@ -1,4 +1,4 @@
-// Tests for Harbinger.ini reading and audio decoding. Real-data cases need HARBINGER_DATA.
+// Tests for Harbinger.ini, config.cfg and audio decoding. Real-data cases need HARBINGER_DATA.
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -7,6 +7,7 @@
 
 #include "audio/pcm.hpp"
 #include "engine/ini.hpp"
+#include "engine/settings.hpp"
 #include "engine/vfs.hpp"
 #include "formats/mgr.hpp"
 
@@ -112,6 +113,18 @@ static void testRealData(const char* dir) {
         }
     }
     CHECK(wavs == 409 && mp3s == 35 && missing == 1);
+
+    // The shipped config.cfg: music 0.5, sound 1.0, gamma 0.5 (the Options
+    // sliders show exactly these in the original), default keys, and it
+    // round-trips byte for byte.
+    if (const auto cfg = vfs.read("config.cfg")) {
+        const Settings s = Settings::parse(*cfg);
+        CHECK(s.music == 0.5 && s.sound == 1.0 && s.gamma == 0.5 && !s.swapMouse);
+        CHECK(s.keys[0] == 0x2E && s.keys[1] == 0x0F);  // Inventory = C, Automap = Tab
+        CHECK(s.serialize() == *cfg);
+    } else {
+        std::printf("no config.cfg in the install; skipping\n");
+    }
 
     // The menu music streams, and rewinding restarts it identically.
     audio::Mp3Stream music(*vfs.read(ini.require("Paths", "IntroMusic")));

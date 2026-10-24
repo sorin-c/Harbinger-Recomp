@@ -16,6 +16,7 @@
 #include "formats/gim.hpp"
 #include "formats/itm.hpp"
 #include "formats/mgr.hpp"
+#include "render/sprite.hpp"
 
 namespace harbinger::app {
 
@@ -36,8 +37,16 @@ public:
     std::vector<uint8_t> read(const std::string& path);
 
     const gim::Image& image(const std::string& path);
+    // Frame 0 of an image as RGBA with the green key transparent. With
+    // `palette`, the image's indices are looked up there instead of in its
+    // own palette: the front end draws its art through the background's
+    // palette (docs/formats/itf.md).
+    render::RgbaImage rgba(const std::string& path, const std::vector<gim::Color>* palette = nullptr);
     // UI art: the green key colour is transparent.
-    const Texture& texture(const std::string& path);
+    const Texture& texture(const std::string& path, const std::vector<gim::Color>* palette = nullptr);
+    // Item art (an item's itemimg.mgr image), drawn with its own palette and,
+    // for encoding 7, its palette alpha.
+    const Texture& itemTexture(const std::string& path);
     Texture upload(const std::vector<uint32_t>& rgba, int w, int h);
 
     const fnt::Font& font(uint16_t id);
@@ -56,7 +65,7 @@ private:
     mgr::Index fonts_, items_, itemImages_, cursors_, sounds_;
     std::map<uint16_t, fnt::Font> fontCache_;
     std::map<std::string, gim::Image> images_;
-    std::map<std::string, Texture> textures_;
+    std::map<std::pair<std::string, std::string>, Texture> textures_;  // by path and palette bytes
     std::map<uint16_t, std::unique_ptr<audio::Pcm>> soundCache_;
 };
 

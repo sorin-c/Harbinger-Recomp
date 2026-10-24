@@ -5,10 +5,10 @@
 | Path | Role | Depends on |
 |---|---|---|
 | `src/formats/` | File formats (`.sqh`, `.gim`, `.mgr`, `.itf`, `.fnt`, `.acr`, `.itm`) | C++17 only |
-| `src/engine/` | Engine core: `Vfs` (archive mounting, path rules), `Ini` | formats |
+| `src/engine/` | Engine core: `Vfs` (archive mounting, path rules), `Ini`, `Settings` (config.cfg) | formats |
 | `src/audio/` | WAV and MP3 decoding (dr_mp3, downloaded and hash-checked by CMake) | C++17 only |
 | `src/render/` | Platform-neutral rendering helpers (`.gim` frame to RGBA) | formats |
-| `src/ui/` | Interface pieces with the engine's rules: text boxes, animated items | formats, render |
+| `src/ui/` | Interface pieces with the engine's rules: text boxes and wrapping, buttons, check boxes, sliders, animated items | formats, render |
 | `src/app/` | SDL3 programs | everything + SDL3 |
 
 Core code stays free of SDL so it can be tested headless and reused on other
@@ -70,9 +70,34 @@ The front end plays `Intro.mp3` on a loop and the buttons play their
 interface's hover and press sounds (docs/formats/audio.md). `--no-audio` turns
 sound off; screenshot mode never opens an audio device.
 
+## Milestone 4: Options and Load Game (done)
+
+Options and Load Game open from the main menu and are rebuilt from
+`options.itf` and `load.itf` with the engine's TextBtn, CheckBox, SliderBar,
+ScrollButton and word-wrapping text box (docs/formats/itf.md). Compared with
+captures of the original, both screens and the character screen are identical
+pixel for pixel, apart from the original's saved game in the Load lists.
+
+```
+harbinger --data <dir> --screen options|load [--settings file.cfg]
+```
+
+- The music and sound sliders change the volume live (music at `value / 12`,
+  as the original hands it to Miles; the sound slider plays a sound check),
+  Accept writes `config.cfg` in the original's layout (docs/formats/config.md)
+  to the user's preference folder, Cancel restores the old values.
+- Swap Mouse Buttons works. Gamma and High Resolution are stored but not
+  applied yet; Configure Controls only logs.
+- Load Game lists nothing: the original's saves are not supported and the
+  rebuild has no saves of its own yet.
+- The character screen now matches the original: Play is disabled until a
+  character is picked and the name box reads "Player".
+- Keyboard and gamepad: up/down move a focus outline through the controls,
+  left/right step a focused slider by 5%.
+
 ## Next
 
-1. Bink video, later or skipped.
-2. Options and Load screens (`options.itf`, `load.itf`: CheckBox, SliderBar,
-   TextBtn, KeyField).
+1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
+   (`GCtrlButton_v10`).
+2. Display gamma, Bink video (later or skipped).
 3. Start a game: levels, agents and `.anm` animation, the in-game loop.

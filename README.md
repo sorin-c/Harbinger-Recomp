@@ -19,8 +19,10 @@ What exists so far:
 - `Vfs` (archive mounting and the game's path rules)
 - Parsers for interface layouts (`.itf`), fonts (`.fnt`), resource indexes
   (`.mgr`), cursors (`.acr`) and the animated button items (`.itm`)
-- `harbinger`, the game: currently the main menu and character screen, drawn
-  from the original files, with mouse, keyboard and gamepad input
+- Audio: `.wav` and `.mp3` decoding, `Harbinger.ini`, `config.cfg`
+- `harbinger`, the game: currently the front end (main menu, character
+  screen, Options, Load Game), drawn from the original files, with the menu
+  music and sounds, and mouse, keyboard and gamepad input
 - `harbinger-viewer`, an SDL3 sprite browser (keyboard or gamepad)
 
 ```
