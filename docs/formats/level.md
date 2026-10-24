@@ -101,11 +101,11 @@ n x sound               GSoundInfo, FUN_005037c0: f64 x, y; u16 sound; u16; u32
 repeat until id == 0:   GIAttacher (FUN_004bdcc0)
   u16 id, u32 n, n x u16    the gizmos it carries
 repeat until id == 0:   GIPowerable (0x4d4ef0)
-  u16 id, u16 n, n x u16    the gizmos powering it
+  u16 id, u16 n, n x u16    the gizmos it powers (slot 1 adds each as a target)
 -- GChunk_v3 (0x44b200), the chunk's slot 3 --
 u16                     chunk+6
 u16  n
-n x (u16 id, u16 level) power sources (GIPowerable gizmos) and their level
+n x (u16 id, u16 level) power sources: gizmos that start with `level` power
 -- FUN_00436460: beacons (GRoomBeacon) --
 u32  n
 repeat n:               GBeacon_v4 (0x436410), GRoomBeacon_v4 (0x4fb010)

@@ -19,6 +19,7 @@
 #include "formats/chk.hpp"
 #include "formats/giz.hpp"
 #include "render/sprite.hpp"
+#include "world/gizmo_state.hpp"
 
 namespace harbinger::world {
 
@@ -72,15 +73,21 @@ public:
     // umbilical shell's first image is only the outline of its footprint, and
     // the original shows nothing there until the shell closes.
     bool gizmoVisible(const chk::GizmoRecord& g) const;
-    // The frame a gizmo shows `ms` after the level starts. Looped gizmos play
-    // a loop of their frames from the phase their record gives; the other
-    // classes wait for their states (not decoded yet) and show frame 0.
+    // How a gizmo plays in the state the level starts it in (doors open or
+    // shut, consoles idling or without power; world/gizmo_state.hpp).
+    const GizmoPlay& gizmoPlay(const chk::GizmoRecord& g) const;
+    // The frame a gizmo shows `ms` after the level starts.
     size_t gizmoFrame(const chk::GizmoRecord& g, uint64_t ms) const;
-    // Where frame `i` is drawn: frames after the first are overlays placed
-    // at their (x, y) on the first frame's image.
+    // Where frame `i` is drawn: at its (x, y) on the first frame's image.
     ScreenPoint gizmoFrameTopLeft(const chk::GizmoRecord& g, size_t i);
-    // Draws a visible gizmo into `dst` (see drawLayer for the origin): the
-    // first frame, and over it the frame it shows at `ms`.
+    // The frames to draw, in order, to show frame `f`. The original keeps
+    // the gizmo's picture and draws each new frame over it at its (x, y)
+    // (GAnimatedGizmo_v12), so a picture builds up from the last frame
+    // that covers it all: one at (0, 0) as big as the first frame
+    // (GAnimatedGizmo_v24 drops its colour key) or the first frame itself.
+    std::vector<size_t> gizmoLayers(const chk::GizmoRecord& g, size_t f);
+    // Draws a visible gizmo into `dst` (see drawLayer for the origin) as it
+    // looks `ms` after the level starts.
     void drawGizmo(render::RgbaImage& dst, const chk::GizmoRecord& g, int originX, int originY, uint64_t ms = 0);
 
     // An agent's picture at a moment: the frame of its idle animation in the
@@ -124,6 +131,7 @@ private:
     std::map<std::string, std::vector<render::RgbaImage>> agentSheets_;  // every frame, by sheet path
     std::map<std::string, std::unique_ptr<render::RgbaImage>> images_;  // by tile path
     std::map<std::string, std::unique_ptr<render::RgbaImage>> gizmoImages_;  // by frame path
+    std::map<uint16_t, GizmoPlay> gizmoPlays_;  // by instance
 };
 
 }  // namespace harbinger::world

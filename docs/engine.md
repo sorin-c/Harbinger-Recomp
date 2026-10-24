@@ -151,12 +151,23 @@ parse function. Every script a trigger names exists for all three characters,
 and every thought bubble's voice line resolves in that character's speech
 index. Nothing runs them yet.
 
+## Milestone 10: gizmos start in their states (done)
+
+Placed gizmos now start in the state their level gives them, decoded from
+each class's state code in the original (`docs/formats/gizmo.md`, "States"):
+doors and bridges shut or open, chests and consoles idling, consoles without
+power dark, breakers on or off, and lights, monitors and incubators pausing
+and playing short sequences at random. Power flows from the level's breakers
+to what they feed, as in the original. Frames draw over the gizmo's picture
+the way the original builds it. Using a gizmo (opening a door) comes with the
+game loop.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
-3. Gizmo states (doors, consoles, chests): frame codes and what using one does.
+3. Using gizmos (consoles opening doors, chests), the other classes' states.
 4. Running scripts from triggers. The player on screen, walking, using the
    room graph.
 5. The in-game loop, HUD and lighting.

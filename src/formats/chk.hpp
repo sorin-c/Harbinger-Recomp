@@ -152,10 +152,12 @@ struct Level {
     std::vector<GizmoTrigger> gizmoTriggers;
     std::vector<SoundInfo> sounds;             // FUN_00504a90 (none in the shipped levels)
     // FUN_0044ab80: for gizmos that attach others (GIAttacher, FUN_004bdcc0)
-    // the instances they carry, and for gizmos that take power
-    // (GIPowerable, 0x4d4ef0) the instances powering them.
-    std::vector<std::pair<uint16_t, std::vector<uint16_t>>> attachments, poweredBy;
-    // GChunk_v3 (0x44b200): a word (chunk+6), then power sources and their levels.
+    // the instances they carry (a console and the door it opens), and for
+    // gizmos that pass power on (GIPowerable, 0x4d4ef0, which adds each
+    // listed gizmo as a target) the instances they power.
+    std::vector<std::pair<uint16_t, std::vector<uint16_t>>> attachments, powers;
+    // GChunk_v3 (0x44b200): a word (chunk+6), then the gizmos that start with
+    // power and how much.
     uint16_t powerWord = 0;
     std::vector<std::pair<uint16_t, uint16_t>> powerSources;
     std::vector<Beacon> beacons;               // FUN_00436460

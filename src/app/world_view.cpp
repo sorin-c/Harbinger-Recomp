@@ -91,12 +91,10 @@ void WorldView::drawImage(const std::string& key, const render::RgbaImage* img, 
 
 void WorldView::drawGizmo(const chk::GizmoRecord& g) const {
     const auto& frames = level_->gizmoTemplate(g).frames;
-    auto draw = [&](size_t i) {
+    for (const size_t i : level_->gizmoLayers(g, level_->gizmoFrame(g, elapsedMs_))) {
         const auto tl = level_->gizmoFrameTopLeft(g, i);
         drawImage(frames[i].path, level_->gizmoImage(frames[i]), tl.x, tl.y);
-    };
-    draw(0);
-    if (const size_t f = level_->gizmoFrame(g, elapsedMs_); f > 0) draw(f);
+    }
 }
 
 void WorldView::drawAgent(const chk::AgentRecord& a) const {

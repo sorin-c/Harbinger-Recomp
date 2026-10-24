@@ -56,6 +56,7 @@ add_library(harbinger_core
   src/ui/item_animation.cpp
   src/ui/text.cpp
   src/world/level.cpp
+  src/world/gizmo_state.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
 target_include_directories(harbinger_core SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/_deps/dr_libs)

@@ -80,6 +80,12 @@ Level::Level(Vfs& vfs, const Ini& ini, uint16_t id) : vfs_(vfs) {
         return &it->second;
     });
     chk::parseRest(map_, chkData);
+
+    const auto power = startingPower(map_, [&](const chk::GizmoRecord& g) -> const giz::Template& { return gizmoTemplate(g); });
+    for (const auto& g : map_.gizmos) {
+        const auto it = power.find(g.instance);
+        gizmoPlays_[g.instance] = startingPlay(gizmoTemplate(g), g, it == power.end() ? 0 : it->second);
+    }
 }
 
 const brs::Brush* Level::brush(uint16_t id) const {
@@ -172,32 +178,15 @@ bool Level::gizmoVisible(const chk::GizmoRecord& g) const {
     return map_.keeps(g) && !t.frames.empty() && t.cls != giz::UmbilicalShell;
 }
 
+const GizmoPlay& Level::gizmoPlay(const chk::GizmoRecord& g) const { return gizmoPlays_.at(g.instance); }
+
 size_t Level::gizmoFrame(const chk::GizmoRecord& g, uint64_t ms) const {
-    const giz::Template& t = gizmoTemplate(g);
-    if (t.frames.size() < 2 || (t.cls != giz::Looped && t.cls != giz::Looped2)) return 0;
-    // The record's class data (GLoopedGizmoPlug_v22): a u32 start phase in
-    // milliseconds (plug+0x34, which GAnimatedGizmoPlug_v28 subtracts from
-    // the start time) and a u16 mode (plug+0x7c).
-    uint32_t phase = 0;
-    uint16_t mode = 0;
-    if (g.extra.size() >= 6) {
-        phase = uint32_t(g.extra[0]) | uint32_t(g.extra[1]) << 8 | uint32_t(g.extra[2]) << 16 | uint32_t(g.extra[3]) << 24;
-        mode = uint16_t(g.extra[4] | g.extra[5] << 8);
-    }
-    // GLoopedGizmoPlug_v17: mode 3 loops from the code-1 frame to the end;
-    // otherwise the frames before it, or all of them when there is none.
-    // (Looped2 also plays its loop backwards at times, GLoopedGizmoPlug_v29;
-    // not rebuilt yet.)
-    const size_t start = t.loopStart();
-    size_t first = 0, last = t.frames.size() - 1;
-    if (mode == 3) first = start;
-    else if (start > 0) last = start - 1;
-    return t.frameAt(ms + phase, first, last);
+    return playFrame(gizmoTemplate(g), gizmoPlay(g), ms, g.instance);
 }
 
 ScreenPoint Level::gizmoFrameTopLeft(const chk::GizmoRecord& g, size_t i) {
     ScreenPoint tl = gizmoTopLeft(g);
-    if (i > 0) {
+    if (i > 0) {  // FUN_004b2bb0 draws the first frame at the origin
         const giz::Frame& f = gizmoTemplate(g).frames[i];
         tl.x += f.x;
         tl.y += f.y;
@@ -205,20 +194,35 @@ ScreenPoint Level::gizmoFrameTopLeft(const chk::GizmoRecord& g, size_t i) {
     return tl;
 }
 
+std::vector<size_t> Level::gizmoLayers(const chk::GizmoRecord& g, size_t f) {
+    const giz::Template& t = gizmoTemplate(g);
+    if (f >= t.frames.size()) return {};
+    const render::RgbaImage* first = gizmoImage(t.frames[0]);
+    auto covers = [&](size_t i) {
+        if (i == 0) return true;
+        const giz::Frame& fr = t.frames[i];
+        const render::RgbaImage* img = gizmoImage(fr);
+        return fr.x == 0 && fr.y == 0 && img && first && img->width == first->width && img->height == first->height;
+    };
+    size_t from = f;
+    while (!covers(from)) --from;
+    std::vector<size_t> layers;
+    for (size_t i = from; i <= f; ++i) layers.push_back(i);
+    return layers;
+}
+
 void Level::drawGizmo(render::RgbaImage& dst, const chk::GizmoRecord& g, int originX, int originY, uint64_t ms) {
     const giz::Template& t = gizmoTemplate(g);
     if (!gizmoVisible(g)) return;
-    auto draw = [&](size_t i) {
+    for (const size_t i : gizmoLayers(g, gizmoFrame(g, ms))) {
         const render::RgbaImage* img = gizmoImage(t.frames[i]);
-        if (!img) return;
+        if (!img) continue;
         const ScreenPoint tl = gizmoFrameTopLeft(g, i);
         const int left = int(std::lround(tl.x)) - originX, top = int(std::lround(tl.y)) - originY;
         for (int v = 0; v < img->height; ++v)
             for (int u = 0; u < img->width; ++u)
                 blend(dst, left + u, top + v, img->pixels[size_t(v) * size_t(img->width) + size_t(u)]);
-    };
-    draw(0);
-    if (const size_t f = gizmoFrame(g, ms); f > 0) draw(f);
+    }
 }
 
 const agt::Template& Level::agentTemplate(const chk::AgentRecord& a) const {

@@ -22,6 +22,7 @@
 #include "formats/giz.hpp"
 #include "formats/mgr.hpp"
 #include "render/sprite.hpp"
+#include "world/gizmo_state.hpp"
 #include "world/level.hpp"
 
 using namespace harbinger;
@@ -209,6 +210,83 @@ static void testGizmo() {
     CHECK(lv.gizmos[1].extra.size() == r.d.size());
     CHECK(lv.gizmosEnd == c.d.size() - 2);
     CHECK(throws([&] { chk::parseGizmos(lv, c.d, [](uint16_t) { return nullptr; }); }));
+}
+
+// A template with one 100 ms frame per code, of class `cls`.
+static giz::Template tagged(uint8_t cls, std::vector<uint16_t> codes) {
+    giz::Template t;
+    t.cls = cls;
+    for (uint16_t c : codes) {
+        giz::Frame f;
+        f.durationMs = 100;
+        f.code = c;
+        t.frames.push_back(f);
+    }
+    return t;
+}
+
+static chk::GizmoRecord record(uint16_t instance, std::vector<uint8_t> extra) {
+    chk::GizmoRecord g;
+    g.instance = instance;
+    g.extra = std::move(extra);
+    return g;
+}
+
+static void testGizmoStates() {
+    using world::GizmoPlay;
+    // Doors and bridges: state 0 shows the first frame, any other the last.
+    const giz::Template door = tagged(giz::Bridge, {3, 0, 0, 4});
+    CHECK(world::startingPlay(door, record(1, {0, 0}), 0).first == 0);
+    const GizmoPlay shut = world::startingPlay(door, record(1, {3, 0}), 0);
+    CHECK(shut.mode == GizmoPlay::Hold && shut.first == 3);
+
+    // Chests idle over the frames before BeginOpen; state 3 (opened) shows the last.
+    const giz::Template chest = tagged(giz::Chest, {0, 0, 3, 0, 4});
+    const GizmoPlay idle = world::startingPlay(chest, record(1, {0, 0, 0, 0, 0, 0, 0, 0, 0}), 0);
+    CHECK(idle.mode == GizmoPlay::Loop && idle.first == 0 && idle.last == 1);
+    CHECK(world::startingPlay(chest, record(1, {0, 0, 0, 0, 0, 0, 0, 3, 0}), 0).first == 4);
+
+    // Consoles idle forth and back before BeginActivate, and go dark
+    // without the power they need.
+    const giz::Template console = tagged(giz::Console, {1, 0, 0, 2, 7, 8, 0});
+    const std::vector<uint8_t> needsOne = {0, 0, 0, 0, 1, 0, 0, 0, 0};
+    const GizmoPlay pp = world::startingPlay(console, record(1, needsOne), 1);
+    CHECK(pp.mode == GizmoPlay::PingPong && pp.first == 0 && pp.last == 3);
+    CHECK(world::startingPlay(console, record(1, needsOne), 0).first == 6);
+    std::vector<size_t> seen;
+    for (uint64_t ms = 50; ms < 800; ms += 100) seen.push_back(world::playFrame(console, pp, ms, 0));
+    CHECK((seen == std::vector<size_t>{0, 1, 2, 3, 3, 2, 1, 0}));
+    CHECK(world::playFrame(console, pp, 850, 0) == 0);
+
+    // Breakers: on (3) loops from after EndOpen to before BeginClose.
+    const giz::Template breaker = tagged(giz::Breaker, {0, 0, 4, 0, 0, 9, 0});
+    const GizmoPlay on = world::startingPlay(breaker, record(1, {3, 0, 0, 0}), 0);
+    CHECK(on.mode == GizmoPlay::Loop && on.first == 3 && on.last == 4);
+    CHECK(world::startingPlay(breaker, record(1, {0, 0, 0, 0}), 0).mode == GizmoPlay::Hold);
+
+    // Random pauses: rest on the frame before the first BeginIdle, sequences
+    // from each BeginIdle; without power, frame 0.
+    giz::Template light = tagged(giz::RandomPause, {0, 0, 1, 0, 1});
+    light.classData = {10, 0, 0, 0, 20, 0, 0, 0};  // 100..200 ms
+    const GizmoPlay p = world::startingPlay(light, record(5, {0, 0}), 0);
+    CHECK(p.mode == GizmoPlay::Pauses && p.first == 1 && p.sequences.size() == 2);
+    CHECK(p.sequences[0] == std::make_pair(size_t(2), size_t(3)) && p.sequences[1] == std::make_pair(size_t(4), size_t(4)));
+    CHECK(p.minPauseMs == 10 && p.maxPauseMs == 20);
+    CHECK(world::playFrame(light, p, 0, 5) == 1 && world::playFrame(light, p, 99, 5) == 1);
+    std::set<size_t> shown;
+    for (uint64_t ms = 0; ms < 20000; ms += 7) shown.insert(world::playFrame(light, p, ms, 5));
+    CHECK((shown == std::set<size_t>{1, 2, 3, 4}));
+    CHECK(world::startingPlay(light, record(5, {1, 0}), 0).mode == GizmoPlay::Hold);
+
+    // Power: a source feeds a breaker, which passes it on only while on.
+    chk::Level lv;
+    lv.gizmos = {record(1, {3, 0, 0, 0}), record(2, {0, 0, 0, 0}), record(3, needsOne), record(4, needsOne)};
+    lv.powerSources = {{1, 1}, {2, 1}};
+    lv.powers = {{1, {3}}, {2, {4}}};
+    const auto power = world::startingPower(lv, [&](const chk::GizmoRecord& g) -> const giz::Template& {
+        return g.instance <= 2 ? breaker : console;
+    });
+    CHECK(power.at(1) == 1 && power.at(3) == 1 && power.count(4) == 0);
 }
 
 static void testAgents() {
@@ -453,6 +531,33 @@ static void testRealData(const char* dir) {
     CHECK(looping > 0);
     for (const auto& g : m.gizmos)
         for (const auto& f : torvus.gizmoTemplate(g).frames) CHECK(torvus.gizmoImage(f) != nullptr);
+
+    // Starting states. Vantir Storage: the door by the entrance is shut (its
+    // last frame, a whole picture) and its console idles.
+    world::Level storage(vfs, ini, 3);
+    for (const auto& g : storage.map().gizmos) {
+        if (g.instance == 151) {
+            CHECK(storage.gizmoTemplate(g).name == "Door SE (mech)" && storage.gizmoFrame(g, 0) == 15);
+            CHECK((storage.gizmoLayers(g, 15) == std::vector<size_t>{15}));
+        }
+        if (g.instance == 149) CHECK(storage.gizmoPlay(g).mode == world::GizmoPlay::PingPong);
+    }
+    // Across the game: most doors start shut, some consoles have no power,
+    // and the lights and incubators that have it pause and play.
+    size_t shut = 0, open = 0, dark = 0, pausing = 0;
+    for (const auto& [id, path] : mgr::parse(*vfs.read(ini.require("Paths", "Levels"))).entries) {
+        world::Level lv(vfs, ini, id);
+        for (const auto& g : lv.map().gizmos) {
+            const giz::Template& t = lv.gizmoTemplate(g);
+            const world::GizmoPlay& p = lv.gizmoPlay(g);
+            CHECK(p.first <= p.last && p.last < t.frames.size());
+            for (uint64_t ms : {0, 1234, 98765}) CHECK(lv.gizmoFrame(g, ms) < t.frames.size());
+            if (t.cls == giz::Bridge) ++(p.first == 0 ? open : shut);
+            if (t.cls == giz::Console && p.mode == world::GizmoPlay::Hold && p.first + 1 == t.frames.size()) ++dark;
+            if (p.mode == world::GizmoPlay::Pauses) ++pausing;
+        }
+    }
+    CHECK(shut > 200 && open > 10 && dark > 0 && pausing > 300);
 }
 
 static void testScript() {
@@ -481,6 +586,7 @@ int main() {
     testBrush();
     testLevel();
     testGizmo();
+    testGizmoStates();
     testAgents();
     testScript();
     if (const char* dir = std::getenv("HARBINGER_DATA"))

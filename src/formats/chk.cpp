@@ -248,8 +248,8 @@ void parseRest(Level& lv, const std::vector<uint8_t>& data) {
     // FUN_0044ab80: two lists keyed by gizmo instance, each ended by 0.
     lv.attachments.clear();
     while (const uint16_t id = r.u16()) lv.attachments.emplace_back(id, readIds(r, r.u32()));
-    lv.poweredBy.clear();
-    while (const uint16_t id = r.u16()) lv.poweredBy.emplace_back(id, readIds(r, r.u16()));
+    lv.powers.clear();
+    while (const uint16_t id = r.u16()) lv.powers.emplace_back(id, readIds(r, r.u16()));
     // The chunk's own slot 3 (GChunk_v3).
     lv.powerWord = r.u16();
     const uint16_t sources = r.u16();

@@ -43,7 +43,7 @@ struct Frame {
     uint16_t mask = 0;          // index into masks
     int16_t x = 0, y = 0;       // likely where the frame sits on the first frame's image, in pixels
     uint16_t durationMs = 0;    // 100 for most animation frames; likely a duration
-    uint16_t code = 0;          // frame+0x1c: 0 on most frames, 1-10 on the rest; meaning not confirmed
+    uint16_t code = 0;          // frame+0x1c: a state tag (world::Tag), 0 on most frames
     std::string path;
     bool hasRect = false;       // FUN_004ba840: two packed words, then four bytes
     uint8_t rect[8] = {};
