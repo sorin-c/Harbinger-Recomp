@@ -18,7 +18,15 @@ enum class KeyMode {
     Highlight,    // as Shadow, but draw the red rim (object under the cursor)
     Transparent,  // drop both
     Raw,          // draw the palette colours as stored (for inspection)
+    Agent,        // agent frame sheets: entries 0-5 are markers (see agentMarkerAlpha)
 };
+
+// Agent frame sheets (.anm sheets) reserve palette entries 0-5: the layer
+// compositor FUN_004c2710 never lets them overwrite art. Entry 0 is the key,
+// entry 1 the cast shadow; 2-5 are blends of the two. The shadow amount of an
+// entry is its share of entry 1's channel (red or green, files use either):
+// 0 = drop the pixel, 255 = full shadow.
+int agentMarkerAlpha(const gim::Image& img, uint8_t index);
 
 // RGBA8888 pixels, R in the lowest byte (SDL_PIXELFORMAT_ABGR8888 on little endian).
 struct RgbaImage {

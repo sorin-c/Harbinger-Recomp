@@ -17,6 +17,7 @@
 #include "formats/chk.hpp"
 #include "formats/giz.hpp"
 #include "formats/mgr.hpp"
+#include "render/sprite.hpp"
 #include "world/level.hpp"
 
 using namespace harbinger;
@@ -194,6 +195,19 @@ static void testGizmo() {
 }
 
 static void testAgents() {
+    {  // Marker entries 0-5 of an agent sheet, in both channel orders seen in the files.
+        gim::Image img;
+        img.palette = {{0, 255, 0, 255}, {255, 0, 0, 255}, {0, 171, 0, 255}, {0, 85, 0, 255},
+                       {171, 85, 0, 255}, {85, 171, 0, 255}, {9, 9, 9, 255}};
+        CHECK(render::agentMarkerAlpha(img, 0) == 0 && render::agentMarkerAlpha(img, 1) == 255);
+        CHECK(render::agentMarkerAlpha(img, 2) == 0 && render::agentMarkerAlpha(img, 3) == 0);
+        CHECK(render::agentMarkerAlpha(img, 4) == 171 && render::agentMarkerAlpha(img, 5) == 85);
+        CHECK(render::agentMarkerAlpha(img, 6) == 0);
+        img.palette = {{255, 0, 0, 255}, {0, 255, 0, 255}, {171, 0, 0, 255}, {85, 0, 0, 255},
+                       {0, 255, 0, 255}, {0, 255, 0, 255}, {9, 9, 9, 255}};
+        CHECK(render::agentMarkerAlpha(img, 1) == 255 && render::agentMarkerAlpha(img, 2) == 0);
+        CHECK(render::agentMarkerAlpha(img, 4) == 255);
+    }
     // .anm: header 0x0b = 10 directions with a hotspot; direction 0 has two frames.
     Bytes a;
     a.u16(0x0b).u16(22).u16(44).u32(0);

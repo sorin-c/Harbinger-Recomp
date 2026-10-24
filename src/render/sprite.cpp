@@ -22,6 +22,19 @@ std::vector<uint32_t> toRgba(const gim::Image& img, size_t frame, KeyMode mode, 
     paletteAlpha = paletteAlpha && img.encoding() == 7;
 
     std::vector<uint32_t> out(f.index.size(), 0);
+    if (mode == KeyMode::Agent && img.palette.size() > 5) {
+        for (size_t i = 0; i < out.size(); ++i) {
+            if (!f.opaque[i]) continue;
+            const uint8_t idx = f.index[i];
+            if (idx <= 5) {
+                if (const int a = agentMarkerAlpha(img, idx)) out[i] = packRgba(0, 0, 0, uint8_t(a * 96 / 255));
+                continue;
+            }
+            const gim::Color& c = img.palette[idx];
+            out[i] = packRgba(c.r, c.g, c.b, paletteAlpha ? c.a : 255);
+        }
+        return out;
+    }
     for (size_t i = 0; i < out.size(); ++i) {
         if (!f.opaque[i]) continue;
         const uint8_t idx = f.index[i];
@@ -38,6 +51,13 @@ std::vector<uint32_t> toRgba(const gim::Image& img, size_t frame, KeyMode mode, 
         }
     }
     return out;
+}
+
+int agentMarkerAlpha(const gim::Image& img, uint8_t index) {
+    if (index == 0 || index > 5 || img.palette.size() <= 5) return 0;
+    const gim::Color& shadow = img.palette[1];
+    const gim::Color& c = img.palette[index];
+    return shadow.r >= shadow.g ? c.r : c.g;
 }
 
 }  // namespace harbinger::render

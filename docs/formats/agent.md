@@ -118,6 +118,22 @@ frame 0, with the frame's hotspot on the agent's map position (the frame's
 bottom centre when there is no hotspot). Agents are sorted with the gizmos and
 walls by x + y.
 
+**Marker colours.** Agent sheets reserve palette entries 0 to 5. The layer
+compositor `FUN_004c2710` (which stacks a torso sheet on a base sheet) never
+lets an entry of 5 or below overwrite art, and every frame sheet has the same
+six colours there, in one of two channel orders:
+
+| Entry | Most sheets | Vantir troopers, some torsos | Use (from the pixels) |
+|---|---|---|---|
+| 0 | green | red | key, never drawn |
+| 1 | red | green | the cast shadow (a filled diagonal blob) |
+| 2, 3 | 2/3, 1/3 green | 2/3, 1/3 red | the figure's anti-aliased edge |
+| 4, 5 | (171,85,0), (85,171,0) | green, green | the shadow's edge |
+
+So the shadow amount of an entry is its share of entry 1's channel. The
+rebuild draws that as translucent black and drops the rest
+(`render::agentMarkerAlpha`).
+
 ## Evidence
 
 | Claim | Label | Evidence |
@@ -129,6 +145,8 @@ walls by x + y.
 | Level agent records | proven | `0x420520`, slot 18, `0x4e6670`; every level parses, every agent inside its map; Torvus Junction has two agents, the first named "Torvus" |
 | No extra word for the player and cameras | likely | with it every level parses to the following section; reading one for a Camerakazi misaligns the next record |
 | Hotspot is the ground point | guessed | it sits near the frame bottom in every animation that has one; Vantir Checkpoint troopers stand plausibly |
+| Entries 0-5 are markers in agent sheets | proven | `FUN_004c2710` treats indices <= 5 as below art; survey of every frame sheet's first eight palette entries |
+| Entry 1 is the shadow, 2-3 figure edge, 4-5 shadow edge | likely | where the pixels sit (shadow blob, outline of the figure, outline of the blob); drawing it so removes the green and red fringes |
 | Facing byte = 256 steps a turn | guessed | values seen; mapping not decoded |
 
 ## Open questions

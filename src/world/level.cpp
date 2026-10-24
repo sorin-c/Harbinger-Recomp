@@ -204,7 +204,7 @@ Level::Pose Level::agentPose(const chk::AgentRecord& a) {
         if (!data) return pose;
         const auto img = gim::decode(*data);
         slot = std::make_unique<render::RgbaImage>(
-            render::RgbaImage{img.width, img.height, render::toRgba(img, 0, render::KeyMode::Shadow)});
+            render::RgbaImage{img.width, img.height, render::toRgba(img, 0, render::KeyMode::Agent)});
     }
     pose.image = slot.get();
     // The hotspot sits near the bottom of the frame in every animation that
