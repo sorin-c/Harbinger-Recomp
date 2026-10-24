@@ -150,14 +150,31 @@ static void testAcr() {
 
 static void testItm() {
     Bytes b;
-    b.u16(itm::AnimatedItem).u16(1).u16(0).u16(295).u16(20).u16(10).u16(10).u32(0).str("New Button");
+    b.u16(itm::AnimatedItem).u16(563).u16(0).u16(295).u16(20).u16(10).u16(10).u32(0).str("New Button");
     b.u8(0).u16(8).u16(19).u16(19).u16(11);
     const auto it = itm::parse(b.d);
     CHECK(it.image == 295 && it.frameCount == 20 && it.name == "New Button");
     CHECK(it.animation && it.animation->loopStart == 8 && it.animation->loopEnd == 19 && it.animation->pressEnd == 19);
     CHECK(it.trailer == 11);
-    b.d[0] = 3;  // other classes are not decoded yet
+    b.d[0] = 9;  // other classes are not decoded yet
     CHECK(throws([&] { itm::parse(b.d); }));
+
+    // Armour (version 2.2): the optional block, the socketed body, the
+    // armour word, an empty list, the trailer.
+    Bytes a;
+    a.u16(itm::HumanArmor).u16(563).u16(0).u16(2).u16(2).u16(4).u16(3).u32(650).str("Alpha Advance Armor");
+    a.u8(1).u32(0xffffffff).u32(0xffffffff).u16(494).u8(0).u16(18).u16(45).u16(0).u16(1).u16(7).u16(9).u16(0);
+    const auto armour = itm::parse(a.d);
+    CHECK(armour.block && armour.socketed && armour.socketed->animGroup == 18 && armour.socketed->word54 == 45);
+    CHECK(armour.socketed->list.size() == 1 && armour.socketed->list[0].second == 9);
+    CHECK(itm::spriteLayer(armour.classId) == 0 && itm::spriteLayer(itm::HumanWeapon) == 1 &&
+          itm::spriteLayer(itm::GladiatorRanged) == 2 && itm::spriteLayer(itm::LeftGauntlet) == -1);
+    // Version 2.1 and below: no list.
+    Bytes g;
+    g.u16(itm::LeftGauntlet).u16(537).u16(0).u16(87).u16(2).u16(2).u16(4).u32(423).str("Salvaged Left Gauntlet");
+    g.u8(0).u16(357).u8(0).u16(1).u16(8);
+    const auto gauntlet = itm::parse(g.d);
+    CHECK(!gauntlet.block && gauntlet.socketed && gauntlet.socketed->animGroup == 1 && gauntlet.trailer == 8);
 }
 
 static bool endsWith(const std::string& s, const char* suffix) {
@@ -230,6 +247,19 @@ static void testRealData(const char* dir) {
         const auto img = gim::decode(read(*images.find(it.image)));
         CHECK(img.height == it.frameCount * img.width);
     }
+
+    // Every equipment item parses to its end and names an animation group of
+    // its wearer's index (the item's directory says whose it is).
+    int equipment = 0;
+    for (const auto& [id, path] : items.entries) {
+        const auto data = read(path);
+        if (data.size() < 2 || data[0] < itm::HumanWeapon || data[0] > itm::RightGauntlet || data[1] != 0) continue;
+        const auto it = itm::parse(data);
+        CHECK(it.socketed);
+        ++equipment;
+    }
+    CHECK(equipment > 100);
+    std::printf("%d equipment items parsed\n", equipment);
 
     // The main cursor.
     const auto cursors = mgr::parse(read("res/common/managers/cursor.mgr"));

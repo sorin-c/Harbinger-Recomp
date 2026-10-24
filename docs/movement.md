@@ -165,12 +165,29 @@ body's size and line up with it; the body's hotspot is the ground point.
 Layers stack as `FUN_004c2710` does: art replaces what is below, marker
 pixels (palette entries 0-5, the shadow) never cover art.
 
+### Starting equipment
+
+When a game starts, vtable slot 108 of the character's plug adds the
+starting items by `item.mgr` id (`FUN_004a2b70(items, id)`, then the plug's
+add-item slot at +0xb8):
+
+| Character | Function | Items |
+|---|---|---|
+| Human | `GHumanPlayerPlug_v108` (0x4ee6b0) | 689 Alpha Advance Armor, 333 E-16 Rifle, 74 EMP mod chip (+1) |
+| Gladiator | `GGladPlayerPlug_v108` (0x4badd0) | 251 Gladiator Blade, 291 Ontis GSI Gun, 747 A-10 Ontis Torso, 103 EMP mod chip |
+| Culibine | `GCulibinePlug_v108` (0x470b10) | 40 Salvaged Left Gauntlet, 1081 Base Right Gauntlet, 48 EMP mod chip |
+
+They end up equipped: the original's inventory screen after New Game shows
+the Human wearing exactly those three, the chip in the rifle's socket.
+Equipping an item (`GEquipCell_v1`, 0x4cb7e0) hands the item's animation
+group (item+0x3e, `docs/formats/itm.md`) to a sprite layer by the item's
+kind: armour and torso layer 0, human weapon and gladiator blade layer 1,
+helmet and gladiator gun layer 2; gauntlets and chips change no layer. That
+gives the Human "Armor 7" + "Rifle 2", the Gladiator "Base Torso" +
+"Base Blade" + "Base Gun", and the Culibine nothing over its body.
+
 ## Rebuild choices
 
-- **Starting equipment** comes from the starting inventory, not decoded.
-  The rebuild dresses the Human in "Armor 7" and "Rifle 2", which match the
-  original's sprite after New Game; the Gladiator in its "Base Torso",
-  "Base Blade", "Base Gun"; the Culibine's index has no equipment.
 - **Stick and keys** (the original has only the mouse): the left stick
   (radial dead zone 25%), arrows or WASD give a screen direction; the
   player faces it (`facingTowards` of the map direction) and walks at full
@@ -216,11 +233,12 @@ pixels (palette entries 0-5, the shadow) never cover art.
 | Camera centred on the player, no clamp | proven / likely | `FUN_00498250` disassembly; per-frame function at 0x49d... (likely); Wine frames |
 | Animation group layout | proven (by the files) | all three `*animgroup.mgr` parse to the last byte and every id resolves in the animation index; loader not traced |
 | Layers line up by sheet | likely | every layer sheet has the body's size; composites match the Wine capture |
-| Starting equipment | guessed | Wine capture (Human); the others unverified |
+| Starting items | proven | the three slot-108 functions; the Human's three items seen equipped in the original's inventory |
+| Item -> layer | proven | `GEquipCell_v1` switch on the item kind (vtable slot 5) -> `FUN_004efcf0(player, layer, item+0x3e)` |
 
 ## Open questions
 
 - Agents blocking agents (`FUN_00419a70`), and the turn rate at plug+0xa0
   used by `GAgentPlug_v81` (+0x3c follows +0x3a).
-- What the original does on a held mouse button, and the starting inventory.
+- What the original does on a held mouse button.
 - The kind 0xd mask cells and the third list (`a` bit 1).

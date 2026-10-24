@@ -4,6 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "formats/itm.hpp"
 #include "world/motion.hpp"
 
 namespace harbinger::world {
@@ -16,16 +17,16 @@ std::vector<uint8_t> readOrThrow(Vfs& vfs, const std::string& path) {
     return std::move(*data);
 }
 
-// What each character wears when a game starts, drawn over the body in
-// this order. The real list comes from the starting inventory, which is not
-// decoded yet: the Human's matches the original's sprite after New Game
-// (Wine capture of Torvus Junction), the Gladiator's are its index's "Base"
-// groups, and the Culibine's index has no equipment.
-std::vector<std::string> startingLayers(Character c) {
+// The items each character starts with, added one by one when a game starts
+// (vtable slot 108 of the character's plug: GHumanPlayerPlug_v108 0x4ee6b0,
+// GGladPlayerPlug_v108 0x4badd0, GCulibinePlug_v108 0x470b10), as item.mgr
+// ids. Each is equipped (seen in the original's inventory for the Human:
+// Alpha Advance Armor, the E-16 Rifle and an EMP mod chip in its socket).
+std::vector<uint16_t> startingItems(Character c) {
     switch (c) {
-        case Character::Human: return {"Armor 7", "Rifle 2"};
-        case Character::Gladiator: return {"Base Torso", "Base Blade", "Base Gun"};
-        case Character::Culibine: return {};
+        case Character::Human: return {689, 333, 74};             // armour, rifle, EMP chip
+        case Character::Gladiator: return {251, 291, 747, 103};   // blade, gun, torso, EMP chip
+        case Character::Culibine: return {40, 1081, 48};          // left and right gauntlets, EMP chip
     }
     return {};
 }
@@ -62,8 +63,23 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
     template_ = agt::parse(readOrThrow(vfs, ini.require(section, "Agent")));
     animIndex_ = mgr::parse(readOrThrow(vfs, ini.require(section, "Anims")));
     groups_ = animgroup::parse(readOrThrow(vfs, ini.require(section, "AnimGroups")));
-    for (const auto& name : startingLayers(character))
-        if (groups_.find(name)) layers_.push_back(name);
+    // Each equipped item hands its animation group to one of three layers
+    // (GEquipCell_v1 -> FUN_004efcf0), drawn over the body in layer order.
+    const auto items = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Items")));
+    std::string slots[3];
+    for (uint16_t id : startingItems(character)) {
+        const std::string* path = items.find(id);
+        if (!path) continue;
+        const auto data = readOrThrow(vfs, *path);
+        // Mod chips go into the weapon's socket and draw nothing.
+        if (data.size() < 2 || itm::spriteLayer(uint16_t(data[0] | data[1] << 8)) < 0) continue;
+        const itm::Item item = itm::parse(data);
+        const int layer = itm::spriteLayer(item.classId);
+        for (const auto& g : groups_.groups)
+            if (g.id == item.socketed->animGroup) slots[layer] = g.name;
+    }
+    for (const auto& name : slots)
+        if (!name.empty()) layers_.push_back(name);
     // The move animation's parameter is the walking speed (FUN_00406100).
     for (const auto& a : template_.anims)
         if (a.kind == agt::Move && !speed_) speed_ = walkSpeed(a.param);

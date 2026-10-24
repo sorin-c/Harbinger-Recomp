@@ -155,7 +155,12 @@ static void testRealData(const char* dir) {
         }
     }
     world::Player human(vfs, ini, world::Character::Human, walk, start);
-    CHECK(human.layers().size() == 2);
+    // The starting items' animation groups, by layer (decoded, and the
+    // Human's match the original's sprite).
+    CHECK((human.layers() == std::vector<std::string>{"Armor 7", "Rifle 2"}));
+    CHECK((world::Player(vfs, ini, world::Character::Gladiator, walk, start).layers() ==
+           std::vector<std::string>{"Base Torso", "Base Blade", "Base Gun"}));
+    CHECK(world::Player(vfs, ini, world::Character::Culibine, walk, start).layers().empty());
     CHECK(human.walkTo(16.3, 24.5) && human.path().size() == 1);
     uint64_t t = 0;
     for (; t < 5000 && !human.path().empty(); t += 10) human.update(t);
