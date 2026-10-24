@@ -22,8 +22,23 @@ jobs:
             libxss-dev libxfixes-dev libxkbcommon-dev libwayland-dev wayland-protocols \
             libegl1-mesa-dev libgl1-mesa-dev libasound2-dev libpulse-dev libudev-dev libdbus-1-dev
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        # Windows: static MSVC runtime, so the packaged exe runs without the VC++ redistributable.
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ runner.os == 'Windows' && '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded' || '' }}
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test (synthetic cases; game data is not available in CI)
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          foreach ($exe in 'harbinger', 'harbinger-viewer', 'sqhtool', 'gim2tga') { Copy-Item "build/Release/$exe.exe" dist/ }
+          Get-ChildItem build -Recurse -Filter SDL3.dll | Select-Object -First 1 | Copy-Item -Destination dist/
+          Copy-Item README.md, LICENSE* dist/ -ErrorAction SilentlyContinue
+      - name: Upload Windows build
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: harbinger-windows
+          path: dist/

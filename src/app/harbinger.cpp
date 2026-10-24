@@ -3,7 +3,7 @@
 // from the original interface, font, item and cursor files, with the menu
 // music and UI sounds.
 //
-//   harbinger --data <install dir> [--screen startup|new|options|load] [--no-audio]
+//   harbinger [--data <install dir>] [--screen startup|new|options|load] [--no-audio]
 //             [--settings config.cfg] [--run-ms ms] [--screenshot out.bmp [--time ms] [--mouse x,y]]
 //
 // Mouse, keyboard (up/down to move, left/right for sliders, Enter, Esc = back)
@@ -351,7 +351,17 @@ Options parseArgs(int argc, char** argv) {
             o.mouse = SDL_FPoint{std::stof(v.substr(0, comma)), std::stof(v.substr(comma + 1))};
         }
     }
-    if (o.data.empty()) throw std::runtime_error("usage: harbinger --data <Harbinger install dir> [--screen startup|new|options|load] [--no-audio] "
+    // Without --data, look for the game next to the executable, then in the
+    // current folder, so the exe can simply be dropped into the install.
+    if (o.data.empty()) {
+        for (const std::string& dir : {std::string(SDL_GetBasePath() ? SDL_GetBasePath() : ""), std::string(".")})
+            if (!dir.empty() && std::ifstream(dir + "/Harbinger.ini")) {
+                o.data = dir;
+                break;
+            }
+    }
+    if (o.data.empty()) throw std::runtime_error("Harbinger.ini not found. Put harbinger.exe in the Harbinger folder, or run:\n"
+                                                 "harbinger --data <Harbinger install dir> [--screen startup|new|options|load] [--no-audio] "
                                                  "[--settings config.cfg] "
                                                  "[--screenshot out.bmp [--time ms] [--mouse x,y]]");
     return o;
@@ -406,6 +416,8 @@ int main(int argc, char** argv) {
         return 0;
     } catch (const std::exception& ex) {
         std::fprintf(stderr, "error: %s\n", ex.what());
+        // Double-clicked on Windows there is no console to read, so show it.
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Harbinger", ex.what(), nullptr);
         return 1;
     }
 }

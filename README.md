@@ -29,6 +29,13 @@ What exists so far:
 harbinger --data "C:/Games/Harbinger"
 ```
 
+Without `--data`, `harbinger` looks for `Harbinger.ini` next to itself and
+then in the current folder, so on Windows you can copy `harbinger.exe` and
+`SDL3.dll` into your Harbinger folder and double-click it. A ready-built
+Windows zip (`harbinger-windows`) is attached to every CI run under the
+repository's Actions tab. Your settings are kept in
+`%APPDATA%\harbinger-recomp\harbinger\config.cfg`; the game folder is only read.
+
 ## Build
 
 ```
