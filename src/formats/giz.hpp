@@ -30,7 +30,9 @@ enum Flags : uint16_t {
 struct MaskCell {
     int16_t dx = 0, dy = 0;
     int16_t kind = 0;   // 0x0d sorts into a separate list (FUN_004b5ca0); meaning not confirmed
-    int16_t a = 0, b = 0;  // b bit 1 adds the cell to a third list
+    // FUN_004b5ca0 stores these two swapped (a at cell+8, b at cell+6); a bit 1
+    // adds the cell to a third list.
+    int16_t a = 0, b = 0;
 };
 
 struct Mask {

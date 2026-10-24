@@ -36,8 +36,8 @@ repeat maskCount:       FUN_004b5c00
   repeat cellCount:     10 bytes
     i16 dx, dy          half-cell offset from the origin half-cell
     i16 kind            0x0d goes to a separate list
-    i16 a
-    i16 b               bit 1 adds the cell to a third list
+    i16 a               stored after b (cell+8); bit 1 adds the cell to a third list
+    i16 b               stored at cell+6
 repeat frameCount:
   u16  mask             index into the masks
   i16  x, y             FUN_004b53e0: the frame's place on the first frame, in pixels
