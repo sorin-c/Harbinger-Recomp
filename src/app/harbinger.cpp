@@ -247,8 +247,9 @@ private:
                 if (e.button.button == (settings_.swapMouse ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT)) {
                     mouse_ = {e.button.x, e.button.y};
                     showCursor_ = true;
-                    // On an enemy: go and hit it (GAttackAction); elsewhere walk.
-                    mouseHeld_ = !world_->attackAt(mouse_.x, mouse_.y);
+                    // On an enemy: go and hit it (GAttackAction); on a console or
+                    // chest: go and use it; elsewhere walk.
+                    mouseHeld_ = !world_->attackAt(mouse_.x, mouse_.y) && !world_->useAt(mouse_.x, mouse_.y);
                     if (mouseHeld_) world_->walkTo(mouse_.x, mouse_.y);
                     lastRetarget_ = now_;
                 }
@@ -265,12 +266,16 @@ private:
                     endGame();
                 } else if (e.key.key == SDLK_F && !e.key.repeat) {
                     world_->attackNearest();
+                } else if (e.key.key == SDLK_E || e.key.key == SDLK_SPACE) {
+                    world_->useNearest();  // use the nearest console or chest
                 }
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) endGame();
                 // Attack (rebuild controls, D3-style): X / Square, or the right trigger.
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_WEST) world_->attackNearest();
+                // Use (rebuild controls): A / Cross, the nearest console or chest.
+                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) world_->useNearest();
                 break;
             case SDL_EVENT_GAMEPAD_AXIS_MOTION:
                 if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) stick_.x = e.gaxis.value / 32767.0f;
@@ -303,7 +308,7 @@ private:
         } else if (steering_) {
             world_->steer(0, 0);
             steering_ = false;
-        } else if (mouseHeld_ && now_ - lastRetarget_ >= kRetargetMs) {
+        } else if (mouseHeld_ && !world_->usePending() && now_ - lastRetarget_ >= kRetargetMs) {
             // Holding the button keeps walking towards the pointer.
             world_->walkTo(mouse_.x, mouse_.y);
             lastRetarget_ = now_;

@@ -185,13 +185,22 @@ defences and resistances; enemies get the original's hit-point rolls and,
 when those run out, play their death animation and stay as corpses.
 Evidence: `docs/combat.md`. Enemies do not fight back yet.
 
+## Milestone 13: using gizmos (done)
+
+The player uses consoles and chests: a click on one (or E, Space or the
+pad's A button for the nearest) walks there and uses it. A console with
+power plays its activation and opens or shuts the doors attached to it,
+which play their frames and settle; a door does not shut on someone standing
+in it. The walk grid follows the door, so the player can walk through once
+it is open. Chests open (no loot yet). Evidence: `docs/formats/gizmo.md`,
+"Using gizmos".
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
-3. Using gizmos (consoles opening doors, chests), the other classes' states;
-   doors and lifts changing the walk grid.
+3. The other classes' states (breakers, key consoles, lifts), chest loot.
 4. Running scripts from triggers. The room graph.
 5. Enemy AI (thinkers, their attacks), the player's ranged attack, hit
    points and death, experience.

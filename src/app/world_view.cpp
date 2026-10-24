@@ -64,6 +64,7 @@ WorldView::~WorldView() {
 }
 
 void WorldView::steer(float dx, float dy) {
+    if (dx != 0 || dy != 0) pendingUse_ = nullptr;
     // A screen direction to a map one: invert screen = ((x - y) * 64, (x + y) * 32).
     const double mx = dx / 64.0 + dy / 32.0, my = dy / 32.0 - dx / 64.0;
     player_->steer(mx, my);
@@ -75,6 +76,7 @@ world::WalkMap::Point WorldView::mapPoint(float x, float y) const {
 }
 
 void WorldView::walkTo(float x, float y) {
+    pendingUse_ = nullptr;
     const auto p = mapPoint(x, y);
     player_->walkTo(p.x, p.y);
 }
@@ -97,6 +99,7 @@ bool WorldView::attackAt(float x, float y) {
     }
     if (best < 0) return false;
     const auto& f = foes_->all()[size_t(best)];
+    pendingUse_ = nullptr;
     player_->attack(best, f.record->x, f.record->y);
     return true;
 }
@@ -105,13 +108,97 @@ bool WorldView::attackNearest() {
     const int id = foes_->nearest(player_->x(), player_->y(), 4.0, player_->facing());
     if (id < 0) return false;
     const auto& f = foes_->all()[size_t(id)];
+    pendingUse_ = nullptr;
     player_->attack(id, f.record->x, f.record->y);
     return true;
+}
+
+const chk::GizmoRecord* WorldView::gizmoAt(float x, float y) const {
+    // The front-most usable gizmo with a drawn pixel under the pointer.
+    const double sx = x - screenW_ / 2.0 + camX_, sy = y - screenH_ / 2.0 + camY_;
+    for (auto it = objects_.rbegin(); it != objects_.rend(); ++it) {
+        if (!it->gizmo || !world::usable(level_->gizmoTemplate(*it->gizmo))) continue;
+        const chk::GizmoRecord& g = *it->gizmo;
+        const auto& frames = level_->gizmoTemplate(g).frames;
+        for (const size_t i : level_->gizmoLayers(g, level_->gizmoFrame(g, elapsedMs_))) {
+            const render::RgbaImage* img = level_->gizmoImage(frames[i]);
+            if (!img) continue;
+            const auto tl = level_->gizmoFrameTopLeft(g, i);
+            const int u = int(std::floor(sx - std::floor(tl.x))), v = int(std::floor(sy - std::floor(tl.y)));
+            if (u < 0 || v < 0 || u >= img->width || v >= img->height) continue;
+            if ((img->pixels[size_t(v) * size_t(img->width) + size_t(u)] >> 24) > 0x40) return &g;
+        }
+    }
+    return nullptr;
+}
+
+void WorldView::approach(const chk::GizmoRecord& g) {
+    // The use point is often on the gizmo itself (a console's panel): walk
+    // to the passable half cell nearest to it (a rebuild choice; the
+    // original's GActivateAction uses the gizmo once the agent stands in
+    // the point's cell).
+    const auto p = level_->gizmoUsePoint(g);
+    const int px = int(std::floor(p.x * 2)), py = int(std::floor(p.y * 2));
+    double best = 1e9;
+    world::WalkMap::Point to{p.x, p.y};
+    for (int dx = -6; dx <= 6; ++dx)
+        for (int dy = -6; dy <= 6; ++dy) {
+            const int sx = px + dx, sy = py + dy;
+            if (!walk_->passable(sx, sy, player_->limit())) continue;
+            const double cx = (sx + 0.5) / 2.0, cy = (sy + 0.5) / 2.0;
+            const double d = (cx - p.x) * (cx - p.x) + (cy - p.y) * (cy - p.y);
+            if (d < best) best = d, to = {cx, cy};
+        }
+    player_->walkTo(to.x, to.y);
+    pendingUse_ = &g;
+}
+
+bool WorldView::useAt(float x, float y) {
+    const chk::GizmoRecord* g = gizmoAt(x, y);
+    if (!g) return false;
+    approach(*g);
+    return true;
+}
+
+bool WorldView::useNearest() {
+    const chk::GizmoRecord* best = nullptr;
+    double bestD = kUseRange * kUseRange;
+    for (const auto& o : objects_) {
+        if (!o.gizmo || !world::usable(level_->gizmoTemplate(*o.gizmo))) continue;
+        const auto p = level_->gizmoUsePoint(*o.gizmo);
+        const double d = (p.x - player_->x()) * (p.x - player_->x()) + (p.y - player_->y()) * (p.y - player_->y());
+        if (d <= bestD) bestD = d, best = o.gizmo;
+    }
+    if (!best) return false;
+    approach(*best);
+    return true;
+}
+
+bool WorldView::occupied(const chk::GizmoRecord& g) const {
+    // FUN_004a01e0: an agent whose cell the gizmo covers keeps it from
+    // shutting. The cells of all its masks, so a door that is about to shut
+    // counts its shut footprint.
+    const giz::Template& t = level_->gizmoTemplate(g);
+    auto covers = [&](double x, double y) {
+        const int cx = int(std::floor(x)), cy = int(std::floor(y));
+        for (const auto& m : t.masks)
+            for (const auto& c : m.cells) {
+                const int sx = 2 * g.x + c.dx, sy = 2 * g.y + 1 + c.dy;
+                if (c.kind != 0xd && sx >> 1 == cx && sy >> 1 == cy) return true;
+            }
+        return false;
+    };
+    if (covers(player_->x(), player_->y())) return true;
+    for (const auto& a : level_->map().agents)
+        if (level_->agentVisible(a) && covers(a.x, a.y)) return true;
+    return false;
 }
 
 void WorldView::update(uint64_t nowMs) {
     if (!startMs_) startMs_ = nowMs;
     elapsedMs_ = nowMs - startMs_;
+    // Gizmos first: a door that has just opened can be walked through.
+    for (const chk::GizmoRecord* g : level_->update(elapsedMs_)) walk_->repaint(*level_, *g);
     if (const auto* f = foes_->find(player_->target())) player_->trackTarget(f->record->x, f->record->y, !f->dead);
     if (const auto blow = player_->update(elapsedMs_)) {
         const auto hit = foes_->blow(blow->target, player_->x(), player_->y(), blow->x, blow->y,
@@ -120,6 +207,13 @@ void WorldView::update(uint64_t nowMs) {
             std::fprintf(stderr, "blow on %d: roll %d %s, %d damage, %d left\n", blow->target, hit->roll,
                          hit->hit ? (hit->critical ? "critical" : "hit") : "miss", hit->damage,
                          foes_->find(blow->target)->hitPoints);
+    }
+    if (pendingUse_ && player_->path().empty()) {
+        const auto p = level_->gizmoUsePoint(*pendingUse_);
+        const double d = std::hypot(p.x - player_->x(), p.y - player_->y());
+        if (d <= kUseReach)
+            level_->useGizmo(*pendingUse_, elapsedMs_, [&](const chk::GizmoRecord& o) { return occupied(o); });
+        pendingUse_ = nullptr;
     }
     // The camera stays centred on the player (FUN_00498250 and the per-frame
     // view update: the followed agent's screen position minus half the view).

@@ -109,6 +109,13 @@ corner is the half cell (offsets 0x57a83c, 0x57a84c, 0x57a87c; counts 4, 12,
 20 at 0x57a834). The byte becomes 2 if a half cell with height > 0 is in the
 first ring, 1 if in the second, else 0.
 
+**When a gizmo moves.** The original builds the grid once per level; a door
+that opens or shuts changes it through the masks of its frames. The rebuild
+keeps the grid and repaints only the box of half cells under the gizmo's old
+and new masks: floor first, then every gizmo that reaches into the box, then
+clearance up to 3 half cells around it (clearance looks 3 half cells away).
+This gives the same grid as a full rebuild (test), in a fraction of the time.
+
 **Who may stand where.** The path finder lets an agent onto a half cell
 whose clearance is below `3 - size` (`FUN_00401cb0`, `FUN_00401170`:
 `this+0x3a = 3 - size`), size being `GAgentPlug_v31` = template+0x50 =

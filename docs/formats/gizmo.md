@@ -230,6 +230,52 @@ power heaters, pillars, incubator spawners and some consoles. 24 of the 308
 console records need one unit of power; in the game's levels 8 consoles start
 without it and show their last (dark) frame.
 
+## Using gizmos
+
+The player uses a gizmo by walking to its **use point** and activating it
+(`GActivateAction`: the agent uses the gizmo once it stands in the cell of
+the plug's target point). The target point is the template's offset
+(gizmo+0x34, +0x36: a pixel of the first frame), placed on the map by
+`FUN_004b3690` as `GFakeGizmoPlug_v22` does:
+
+```
+X = (px - 64) / 128,  Y = (py - height + (rows + 1) * 32) / 64
+use point = (gizmo x + X + Y, gizmo y + Y - X)
+```
+
+`height` is the first frame's height and `rows` the first mask's row count.
+Templates without an offset use the middle of the gizmo's cell.
+
+**Consoles** (`GConsolePlug_v1`, GIActivatable slot 1): with enough power, a
+console in state 0 or 4 goes to state 2 (its activation frames) and calls
+`FUN_004bdaf0`, which calls GIAttachable slot 1 on every gizmo attached to
+it: the level's attachments list (`docs/formats/level.md`) links a console to
+the doors it opens. A console without power does nothing.
+
+**Doors and bridges** (`GBridgePlug_v1`, the attachable toggle): shut (3)
+goes to opening (1), which plays the frames backwards from the last to frame
+0; open (0) goes to closing (2), forwards, unless an agent stands on the
+door (`FUN_004a01e0`). When the frames run out (`GBridgePlug_v29`), 2 settles
+in 3 and 1 in 0, and the door tells the gizmo that toggled it; the console
+then goes back from 2 to 0 (`GConsolePlug_v0`).
+
+**Chests, barrels, trash piles** (`GBarrelPlug_v1`): state 0 goes to 2, the
+frames from Begin Open to the last, and settles in 3 (`GBarrelPlug_v29`),
+where `FUN_004d8dd0` drops what is inside. The rebuild opens them but drops
+nothing yet.
+
+**The walk grid follows.** A door's frames carry their own masks, so when a
+gizmo shows a frame with another mask the rebuild repaints the half cells
+under the old and new masks (floor, then every gizmo that covers them) and
+recomputes clearance up to 3 half cells around (`docs/movement.md`). A test
+checks that the repainted grid equals one built from scratch.
+
+**Rebuild choices.** A click on a usable gizmo's picture (or E, Space, or the
+pad's A button for the nearest usable gizmo within 3 cells) walks the
+player to the passable half cell nearest the use point and uses the gizmo
+on arrival if it is within 1.5 cells. A console with nothing attached
+plays its activation once and goes back to idle.
+
 ## Evidence
 
 | Claim | Label | Evidence |
@@ -249,14 +295,16 @@ without it and show their last (dark) frame.
 | Starting states per class | proven | slots 17, 22, 28, 29 of each plug, listed in the table; every level's records give states in range (test) |
 | Door frame 0 open, last frame shut | likely | the frame names (`15o.tga` first, `1c.tga` last) and pictures |
 | Power flow | proven / likely | `0x4d4ab0`, `GBreakerPlug_v0`, `_v1`, `_v30`, `_v31`, `0x4d4ef0` (proven); that the chunk gives each source its level when the level starts (likely, `GChunk_v3` stores them) |
-| Mask cell fields | open | see the text |
+| Use point | proven | `FUN_004b3690`, `GFakeGizmoPlug_v22`, `GActivateAction` |
+| Console activation, door toggle, chest opening | proven | `GConsolePlug_v0`, `_v1`, `FUN_004bdaf0`, `GBridgePlug_v1`, `_v29`, `FUN_004a01e0`, `GBarrelPlug_v1`, `_v29`; Vantir Storage's console 149 opens door 151 and its doorway becomes walkable (test) |
+| Mask cell fields | proven | `FUN_004b5ca0`, `FUN_004475f0`, `FUN_00447740` (`docs/movement.md`) |
 
 ## Open questions
 
 - The states of the other classes (Pillar, Splitter, Spawn, Portal,
-  Umbilical, ChargingStn, Container, KeyConsole, Flicker, Animated), and what
-  using a gizmo does (opening, activating; the attachments link a console to
-  the door it opens).
+  Umbilical, ChargingStn, Container, KeyConsole, Flicker, Animated), and
+  using breakers, key consoles and lifts.
+- What a chest drops (`FUN_004d8dd0`).
 - Whether the first pause of a random-pause gizmo starts at once.
 - Draw order: a shut door now hides the console beside it in Vantir
   Storage; the sort key may need the footprint of the frame shown.

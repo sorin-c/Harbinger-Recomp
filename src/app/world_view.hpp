@@ -34,7 +34,8 @@ public:
     // Direct control from a stick or keys: walk towards screen direction
     // (dx, dy) (any length; 0, 0 stops).
     void steer(float dx, float dy);
-    // Click to move: walk to the map point under view pixel (x, y).
+    // Click to move: walk to the map point under view pixel (x, y). Drops a
+    // gizmo the player was on the way to use.
     void walkTo(float x, float y);
     // Click to attack: if an enemy is drawn under view pixel (x, y), go and
     // hit it and return true.
@@ -42,6 +43,16 @@ public:
     // The pad's attack button: hit the nearest enemy within a few cells,
     // preferring those ahead. False if there is none.
     bool attackNearest();
+    // Using gizmos (consoles, chests): walk up to the usable gizmo under view
+    // pixel (x, y) and use it on arrival; false if there is none there.
+    bool useAt(float x, float y);
+    // The same for the nearest usable gizmo within kUseRange cells of the
+    // player (pad and keys).
+    bool useNearest();
+    bool usePending() const { return pendingUse_ != nullptr; }
+    // Rebuild choices: how near a gizmo's use point the player must stand
+    // to use it, and how far the use button looks for one, in map cells.
+    static constexpr double kUseReach = 1.5, kUseRange = 3.0;
     // The map point under view pixel (x, y).
     world::WalkMap::Point mapPoint(float x, float y) const;
     void update(uint64_t nowMs);
@@ -59,6 +70,9 @@ private:
     void drawPlayer() const;
     void drawTargetBar() const;
     void drawImage(const std::string& key, const render::RgbaImage* img, double left, double top) const;
+    const chk::GizmoRecord* gizmoAt(float x, float y) const;
+    void approach(const chk::GizmoRecord& g);
+    bool occupied(const chk::GizmoRecord& g) const;
 
     Assets& assets_;
     SDL_Renderer* ren_;
@@ -67,6 +81,7 @@ private:
     std::unique_ptr<world::Player> player_;
     world::Rng rng_;
     std::unique_ptr<world::Foes> foes_;
+    const chk::GizmoRecord* pendingUse_ = nullptr;  // walking up to use it
     int screenW_, screenH_;
     double camX_ = 0, camY_ = 0;  // map screen position at the centre of the view
     uint64_t startMs_ = 0, elapsedMs_ = 0;  // animation clock, from the first update

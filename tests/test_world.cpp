@@ -2,6 +2,7 @@
 // and the level loader. Synthetic cases always run; with HARBINGER_DATA set,
 // every shipped level, brush and gizmo must parse.
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,6 +25,7 @@
 #include "render/sprite.hpp"
 #include "world/gizmo_state.hpp"
 #include "world/level.hpp"
+#include "world/walkmap.hpp"
 
 using namespace harbinger;
 
@@ -277,6 +279,33 @@ static void testGizmoStates() {
     for (uint64_t ms = 0; ms < 20000; ms += 7) shown.insert(world::playFrame(light, p, ms, 5));
     CHECK((shown == std::set<size_t>{1, 2, 3, 4}));
     CHECK(world::startingPlay(light, record(5, {1, 0}), 0).mode == GizmoPlay::Hold);
+
+    // Using: a console activates, toggles a door, and settles back.
+    {
+        world::GizmoState cs = world::startingState(console, record(1, needsOne), 0);
+        CHECK(!world::activate(console, cs));  // no power
+        cs.power = 1;
+        CHECK(world::activate(console, cs) && cs.state == 2 && !world::activate(console, cs));
+        CHECK(world::playFor(console, cs).first == 4 && world::playFor(console, cs).last == 5);
+        CHECK(world::finish(console, cs) && cs.state == 0);
+
+        world::GizmoState ds = world::startingState(door, record(2, {3, 0}), 0);
+        CHECK(ds.state == 3 && world::toggle(door, ds, true) && ds.state == 1);  // opening ignores agents
+        const GizmoPlay opening = world::playFor(door, ds);
+        CHECK(opening.mode == GizmoPlay::Once && opening.reverse && world::playLength(door, opening) == 400);
+        CHECK(world::playFrame(door, opening, 50, 0) == 3 && world::playFrame(door, opening, 350, 0) == 0);
+        CHECK(world::playFrame(door, opening, 5000, 0) == 0);
+        CHECK(!world::toggle(door, ds, false));  // already moving
+        CHECK(world::finish(door, ds) && ds.state == 0);
+        CHECK(!world::toggle(door, ds, true) && ds.state == 0);  // will not shut on an agent
+        CHECK(world::toggle(door, ds, false) && ds.state == 2 && world::finish(door, ds) && ds.state == 3);
+
+        world::GizmoState ch = world::startingState(chest, record(3, {0, 0, 0, 0, 0, 0, 0, 0, 0}), 0);
+        CHECK(world::activate(chest, ch) && ch.state == 2);
+        const GizmoPlay opens = world::playFor(chest, ch);
+        CHECK(opens.mode == GizmoPlay::Once && opens.first == 2 && opens.last == 4);
+        CHECK(world::finish(chest, ch) && ch.state == 3 && !world::activate(chest, ch));
+    }
 
     // Power: a source feeds a breaker, which passes it on only while on.
     chk::Level lv;
@@ -541,6 +570,56 @@ static void testRealData(const char* dir) {
             CHECK((storage.gizmoLayers(g, 15) == std::vector<size_t>{15}));
         }
         if (g.instance == 149) CHECK(storage.gizmoPlay(g).mode == world::GizmoPlay::PingPong);
+    }
+    // Using that console opens the door: it plays its frames backwards to
+    // frame 0 (open), the console returns to idle, and the walk grid lets
+    // the player through the doorway.
+    {
+        const chk::GizmoRecord* console = storage.gizmoByInstance(149);
+        const chk::GizmoRecord* door = storage.gizmoByInstance(151);
+        CHECK(console && door);
+        if (console && door) {
+            world::WalkMap before(storage);
+            const auto use = storage.gizmoUsePoint(*console);
+            CHECK(std::abs(use.x - (console->x + 0.5)) < 3 && std::abs(use.y - (console->y + 0.5)) < 3);
+            storage.update(1000);
+            CHECK(storage.useGizmo(*console, 1000, [](const chk::GizmoRecord&) { return false; }));
+            CHECK(storage.gizmoState(*console).state == 2 && storage.gizmoState(*door).state == 1);
+            CHECK(!storage.useGizmo(*console, 1100, [](const chk::GizmoRecord&) { return false; }));  // busy
+            CHECK(storage.gizmoFrame(*door, 1050) == 15);
+            bool masksChanged = false;
+            world::WalkMap patched(storage);
+            for (uint64_t ms = 1000; ms <= 4000; ms += 50)
+                for (const chk::GizmoRecord* g : storage.update(ms)) {
+                    masksChanged = true;
+                    patched.repaint(storage, *g);
+                }
+            CHECK(masksChanged);
+            CHECK(storage.gizmoState(*door).state == 0 && storage.gizmoFrame(*door, 4000) == 0);
+            CHECK(storage.gizmoState(*console).state == 0);
+            world::WalkMap after(storage);
+            size_t opened = 0;
+            for (const auto& c : storage.gizmoTemplate(*door).masks[0].cells) {
+                const int sx = 2 * door->x + c.dx, sy = 2 * door->y + 1 + c.dy;
+                if (before.inside(sx, sy) && before.at(sx, sy).clearance == world::WalkMap::kBlocked &&
+                    after.at(sx, sy).clearance != world::WalkMap::kBlocked)
+                    ++opened;
+            }
+            CHECK(opened > 0);
+            // Repainting only the door's area gives the same grid as a fresh build.
+            size_t differ = 0;
+            for (int sx = 0; sx < after.width(); ++sx)
+                for (int sy = 0; sy < after.height(); ++sy)
+                    differ += after.at(sx, sy).clearance != patched.at(sx, sy).clearance ||
+                              after.at(sx, sy).height != patched.at(sx, sy).height;
+            CHECK(differ == 0);
+            // And again: it shuts, unless someone stands in the doorway.
+            CHECK(storage.useGizmo(*console, 5000, [](const chk::GizmoRecord&) { return true; }));
+            CHECK(storage.gizmoState(*door).state == 0);
+            for (uint64_t ms = 5000; ms <= 8000; ms += 50) storage.update(ms);
+            CHECK(storage.useGizmo(*console, 9000, [](const chk::GizmoRecord&) { return false; }));
+            CHECK(storage.gizmoState(*door).state == 2);
+        }
     }
     // Across the game: most doors start shut, some consoles have no power,
     // and the lights and incubators that have it pause and play.

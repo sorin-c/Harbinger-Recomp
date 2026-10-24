@@ -82,9 +82,18 @@ Level::Level(Vfs& vfs, const Ini& ini, uint16_t id) : vfs_(vfs) {
     chk::parseRest(map_, chkData);
 
     const auto power = startingPower(map_, [&](const chk::GizmoRecord& g) -> const giz::Template& { return gizmoTemplate(g); });
-    for (const auto& g : map_.gizmos) {
+    for (size_t i = 0; i < map_.gizmos.size(); ++i) {
+        const chk::GizmoRecord& g = map_.gizmos[i];
         const auto it = power.find(g.instance);
-        gizmoPlays_[g.instance] = startingPlay(gizmoTemplate(g), g, it == power.end() ? 0 : it->second);
+        GizmoRuntime& rt = gizmoRuntime_[g.instance];
+        rt.state = startingState(gizmoTemplate(g), g, it == power.end() ? 0 : it->second);
+        rt.play = playFor(gizmoTemplate(g), rt.state);
+        gizmoIndex_[g.instance] = i;
+    }
+    for (const auto& g : map_.gizmos) {
+        GizmoRuntime& rt = gizmoRuntime_[g.instance];
+        rt.mask = gizmoMask(g);
+        for (const auto& f : gizmoTemplate(g).frames) rt.maskVaries |= f.mask != gizmoTemplate(g).frames[0].mask;
     }
 }
 
@@ -178,10 +187,109 @@ bool Level::gizmoVisible(const chk::GizmoRecord& g) const {
     return map_.keeps(g) && !t.frames.empty() && t.cls != giz::UmbilicalShell;
 }
 
-const GizmoPlay& Level::gizmoPlay(const chk::GizmoRecord& g) const { return gizmoPlays_.at(g.instance); }
-
 size_t Level::gizmoFrame(const chk::GizmoRecord& g, uint64_t ms) const {
-    return playFrame(gizmoTemplate(g), gizmoPlay(g), ms, g.instance);
+    const GizmoRuntime& rt = gizmoRuntime_.at(g.instance);
+    return playFrame(gizmoTemplate(g), rt.play, ms > rt.startMs ? ms - rt.startMs : 0, g.instance);
+}
+
+size_t Level::gizmoMask(const chk::GizmoRecord& g) const {
+    const giz::Template& t = gizmoTemplate(g);
+    if (t.frames.empty()) return 0;
+    const size_t f = std::min(gizmoFrame(g, nowMs_), t.frames.size() - 1);
+    return t.frames[f].mask < t.masks.size() ? t.frames[f].mask : 0;
+}
+
+const chk::GizmoRecord* Level::gizmoByInstance(uint16_t instance) const {
+    const auto it = gizmoIndex_.find(instance);
+    return it == gizmoIndex_.end() ? nullptr : &map_.gizmos[it->second];
+}
+
+Level::MapPoint Level::gizmoUsePoint(const chk::GizmoRecord& g) {
+    const giz::Template& t = gizmoTemplate(g);
+    if (t.offset[0] < 0 || t.offset[1] < 0 || t.frames.empty()) return {g.x + 0.5, g.y + 0.5};
+    // FUN_004b3690: X = (px - 64) / 128, Y = (py - height + (rows + 1) * 32) / 64,
+    // then x = X + Y, y = Y - X from the gizmo's cell.
+    const render::RgbaImage* img = gizmoImage(t.frames[0]);
+    const int rows = t.masks.empty() ? 0 : t.masks[0].rows;
+    const double X = (t.offset[0] - 64) / 128.0;
+    const double Y = (t.offset[1] - (img ? img->height : 0) + (rows + 1) * 32) / 64.0;
+    return {g.x + X + Y, g.y + Y - X};
+}
+
+void Level::setGizmoState(const chk::GizmoRecord& g, GizmoRuntime& rt, uint64_t nowMs) {
+    const giz::Template& t = gizmoTemplate(g);
+    rt.play = playFor(t, rt.state);
+    rt.startMs = nowMs;
+    const uint64_t length = playLength(t, rt.play);
+    rt.endMs = length ? nowMs + length : 0;
+}
+
+bool Level::useGizmo(const chk::GizmoRecord& g, uint64_t nowMs,
+                     const std::function<bool(const chk::GizmoRecord&)>& occupied) {
+    const giz::Template& t = gizmoTemplate(g);
+    GizmoRuntime& rt = gizmoRuntime_.at(g.instance);
+    if (!activate(t, rt.state)) return false;
+    setGizmoState(g, rt, nowMs);
+    if (t.cls == giz::Console || t.cls == giz::CompuConsole) {
+        // FUN_004bdaf0: every attached gizmo takes its turn; the console
+        // goes back to idle when they have settled (GConsolePlug_v0).
+        rt.waitingOn.clear();
+        for (const auto& [id, list] : map_.attachments) {
+            if (id != g.instance) continue;
+            for (uint16_t other : list) {
+                const chk::GizmoRecord* o = gizmoByInstance(other);
+                if (!o) continue;
+                GizmoRuntime& ort = gizmoRuntime_.at(other);
+                if (!toggle(gizmoTemplate(*o), ort.state, occupied(*o))) continue;
+                setGizmoState(*o, ort, nowMs);
+                rt.waitingOn.push_back(other);
+            }
+        }
+        // Nothing to wait for: one pass of the activation, then idle (a
+        // rebuild choice; the original waits on its attachments).
+        if (rt.waitingOn.empty()) {
+            const giz::Template& ct = gizmoTemplate(g);
+            uint64_t pass = 0;
+            for (size_t i = rt.play.first; i <= rt.play.last && i < ct.frames.size(); ++i) pass += ct.frames[i].durationMs;
+            rt.endMs = nowMs + pass;
+        }
+    }
+    return true;
+}
+
+std::vector<const chk::GizmoRecord*> Level::update(uint64_t nowMs) {
+    nowMs_ = nowMs;
+    // Settle the moving gizmos whose frames have played.
+    for (auto& [instance, rt] : gizmoRuntime_) {
+        if (!rt.endMs || nowMs < rt.endMs) continue;
+        const chk::GizmoRecord& g = *gizmoByInstance(instance);
+        const giz::Template& t = gizmoTemplate(g);
+        if ((t.cls == giz::Console || t.cls == giz::CompuConsole) && !rt.waitingOn.empty()) continue;
+        if (finish(t, rt.state)) setGizmoState(g, rt, rt.endMs);
+        else rt.endMs = 0;
+    }
+    // Consoles whose attached gizmos have all settled go back to idle.
+    for (auto& [instance, rt] : gizmoRuntime_) {
+        if (rt.waitingOn.empty()) continue;
+        rt.waitingOn.erase(std::remove_if(rt.waitingOn.begin(), rt.waitingOn.end(),
+                                          [&](uint16_t o) { return gizmoRuntime_.at(o).endMs == 0; }),
+                           rt.waitingOn.end());
+        if (rt.waitingOn.empty()) {
+            const chk::GizmoRecord& g = *gizmoByInstance(instance);
+            if (finish(gizmoTemplate(g), rt.state)) setGizmoState(g, rt, nowMs);
+        }
+    }
+    std::vector<const chk::GizmoRecord*> changed;
+    for (const auto& g : map_.gizmos) {
+        GizmoRuntime& rt = gizmoRuntime_.at(g.instance);
+        if (!rt.maskVaries) continue;
+        const size_t mask = gizmoMask(g);
+        if (mask != rt.mask) {
+            rt.mask = mask;
+            changed.push_back(&g);
+        }
+    }
+    return changed;
 }
 
 ScreenPoint Level::gizmoFrameTopLeft(const chk::GizmoRecord& g, size_t i) {
