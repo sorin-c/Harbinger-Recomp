@@ -185,14 +185,52 @@ defences and resistances; enemies get the original's hit-point rolls and,
 when those run out, play their death animation and stay as corpses.
 Evidence: `docs/combat.md`. Enemies do not fight back yet.
 
+## Milestone 13: using gizmos (done)
+
+The player uses consoles and chests: a click on one (or E, Space or the
+pad's A button for the nearest) walks there and uses it. A console with
+power plays its activation and opens or shuts the doors attached to it,
+which play their frames and settle; a door does not shut on someone standing
+in it. The walk grid follows the door, so the player can walk through once
+it is open. Chests open (no loot yet). Evidence: `docs/formats/gizmo.md`,
+"Using gizmos".
+
+## Milestone 14: gizmos in 3D order (done)
+
+Every gizmo template carries a 3D shape that the original draws with a depth
+buffer. The rebuild reads it, draws only what the shape covers (so editor
+outlines and markers no longer show) and orders gizmos and characters by
+comparing depths where their pictures overlap, so a character walking past
+a door or a machine goes behind or in front of the right parts. Evidence:
+`docs/formats/gizmo.md`, "Shape".
+
+## Milestone 15: trigger scripts play (done)
+
+Walking into an event trigger sets it off once: its gizmos are activated
+and its cutscene script runs. The rebuild plays the commands the shipped
+trigger scripts use: cinematic bars (the player takes no orders), camera
+moves, thought bubbles with their voice lines (closed with a click, Space,
+E or the pad's A), screen shakes, sounds, waits, gizmo activation and
+highlights. Agent commands (MoveTo, TurnToward) are skipped: they move
+agents that spawners create, and spawners are not rebuilt yet. On Refuse
+Disposal (level 11), walking up to the portal plays the whole scene.
+Evidence: `docs/formats/script.md`, "Running a script".
+
+## Milestone 16: chest loot (done)
+
+Chests drop what the original rolls for them: a number of picks from the
+chest's item group, by weight, money with its amount, and the chest's own
+item, one every half second, on the floor beside the chest. A click on an
+item, or E, Space or the pad's A, walks there and picks it up; money adds
+to a counter shown at the top left. Evidence: `docs/formats/loot.md`.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
-3. Using gizmos (consoles opening doors, chests), the other classes' states;
-   doors and lifts changing the walk grid.
-4. Running scripts from triggers. The room graph.
+3. The other classes' states (breakers, key consoles, lifts); the inventory.
+4. Spawners (and the scripts' agent commands with them). The room graph.
 5. Enemy AI (thinkers, their attacks), the player's ranged attack, hit
    points and death, experience.
 6. The in-game loop, HUD and lighting.

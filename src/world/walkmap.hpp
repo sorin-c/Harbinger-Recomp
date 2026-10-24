@@ -27,6 +27,9 @@ public:
     // (FUN_00448080 -> FUN_00447470), then every placed gizmo's footprint
     // (FUN_0044a7c0), then the clearance pass (FUN_00448df0).
     explicit WalkMap(const Level& level);
+    // Paints a gizmo's area again after its frame's mask changed (a door
+    // opened or shut), from the gizmos' current frames.
+    void repaint(const Level& level, const chk::GizmoRecord& changed);
     // An empty grid of the given size (tests).
     WalkMap(int width, int height);
 
@@ -63,6 +66,12 @@ public:
     bool lineClear(int ax, int ay, int bx, int by, uint8_t limit, std::optional<std::pair<int, int>>* last = nullptr) const;
 
 private:
+    struct Box {
+        int x0, y0, x1, y1;  // half cells, inclusive
+    };
+    void paintFloor(const Level& level, int x, int y);
+    void paintGizmo(const Level& level, const chk::GizmoRecord& g, const Box& box);
+    void computeClearance(const Box& box);
     void setWalkable(int sx, int sy, bool walkable);
     void paintCell(int x, int y, const brs::Brush& brush, uint16_t group);
 

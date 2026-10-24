@@ -4,7 +4,9 @@
 // Format notes and evidence: docs/formats/level.md
 #pragma once
 
+#include <cmath>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -68,16 +70,65 @@ public:
     ScreenPoint gizmoTopLeft(const chk::GizmoRecord& g);
     // Draw order key: larger is nearer the viewer. Comparable with a cell's x + y.
     double gizmoDepth(const chk::GizmoRecord& g) const;
+    // A gizmo's 3D shape as the camera sees it (giz::MeshPiece). The original
+    // draws each gizmo as triangles in map space with a depth buffer; the
+    // camera looks along (-1, -1, -1), so at any one pixel comparing two
+    // surfaces' map x + y orders them as the depth buffer would. `depth`
+    // holds, for each pixel of the first frame's image, the x + y of the
+    // nearest point of the shape there, relative to the gizmo's x + y, or
+    // NaN where the shape does not cover the pixel.
+    struct DepthMap {
+        int width = 0, height = 0;
+        std::vector<float> depth;
+        float at(int x, int y) const {
+            return x < 0 || y < 0 || x >= width || y >= height ? NAN : depth[size_t(y) * size_t(width) + size_t(x)];
+        }
+    };
+    const DepthMap& gizmoShape(const chk::GizmoRecord& g);
+    // +1 if gizmo `a` hides `b` where their shapes overlap on screen, -1 if
+    // `b` hides `a`, 0 if they do not overlap: at each pixel both shapes
+    // cover, the larger map x + y is nearer; most such pixels decide.
+    int gizmoInFront(const chk::GizmoRecord& a, const chk::GizmoRecord& b);
+    // Frame `i` of a gizmo as the original shows it: only the pixels its
+    // shape covers (the original draws nothing but the shape's triangles, so
+    // the editor outlines some first frames carry never show). Cached.
+    const render::RgbaImage* gizmoFrameImage(const chk::GizmoRecord& g, size_t i);
     // False for gizmos the base variant drops (chk::Level::keeps), and for
     // gizmos whose first frame is an editor placeholder: an
     // umbilical shell's first image is only the outline of its footprint, and
     // the original shows nothing there until the shell closes.
     bool gizmoVisible(const chk::GizmoRecord& g) const;
-    // How a gizmo plays in the state the level starts it in (doors open or
-    // shut, consoles idling or without power; world/gizmo_state.hpp).
-    const GizmoPlay& gizmoPlay(const chk::GizmoRecord& g) const;
-    // The frame a gizmo shows `ms` after the level starts.
+    // A gizmo's state now and how it plays in it (doors open or shut,
+    // consoles idling or without power; world/gizmo_state.hpp). The level
+    // starts each gizmo in the state its record gives.
+    const GizmoState& gizmoState(const chk::GizmoRecord& g) const { return gizmoRuntime_.at(g.instance).state; }
+    const GizmoPlay& gizmoPlay(const chk::GizmoRecord& g) const { return gizmoRuntime_.at(g.instance).play; }
+    // The frame a gizmo shows `ms` after the level starts (for a gizmo whose
+    // state changed, the time counts from the change).
     size_t gizmoFrame(const chk::GizmoRecord& g, uint64_t ms) const;
+    // The mask (walk footprint) of the frame a gizmo shows at the last update.
+    size_t gizmoMask(const chk::GizmoRecord& g) const;
+    // The gizmo record with this instance number, or nullptr.
+    const chk::GizmoRecord* gizmoByInstance(uint16_t instance) const;
+
+    // Where an agent goes to use a gizmo: the template's offset point
+    // (gizmo+0x34/+0x36, a pixel of the first frame) turned into a map
+    // position by FUN_004b3690, as GFakeGizmoPlug_v22 places the plug's
+    // target; the middle of the gizmo's cell when the template has none.
+    struct MapPoint {
+        double x, y;
+    };
+    MapPoint gizmoUsePoint(const chk::GizmoRecord& g);
+    // Uses a gizmo at `nowMs` (GIActivatable slot 1): a console with power
+    // starts its activation and toggles the gizmos attached to it (the
+    // level's attachments list; a door does not shut on an agent, which
+    // `occupied` reports), a chest opens. Returns false if nothing happened.
+    bool useGizmo(const chk::GizmoRecord& g, uint64_t nowMs,
+                  const std::function<bool(const chk::GizmoRecord&)>& occupied);
+    // Moves time on to `nowMs`: gizmos whose frames have played settle in
+    // their next state, and consoles return to idle once what they toggled
+    // has settled. Returns the gizmos whose walk footprint (mask) changed.
+    std::vector<const chk::GizmoRecord*> update(uint64_t nowMs);
     // Where frame `i` is drawn: at its (x, y) on the first frame's image.
     ScreenPoint gizmoFrameTopLeft(const chk::GizmoRecord& g, size_t i);
     // The frames to draw, in order, to show frame `f`. The original keeps
@@ -131,7 +182,21 @@ private:
     std::map<std::string, std::vector<render::RgbaImage>> agentSheets_;  // every frame, by sheet path
     std::map<std::string, std::unique_ptr<render::RgbaImage>> images_;  // by tile path
     std::map<std::string, std::unique_ptr<render::RgbaImage>> gizmoImages_;  // by frame path
-    std::map<uint16_t, GizmoPlay> gizmoPlays_;  // by instance
+    std::map<const giz::Template*, DepthMap> gizmoShapes_;
+    std::map<std::pair<const giz::Template*, size_t>, std::unique_ptr<render::RgbaImage>> gizmoFrames_;
+    struct GizmoRuntime {
+        GizmoState state;
+        GizmoPlay play;
+        uint64_t startMs = 0;  // when the state began
+        uint64_t endMs = 0;    // when a Once play ends (0: it does not)
+        std::vector<uint16_t> waitingOn;  // a console: the attached gizmos still moving
+        size_t mask = 0;       // the mask shown at the last update
+        bool maskVaries = false;  // its frames do not all use one mask
+    };
+    void setGizmoState(const chk::GizmoRecord& g, GizmoRuntime& rt, uint64_t nowMs);
+    std::map<uint16_t, GizmoRuntime> gizmoRuntime_;  // by instance
+    std::map<uint16_t, size_t> gizmoIndex_;           // instance -> index in map_.gizmos
+    uint64_t nowMs_ = 0;
 };
 
 }  // namespace harbinger::world

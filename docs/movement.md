@@ -109,6 +109,13 @@ corner is the half cell (offsets 0x57a83c, 0x57a84c, 0x57a87c; counts 4, 12,
 20 at 0x57a834). The byte becomes 2 if a half cell with height > 0 is in the
 first ring, 1 if in the second, else 0.
 
+**When a gizmo moves.** The original builds the grid once per level; a door
+that opens or shuts changes it through the masks of its frames. The rebuild
+keeps the grid and repaints only the box of half cells under the gizmo's old
+and new masks: floor first, then every gizmo that reaches into the box, then
+clearance up to 3 half cells around it (clearance looks 3 half cells away).
+This gives the same grid as a full rebuild (test), in a fraction of the time.
+
 **Who may stand where.** The path finder lets an agent onto a half cell
 whose clearance is below `3 - size` (`FUN_00401cb0`, `FUN_00401170`:
 `this+0x3a = 3 - size`), size being `GAgentPlug_v31` = template+0x50 =
@@ -196,10 +203,10 @@ gives the Human "Armor 7" + "Rifle 2", the Gladiator "Base Torso" +
   the player slides. Letting go stops at once.
 - **Mouse**: a click walks to the point under the pointer as the original
   does; holding the button re-targets every 100 ms.
-- **Draw order**: big gizmos (the umbilical pit) span many cells, so the
-  player is placed in front of a nearby gizmo when it stands past the box of
-  the half cells the gizmo blocks, behind when short of it, by depth
-  otherwise.
+- **Draw order**: the player and the other characters go in front of or
+  behind each gizmo by comparing depths where their pictures overlap with
+  the gizmo's 3D shape (`docs/formats/gizmo.md`, "Shape"), as the original's
+  depth buffer would.
 
 ## Checked against the original (Wine)
 

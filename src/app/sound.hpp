@@ -29,6 +29,7 @@ public:
     // `restart` false left to finish.
     void play(int key, const audio::Pcm& pcm, bool restart = true);
     bool playing(int key) const;
+    void stop(int key);
 
     void setMusicVolume(float gain);
     void setSoundVolume(float gain);

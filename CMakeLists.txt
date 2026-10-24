@@ -20,6 +20,7 @@ add_library(harbinger_formats
   src/formats/agt.cpp
   src/formats/anm.cpp
   src/formats/gsc.cpp
+  src/formats/gig.cpp
   src/formats/fnt.cpp
   src/formats/gim.cpp
   src/formats/itf.cpp
@@ -65,6 +66,8 @@ add_library(harbinger_core
   src/world/combat.cpp
   src/world/foes.cpp
   src/world/walkmap.cpp
+  src/world/script.cpp
+  src/world/loot.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
 target_include_directories(harbinger_core SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/_deps/dr_libs)
@@ -96,7 +99,7 @@ if(HARBINGER_BUILD_APPS)
   endif()
 
   add_executable(harbinger src/app/harbinger.cpp src/app/assets.cpp src/app/screen.cpp src/app/sound.cpp
-    src/app/world_view.cpp)
+    src/app/world_view.cpp src/app/cutscene.cpp)
   target_link_libraries(harbinger PRIVATE harbinger_core SDL3::SDL3)
   target_compile_options(harbinger PRIVATE ${HARBINGER_WARNINGS})
   if(WIN32)

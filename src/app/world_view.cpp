@@ -4,11 +4,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <queue>
+#include <string>
 
 namespace harbinger::app {
 
 WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world::Character character, int screenW,
-                     int screenH)
+                     int screenH, uint16_t entry)
     : assets_(assets), ren_(ren), level_(std::make_unique<world::Level>(assets.vfs(), assets.ini(), levelId)),
       screenW_(screenW), screenH_(screenH) {
     const auto& m = level_->map();
@@ -17,7 +19,7 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     chk::EntryPoint start;
     start.x = m.width / 2.0, start.y = m.height / 2.0;
     for (const auto& e : m.entries)
-        if (e.id == 0 || e.name == "Default") {
+        if (e.id == entry || (entry == 0 && e.name == "Default")) {
             start = e;
             break;
         }
@@ -27,35 +29,38 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     // from the clock so fights differ from game to game.
     rng_.seed(uint32_t(SDL_GetTicksNS()));
     foes_ = std::make_unique<world::Foes>(assets.vfs(), *level_, rng_);
+    cutscene_ = std::make_unique<Cutscene>(assets, ren, character, *level_, screenW, screenH);
+    loot_ = std::make_unique<world::Loot>(assets.vfs(), assets.ini(), character, *level_, *walk_, rng_);
     const auto p = world::toScreen(player_->x(), player_->y());
     camX_ = p.x, camY_ = p.y;
 
     for (const auto& g : m.gizmos)
         if (level_->gizmoVisible(g)) {
             Object o{level_->gizmoDepth(g), &g, nullptr};
-            o.minX = o.maxX = g.x, o.minY = o.maxY = g.y + 0.5;
-            const giz::Template& t = level_->gizmoTemplate(g);
-            if (!t.masks.empty() && !t.frames.empty() && t.frames[0].mask < t.masks.size()) {
-                // The box of the half cells the gizmo blocks (mask `a` bit 0,
-                // see world/walkmap.cpp), or of all of them if it blocks none:
-                // what it covers on the floor that can be walked around.
-                const auto& cells = t.masks[t.frames[0].mask].cells;
-                const bool anyBlocked = std::any_of(cells.begin(), cells.end(), [](const auto& c) { return c.a & 1; });
-                bool first = true;
-                for (const auto& c : cells) {
-                    if (anyBlocked && !(c.a & 1)) continue;
-                    const double x = (2 * g.x + c.dx) / 2.0, y = (2 * g.y + 1 + c.dy) / 2.0;
-                    if (first) o.minX = o.maxX = x, o.minY = o.maxY = y, first = false;
-                    o.minX = std::min(o.minX, x), o.maxX = std::max(o.maxX, x + 0.5);
-                    o.minY = std::min(o.minY, y), o.maxY = std::max(o.maxY, y + 0.5);
-                }
-            }
+            o.shape = &level_->gizmoShape(g);
+            const auto tl = level_->gizmoTopLeft(g);
+            o.left = int(std::floor(tl.x)), o.top = int(std::floor(tl.y));
             objects_.push_back(o);
         }
     for (const auto& a : m.agents)
         if (level_->agentVisible(a)) objects_.push_back({level_->agentDepth(a), nullptr, &a});
     std::stable_sort(objects_.begin(), objects_.end(),
                      [](const auto& a, const auto& b) { return a.depth < b.depth; });
+
+    // Gizmos stay put, so which of two overlapping gizmos hides the other is
+    // worked out once.
+    behind_.resize(objects_.size());
+    for (size_t i = 0; i < objects_.size(); ++i) {
+        const Object& p = objects_[i];
+        if (!p.gizmo || p.shape->depth.empty()) continue;
+        for (size_t j = i + 1; j < objects_.size(); ++j) {
+            const Object& q = objects_[j];
+            if (!q.gizmo || q.shape->depth.empty()) continue;
+            const int c = level_->gizmoInFront(*p.gizmo, *q.gizmo);
+            if (c > 0) behind_[i].push_back(j);
+            else if (c < 0) behind_[j].push_back(i);
+        }
+    }
 }
 
 WorldView::~WorldView() {
@@ -64,6 +69,8 @@ WorldView::~WorldView() {
 }
 
 void WorldView::steer(float dx, float dy) {
+    if (cinematic()) return;
+    if (dx != 0 || dy != 0) pendingUse_ = nullptr, pendingPickup_ = 0;
     // A screen direction to a map one: invert screen = ((x - y) * 64, (x + y) * 32).
     const double mx = dx / 64.0 + dy / 32.0, my = dy / 32.0 - dx / 64.0;
     player_->steer(mx, my);
@@ -75,11 +82,14 @@ world::WalkMap::Point WorldView::mapPoint(float x, float y) const {
 }
 
 void WorldView::walkTo(float x, float y) {
+    if (cinematic()) return;
+    pendingUse_ = nullptr, pendingPickup_ = 0;
     const auto p = mapPoint(x, y);
     player_->walkTo(p.x, p.y);
 }
 
 bool WorldView::attackAt(float x, float y) {
+    if (cinematic()) return false;
     // An enemy's picture stands up from its feet: take the click as on it
     // when it falls in a box around the feet's screen point (a rebuild
     // choice, roughly a body's size).
@@ -97,22 +107,159 @@ bool WorldView::attackAt(float x, float y) {
     }
     if (best < 0) return false;
     const auto& f = foes_->all()[size_t(best)];
+    pendingUse_ = nullptr, pendingPickup_ = 0;
     player_->attack(best, f.record->x, f.record->y);
     return true;
 }
 
 bool WorldView::attackNearest() {
+    if (cinematic()) return false;
     const int id = foes_->nearest(player_->x(), player_->y(), 4.0, player_->facing());
     if (id < 0) return false;
     const auto& f = foes_->all()[size_t(id)];
+    pendingUse_ = nullptr, pendingPickup_ = 0;
     player_->attack(id, f.record->x, f.record->y);
     return true;
+}
+
+const chk::GizmoRecord* WorldView::gizmoAt(float x, float y) const {
+    // The front-most usable gizmo with a drawn pixel under the pointer.
+    const double sx = x - screenW_ / 2.0 + camX_, sy = y - screenH_ / 2.0 + camY_;
+    for (auto k = order_.rbegin(); k != order_.rend(); ++k) {
+        if (*k >= objects_.size()) continue;
+        const Object& o = objects_[*k];
+        if (!o.gizmo || !world::usable(level_->gizmoTemplate(*o.gizmo))) continue;
+        const chk::GizmoRecord& g = *o.gizmo;
+        for (const size_t i : level_->gizmoLayers(g, level_->gizmoFrame(g, elapsedMs_))) {
+            const render::RgbaImage* img = level_->gizmoFrameImage(g, i);
+            if (!img) continue;
+            const auto tl = level_->gizmoFrameTopLeft(g, i);
+            const int u = int(std::floor(sx - std::floor(tl.x))), v = int(std::floor(sy - std::floor(tl.y)));
+            if (u < 0 || v < 0 || u >= img->width || v >= img->height) continue;
+            if ((img->pixels[size_t(v) * size_t(img->width) + size_t(u)] >> 24) > 0x40) return &g;
+        }
+    }
+    return nullptr;
+}
+
+void WorldView::approach(const chk::GizmoRecord& g) {
+    // The use point is often on the gizmo itself (a console's panel): walk
+    // to the passable half cell nearest to it (a rebuild choice; the
+    // original's GActivateAction uses the gizmo once the agent stands in
+    // the point's cell).
+    const auto p = level_->gizmoUsePoint(g);
+    const int px = int(std::floor(p.x * 2)), py = int(std::floor(p.y * 2));
+    double best = 1e9;
+    world::WalkMap::Point to{p.x, p.y};
+    for (int dx = -6; dx <= 6; ++dx)
+        for (int dy = -6; dy <= 6; ++dy) {
+            const int sx = px + dx, sy = py + dy;
+            if (!walk_->passable(sx, sy, player_->limit())) continue;
+            const double cx = (sx + 0.5) / 2.0, cy = (sy + 0.5) / 2.0;
+            const double d = (cx - p.x) * (cx - p.x) + (cy - p.y) * (cy - p.y);
+            if (d < best) best = d, to = {cx, cy};
+        }
+    player_->walkTo(to.x, to.y);
+    pendingUse_ = &g;
+    pendingPickup_ = 0;
+}
+
+void WorldView::approachItem(const world::Loot::GroundItem& g) {
+    player_->walkTo(g.x, g.y);
+    pendingPickup_ = g.id;
+    pendingUse_ = nullptr;
+}
+
+const Texture* WorldView::groundItemPicture(const world::Loot::GroundItem& g, SDL_FRect& src, SDL_FRect& at) const {
+    // The item's image (itemimg.mgr) holds frameCount pictures stacked
+    // vertically; the rebuild lays the first one on the ground, centred on
+    // the item's point (how the original draws a dropped item is not read).
+    if (!g.item) return nullptr;
+    std::string path;
+    try {
+        path = assets_.itemImagePath(g.item->image);
+    } catch (const std::exception&) {
+        return nullptr;
+    }
+    const Texture& t = assets_.itemTexture(path);
+    if (!t.tex) return nullptr;
+    const int frames = std::max<int>(1, g.item->frameCount);
+    src = {0, 0, float(t.w), float(t.h / frames)};
+    const auto p = world::toScreen(g.x, g.y);
+    at = {float(std::floor(p.x - src.w / 2)), float(std::floor(p.y - src.h / 2)), src.w, src.h};
+    return &t;
+}
+
+const world::Loot::GroundItem* WorldView::itemAt(float x, float y) const {
+    const double sx = x - screenW_ / 2.0 + camX_, sy = y - screenH_ / 2.0 + camY_;
+    for (auto it = loot_->ground().rbegin(); it != loot_->ground().rend(); ++it) {
+        if (!loot_->landed(*it, elapsedMs_)) continue;
+        SDL_FRect src, at;
+        if (!groundItemPicture(*it, src, at)) continue;
+        if (sx >= at.x && sx < at.x + at.w && sy >= at.y && sy < at.y + at.h) return &*it;
+    }
+    return nullptr;
+}
+
+bool WorldView::useAt(float x, float y) {
+    if (cinematic()) return false;
+    if (const auto* item = itemAt(x, y)) {
+        approachItem(*item);
+        return true;
+    }
+    const chk::GizmoRecord* g = gizmoAt(x, y);
+    if (!g) return false;
+    approach(*g);
+    return true;
+}
+
+bool WorldView::useNearest() {
+    if (cinematic()) return false;
+    if (const auto* item = loot_->nearest(player_->x(), player_->y(), kUseRange, elapsedMs_)) {
+        approachItem(*item);
+        return true;
+    }
+    const chk::GizmoRecord* best = nullptr;
+    double bestD = kUseRange * kUseRange;
+    for (const auto& o : objects_) {
+        if (!o.gizmo || !world::usable(level_->gizmoTemplate(*o.gizmo))) continue;
+        const auto p = level_->gizmoUsePoint(*o.gizmo);
+        const double d = (p.x - player_->x()) * (p.x - player_->x()) + (p.y - player_->y()) * (p.y - player_->y());
+        if (d <= bestD) bestD = d, best = o.gizmo;
+    }
+    if (!best) return false;
+    approach(*best);
+    return true;
+}
+
+bool WorldView::occupied(const chk::GizmoRecord& g) const {
+    // FUN_004a01e0: an agent whose cell the gizmo covers keeps it from
+    // shutting. The cells of all its masks, so a door that is about to shut
+    // counts its shut footprint.
+    const giz::Template& t = level_->gizmoTemplate(g);
+    auto covers = [&](double x, double y) {
+        const int cx = int(std::floor(x)), cy = int(std::floor(y));
+        for (const auto& m : t.masks)
+            for (const auto& c : m.cells) {
+                const int sx = 2 * g.x + c.dx, sy = 2 * g.y + 1 + c.dy;
+                if (c.kind != 0xd && sx >> 1 == cx && sy >> 1 == cy) return true;
+            }
+        return false;
+    };
+    if (covers(player_->x(), player_->y())) return true;
+    for (const auto& a : level_->map().agents)
+        if (level_->agentVisible(a) && covers(a.x, a.y)) return true;
+    return false;
 }
 
 void WorldView::update(uint64_t nowMs) {
     if (!startMs_) startMs_ = nowMs;
     elapsedMs_ = nowMs - startMs_;
+    // Gizmos first: a door that has just opened can be walked through.
+    for (const chk::GizmoRecord* g : level_->update(elapsedMs_)) walk_->repaint(*level_, *g);
+    loot_->update(elapsedMs_);
     if (const auto* f = foes_->find(player_->target())) player_->trackTarget(f->record->x, f->record->y, !f->dead);
+    const double x0 = player_->x(), y0 = player_->y();
     if (const auto blow = player_->update(elapsedMs_)) {
         const auto hit = foes_->blow(blow->target, player_->x(), player_->y(), blow->x, blow->y,
                                      player_->meleeRating(), player_->weapon(), elapsedMs_);
@@ -121,10 +268,40 @@ void WorldView::update(uint64_t nowMs) {
                          hit->hit ? (hit->critical ? "critical" : "hit") : "miss", hit->damage,
                          foes_->find(blow->target)->hitPoints);
     }
+    if (pendingUse_ && player_->path().empty()) {
+        const auto p = level_->gizmoUsePoint(*pendingUse_);
+        const double d = std::hypot(p.x - player_->x(), p.y - player_->y());
+        if (d <= kUseReach)
+            level_->useGizmo(*pendingUse_, elapsedMs_, [&](const chk::GizmoRecord& o) { return occupied(o); });
+        pendingUse_ = nullptr;
+    }
+    if (pendingPickup_ && player_->path().empty()) {
+        // Picked up on arrival (a rebuild stand-in for GPickUpAction).
+        if (const auto* g = loot_->find(pendingPickup_))
+            if (std::hypot(g->x - player_->x(), g->y - player_->y()) <= kUseReach)
+                if (const auto d = loot_->take(pendingPickup_)) {
+                    const itm::Item* item = loot_->item(d->item);
+                    if (item && item->classId == itm::Money) money_ += d->amount;
+                    else carried_.push_back(d->item);
+                }
+        pendingPickup_ = 0;
+    }
+    // The level's event triggers, and the script one of them started.
+    cutscene_->update(elapsedMs_, x0, y0, player_->x(), player_->y(),
+                      [&](const chk::GizmoRecord& o) { return occupied(o); });
+    if (cinematic() && !wasCinematic_) {
+        // Rebuild choice: the player stops where it stands for the cutscene.
+        pendingUse_ = nullptr;
+        player_->steer(0, 0);
+        player_->walkTo(player_->x(), player_->y());
+    }
+    wasCinematic_ = cinematic();
     // The camera stays centred on the player (FUN_00498250 and the per-frame
-    // view update: the followed agent's screen position minus half the view).
-    const auto p = world::toScreen(player_->x(), player_->y());
-    camX_ = std::floor(p.x), camY_ = std::floor(p.y);
+    // view update: the followed agent's screen position minus half the view),
+    // unless a script has moved it. A shake moves the whole view.
+    const auto cam = cutscene_->camera();
+    const auto p = cam ? world::toScreen(cam->x, cam->y) : world::toScreen(player_->x(), player_->y());
+    camX_ = std::floor(p.x) + cutscene_->shakeX(), camY_ = std::floor(p.y) + cutscene_->shakeY();
 }
 
 const Texture* WorldView::tile(const chk::Layer& layer) const {
@@ -153,7 +330,8 @@ void WorldView::drawLayer(int x, int y, int layer) const {
     SDL_RenderTexture(ren_, t->tex, nullptr, &dst);
 }
 
-void WorldView::drawImage(const std::string& key, const render::RgbaImage* img, double left, double top) const {
+void WorldView::drawImage(const std::string& key, const render::RgbaImage* img, double left, double top,
+                          bool lit) const {
     auto it = objectTextures_.find(key);
     if (it == objectTextures_.end()) {
         Texture t;
@@ -167,13 +345,21 @@ void WorldView::drawImage(const std::string& key, const render::RgbaImage* img, 
     if (x > screenW_ || x + float(t.w) < 0 || y > screenH_ || y + float(t.h) < 0) return;
     const SDL_FRect dst{x, y, float(t.w), float(t.h)};
     SDL_RenderTexture(ren_, t.tex, nullptr, &dst);
+    if (lit) {
+        // A script's Highlight: how the original lights the gizmo up is not
+        // read yet; the rebuild draws it a second time, added on.
+        SDL_SetTextureBlendMode(t.tex, SDL_BLENDMODE_ADD);
+        SDL_RenderTexture(ren_, t.tex, nullptr, &dst);
+        SDL_SetTextureBlendMode(t.tex, SDL_BLENDMODE_BLEND);
+    }
 }
 
 void WorldView::drawGizmo(const chk::GizmoRecord& g) const {
     const auto& frames = level_->gizmoTemplate(g).frames;
     for (const size_t i : level_->gizmoLayers(g, level_->gizmoFrame(g, elapsedMs_))) {
         const auto tl = level_->gizmoFrameTopLeft(g, i);
-        drawImage(frames[i].path, level_->gizmoImage(frames[i]), tl.x, tl.y);
+        drawImage(std::to_string(g.gizmo) + ":" + std::to_string(i) + ":" + frames[i].path,
+                  level_->gizmoFrameImage(g, i), tl.x, tl.y, cutscene_->highlighted(g.instance));
     }
 }
 
@@ -191,6 +377,17 @@ void WorldView::drawPlayer() const {
     drawImage(pose.key, pose.image, p.x - pose.anchorX, p.y - pose.anchorY);
 }
 
+void WorldView::drawGroundItems() const {
+    for (const auto& g : loot_->ground()) {
+        if (!loot_->landed(g, elapsedMs_)) continue;
+        SDL_FRect src, at;
+        const Texture* t = groundItemPicture(g, src, at);
+        if (!t) continue;
+        at.x = float(std::floor(at.x - camX_ + screenW_ / 2.0)), at.y = float(std::floor(at.y - camY_ + screenH_ / 2.0));
+        SDL_RenderTexture(ren_, t->tex, &src, &at);
+    }
+}
+
 void WorldView::drawTargetBar() const {
     // A small hit-point bar over the enemy being fought (a rebuild stand-in
     // for the HUD's enemy bar, GCtrlEnemyHealthBar).
@@ -206,51 +403,110 @@ void WorldView::drawTargetBar() const {
     SDL_RenderFillRect(ren_, &bar);
 }
 
-double WorldView::playerDepth() const {
-    // Large gizmos (the umbilical pit, the generator) span many cells, so one
-    // depth per gizmo puts a player standing beside them on the wrong side.
-    // Against a nearby gizmo's footprint box the player is in front when it
-    // is past the box along x or y, behind when it is short of it; otherwise
-    // the depths decide. (A rebuild rule: the original draws with Direct3D,
-    // not traced yet.)
-    const double px = player_->x(), py = player_->y(), own = px + py;
-    double after = -1e9, before = 1e9;
-    for (const Object& o : objects_) {
-        if (!o.gizmo || std::fabs(o.depth - own) > 12) continue;
-        const bool front = px >= o.maxX || py >= o.maxY, behind = px <= o.minX || py <= o.minY;
-        if (front && !behind) after = std::max(after, o.depth);
-        if (behind && !front) before = std::min(before, o.depth);
-    }
-    double depth = own;
-    if (depth <= after) depth = after + 1e-6;
-    if (depth >= before && before > after) depth = before - 1e-6;
-    return depth;
+WorldView::Sprite WorldView::agentSprite(const chk::AgentRecord* a) const {
+    auto place = [](const auto& pose, world::ScreenPoint p) {
+        return Sprite{pose.image, int(std::floor(p.x - pose.anchorX)), int(std::floor(p.y - pose.anchorY))};
+    };
+    if (a) return place(foes_->pose(*a, elapsedMs_), world::toScreen(a->x, a->y));
+    return place(player_->pose(elapsedMs_), world::toScreen(player_->x(), player_->y()));
+}
+
+int WorldView::compare(const Object& o, const Sprite& s, double depth) const {
+    // An agent's picture stands upright at its map position, so all of it
+    // is at the depth of its feet (Level::DepthMap compares map x + y).
+    const world::Level::DepthMap& m = *o.shape;
+    const int x0 = std::max(o.left, s.left), x1 = std::min(o.left + m.width, s.left + s.image->width);
+    const int y0 = std::max(o.top, s.top), y1 = std::min(o.top + m.height, s.top + s.image->height);
+    if (x0 >= x1 || y0 >= y1) return 0;
+    const double base = o.gizmo->x + o.gizmo->y;
+    long front = 0, back = 0;
+    for (int y = y0; y < y1; y += 2)
+        for (int x = x0; x < x1; x += 2) {
+            if ((s.image->pixels[size_t(y - s.top) * size_t(s.image->width) + size_t(x - s.left)] >> 24) < 0x40)
+                continue;
+            const float d = m.at(x - o.left, y - o.top);
+            if (std::isnan(d)) continue;
+            if (base + d > depth + 1e-3) ++front;
+            else if (base + d < depth - 1e-3) ++back;
+        }
+    return front > back ? 1 : back > front ? -1 : 0;
 }
 
 void WorldView::draw() const {
     const auto& m = level_->map();
-    // Floors, then walls, edges, gizmos and agents back to front (rebuild order; the
-    // original draws through Direct3D with depth, see docs/formats/level.md).
+    // Floors first. Then walls by diagonal (x + y), back to front, and the
+    // gizmos and agents among them (rebuild order; the original draws
+    // through Direct3D with a depth buffer, see docs/formats/level.md).
     for (int x = 0; x < m.width; ++x)
         for (int y = 0; y < m.height; ++y) drawLayer(x, y, 0);
-    auto drawObject = [&](const Object& o) { o.gizmo ? drawGizmo(*o.gizmo) : drawAgent(*o.agent); };
-    // The player sorts with the objects by the same depth (x + y).
-    const double playerDepth = this->playerDepth();
-    bool playerDrawn = false;
-    auto drawUpTo = [&](double depth, size_t& next) {
-        for (; next < objects_.size() && objects_[next].depth < depth; ++next) {
-            if (!playerDrawn && playerDepth < objects_[next].depth) drawPlayer(), playerDrawn = true;
-            drawObject(objects_[next]);
+    drawGroundItems();  // they lie on the floor, under the walls and everything standing
+
+    // The order of the pictures: a picture that another hides where they
+    // overlap draws first; otherwise the smaller depth key first. Node n =
+    // objects_.size() is the player.
+    const size_t n = objects_.size();
+    std::vector<std::vector<size_t>> edges(n + 1);  // edges[i]: drawn after i
+    std::vector<int> waiting(n + 1, 0);
+    auto edge = [&](size_t first, size_t then) { edges[first].push_back(then), ++waiting[then]; };
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j : behind_[i]) edge(j, i);
+    std::vector<size_t> gizmos;
+    for (size_t i = 0; i < n; ++i)
+        if (objects_[i].gizmo && !objects_[i].shape->depth.empty()) gizmos.push_back(i);
+    auto placeAgent = [&](size_t node, const chk::AgentRecord* a, double depth) {
+        const Sprite s = agentSprite(a);
+        if (!s.image) return;
+        for (size_t gi : gizmos) {
+            const int c = compare(objects_[gi], s, depth);
+            if (c > 0) edge(node, gi);
+            else if (c < 0) edge(gi, node);
         }
-        if (!playerDrawn && playerDepth < depth) drawPlayer(), playerDrawn = true;
     };
-    size_t next = 0;
-    for (int d = 0; d < m.width + m.height; ++d) {
-        for (int x = std::max(0, d - m.height + 1); x < m.width && x <= d; ++x) drawLayer(x, d - x, 1);
-        drawUpTo(d + 1, next);
+    for (size_t i = 0; i < n; ++i)
+        if (objects_[i].agent) placeAgent(i, objects_[i].agent, objects_[i].depth);
+    const double playerDepth = player_->x() + player_->y();
+    placeAgent(n, nullptr, playerDepth);
+
+    auto depthOf = [&](size_t i) { return i == n ? playerDepth : objects_[i].depth; };
+    auto later = [&](size_t a, size_t b) { return depthOf(a) > depthOf(b); };
+    std::priority_queue<size_t, std::vector<size_t>, decltype(later)> ready(later);
+    for (size_t i = 0; i <= n; ++i)
+        if (!waiting[i]) ready.push(i);
+    std::vector<bool> done(n + 1, false);
+    order_.clear();
+    while (order_.size() <= n) {
+        size_t i = n + 1;
+        while (!ready.empty() && done[ready.top()]) ready.pop();
+        if (!ready.empty()) {
+            i = ready.top();
+            ready.pop();
+        } else {
+            // A cycle (three pictures each hiding the next): take the
+            // nearest-to-the-back one left.
+            for (size_t k = 0; k <= n; ++k)
+                if (!done[k] && (i > n || depthOf(k) < depthOf(i))) i = k;
+        }
+        done[i] = true;
+        order_.push_back(i);
+        for (size_t j : edges[i])
+            if (--waiting[j] == 0 && !done[j]) ready.push(j);
     }
-    drawUpTo(1e9, next);
+
+    int diagonal = 0;
+    auto wallsUpTo = [&](double depth) {
+        for (; diagonal < m.width + m.height && diagonal <= depth; ++diagonal)
+            for (int x = std::max(0, diagonal - m.height + 1); x < m.width && x <= diagonal; ++x)
+                drawLayer(x, diagonal - x, 1);
+    };
+    for (size_t i : order_) {
+        wallsUpTo(depthOf(i));
+        if (i == n) drawPlayer();
+        else if (objects_[i].gizmo) drawGizmo(*objects_[i].gizmo);
+        else drawAgent(*objects_[i].agent);
+    }
+    wallsUpTo(1e9);
     drawTargetBar();
+    cutscene_->draw();
 }
 
 }  // namespace harbinger::app

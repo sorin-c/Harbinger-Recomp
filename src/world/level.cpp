@@ -82,9 +82,18 @@ Level::Level(Vfs& vfs, const Ini& ini, uint16_t id) : vfs_(vfs) {
     chk::parseRest(map_, chkData);
 
     const auto power = startingPower(map_, [&](const chk::GizmoRecord& g) -> const giz::Template& { return gizmoTemplate(g); });
-    for (const auto& g : map_.gizmos) {
+    for (size_t i = 0; i < map_.gizmos.size(); ++i) {
+        const chk::GizmoRecord& g = map_.gizmos[i];
         const auto it = power.find(g.instance);
-        gizmoPlays_[g.instance] = startingPlay(gizmoTemplate(g), g, it == power.end() ? 0 : it->second);
+        GizmoRuntime& rt = gizmoRuntime_[g.instance];
+        rt.state = startingState(gizmoTemplate(g), g, it == power.end() ? 0 : it->second);
+        rt.play = playFor(gizmoTemplate(g), rt.state);
+        gizmoIndex_[g.instance] = i;
+    }
+    for (const auto& g : map_.gizmos) {
+        GizmoRuntime& rt = gizmoRuntime_[g.instance];
+        rt.mask = gizmoMask(g);
+        for (const auto& f : gizmoTemplate(g).frames) rt.maskVaries |= f.mask != gizmoTemplate(g).frames[0].mask;
     }
 }
 
@@ -173,15 +182,207 @@ double Level::gizmoDepth(const chk::GizmoRecord& g) const {
     return g.x + g.y + front / 2.0;
 }
 
+const Level::DepthMap& Level::gizmoShape(const chk::GizmoRecord& g) {
+    const giz::Template& t = gizmoTemplate(g);
+    auto [it, fresh] = gizmoShapes_.try_emplace(&t);
+    DepthMap& m = it->second;
+    if (!fresh) return m;
+    const render::RgbaImage* img = t.frames.empty() ? nullptr : gizmoImage(t.frames[0]);
+    if (!img || t.masks.empty()) return m;
+    m.width = img->width, m.height = img->height;
+    m.depth.assign(size_t(m.width) * size_t(m.height), NAN);
+    // A piece belongs to one of the first mask's cells with `a` bit 1 (the
+    // list FUN_004b5ca0 files them in); its vertices count in half cells from
+    // that cell's corner, map (x + dx / 2, y + (dy + 1) / 2). FUN_004b25e0
+    // projects them onto the picture, whose pixel (64, height - (rows + 1) * 32)
+    // is the gizmo's position (as FUN_004b3690 places it).
+    std::vector<const giz::MaskCell*> cells;
+    for (const auto& c : t.masks[0].cells)
+        if (c.a & 2) cells.push_back(&c);
+    const double ox = kTileW / 2.0, oy = m.height - (t.masks[0].rows + 1) * (kTileH / 2.0);
+    struct P {
+        double x, y, d;
+    };
+    for (const giz::MeshPiece& piece : t.mesh) {
+        if (piece.cell >= cells.size()) continue;
+        const giz::MaskCell& c = *cells[piece.cell];
+        auto project = [&](const giz::MeshVertex& v) {
+            const double rx = (v.x + c.dx) / 2.0, ry = (v.y + c.dy + 1) / 2.0, z = v.z / 2.0;
+            return P{ox + (rx - ry) * (kTileW / 2.0), oy + (rx + ry) * (kTileH / 2.0) - z * kTileH, rx + ry};
+        };
+        for (const giz::MeshTriangle& tri : piece.triangles) {
+            if (tri.a >= piece.vertices.size() || tri.b >= piece.vertices.size() || tri.c >= piece.vertices.size())
+                continue;
+            const P a = project(piece.vertices[tri.a]), b = project(piece.vertices[tri.b]),
+                    c2 = project(piece.vertices[tri.c]);
+            const double area = (b.x - a.x) * (c2.y - a.y) - (b.y - a.y) * (c2.x - a.x);
+            if (std::fabs(area) < 1e-9) continue;
+            const int x0 = std::max(0, int(std::floor(std::min({a.x, b.x, c2.x})))),
+                      x1 = std::min(m.width - 1, int(std::ceil(std::max({a.x, b.x, c2.x})))),
+                      y0 = std::max(0, int(std::floor(std::min({a.y, b.y, c2.y})))),
+                      y1 = std::min(m.height - 1, int(std::ceil(std::max({a.y, b.y, c2.y}))));
+            for (int y = y0; y <= y1; ++y)
+                for (int x = x0; x <= x1; ++x) {
+                    // Pixel centres; edges count as inside so neighbouring
+                    // triangles leave no gaps.
+                    const double px = x + 0.5, py = y + 0.5;
+                    const double w0 = ((b.x - px) * (c2.y - py) - (b.y - py) * (c2.x - px)) / area,
+                                 w1 = ((c2.x - px) * (a.y - py) - (c2.y - py) * (a.x - px)) / area, w2 = 1 - w0 - w1;
+                    if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue;
+                    const float d = float(w0 * a.d + w1 * b.d + w2 * c2.d);
+                    float& slot = m.depth[size_t(y) * size_t(m.width) + size_t(x)];
+                    if (std::isnan(slot) || d > slot) slot = d;  // the nearer surface wins
+                }
+        }
+    }
+    return m;
+}
+
+int Level::gizmoInFront(const chk::GizmoRecord& a, const chk::GizmoRecord& b) {
+    const DepthMap &p = gizmoShape(a), &q = gizmoShape(b);
+    if (p.depth.empty() || q.depth.empty()) return 0;
+    const ScreenPoint pt = gizmoTopLeft(a), qt = gizmoTopLeft(b);
+    const int pl = int(std::floor(pt.x)), ptop = int(std::floor(pt.y));
+    const int ql = int(std::floor(qt.x)), qtop = int(std::floor(qt.y));
+    const int x0 = std::max(pl, ql), x1 = std::min(pl + p.width, ql + q.width);
+    const int y0 = std::max(ptop, qtop), y1 = std::min(ptop + p.height, qtop + q.height);
+    const double pd = a.x + a.y, qd = b.x + b.y;
+    long aFront = 0, bFront = 0;
+    for (int y = y0; y < y1; y += 2)  // every other pixel is plenty
+        for (int x = x0; x < x1; x += 2) {
+            const float da = p.at(x - pl, y - ptop), db = q.at(x - ql, y - qtop);
+            if (std::isnan(da) || std::isnan(db)) continue;
+            const double d = (pd + da) - (qd + db);
+            if (d > 1e-3) ++aFront;
+            else if (d < -1e-3) ++bFront;
+        }
+    return aFront > bFront ? 1 : bFront > aFront ? -1 : 0;
+}
+
+const render::RgbaImage* Level::gizmoFrameImage(const chk::GizmoRecord& g, size_t i) {
+    const giz::Template& t = gizmoTemplate(g);
+    if (i >= t.frames.size()) return nullptr;
+    auto& slot = gizmoFrames_[{&t, i}];
+    if (slot) return slot.get();
+    const render::RgbaImage* img = gizmoImage(t.frames[i]);
+    if (!img) return nullptr;
+    const DepthMap& shape = gizmoShape(g);
+    slot = std::make_unique<render::RgbaImage>(*img);
+    for (int y = 0; y < img->height; ++y)
+        for (int x = 0; x < img->width; ++x)
+            if (std::isnan(shape.at(x + t.frames[i].x, y + t.frames[i].y)))
+                slot->pixels[size_t(y) * size_t(img->width) + size_t(x)] = 0;
+    return slot.get();
+}
+
 bool Level::gizmoVisible(const chk::GizmoRecord& g) const {
     const giz::Template& t = gizmoTemplate(g);
     return map_.keeps(g) && !t.frames.empty() && t.cls != giz::UmbilicalShell;
 }
 
-const GizmoPlay& Level::gizmoPlay(const chk::GizmoRecord& g) const { return gizmoPlays_.at(g.instance); }
-
 size_t Level::gizmoFrame(const chk::GizmoRecord& g, uint64_t ms) const {
-    return playFrame(gizmoTemplate(g), gizmoPlay(g), ms, g.instance);
+    const GizmoRuntime& rt = gizmoRuntime_.at(g.instance);
+    return playFrame(gizmoTemplate(g), rt.play, ms > rt.startMs ? ms - rt.startMs : 0, g.instance);
+}
+
+size_t Level::gizmoMask(const chk::GizmoRecord& g) const {
+    const giz::Template& t = gizmoTemplate(g);
+    if (t.frames.empty()) return 0;
+    const size_t f = std::min(gizmoFrame(g, nowMs_), t.frames.size() - 1);
+    return t.frames[f].mask < t.masks.size() ? t.frames[f].mask : 0;
+}
+
+const chk::GizmoRecord* Level::gizmoByInstance(uint16_t instance) const {
+    const auto it = gizmoIndex_.find(instance);
+    return it == gizmoIndex_.end() ? nullptr : &map_.gizmos[it->second];
+}
+
+Level::MapPoint Level::gizmoUsePoint(const chk::GizmoRecord& g) {
+    const giz::Template& t = gizmoTemplate(g);
+    if (t.offset[0] < 0 || t.offset[1] < 0 || t.frames.empty()) return {g.x + 0.5, g.y + 0.5};
+    // FUN_004b3690: X = (px - 64) / 128, Y = (py - height + (rows + 1) * 32) / 64,
+    // then x = X + Y, y = Y - X from the gizmo's cell.
+    const render::RgbaImage* img = gizmoImage(t.frames[0]);
+    const int rows = t.masks.empty() ? 0 : t.masks[0].rows;
+    const double X = (t.offset[0] - 64) / 128.0;
+    const double Y = (t.offset[1] - (img ? img->height : 0) + (rows + 1) * 32) / 64.0;
+    return {g.x + X + Y, g.y + Y - X};
+}
+
+void Level::setGizmoState(const chk::GizmoRecord& g, GizmoRuntime& rt, uint64_t nowMs) {
+    const giz::Template& t = gizmoTemplate(g);
+    rt.play = playFor(t, rt.state);
+    rt.startMs = nowMs;
+    const uint64_t length = playLength(t, rt.play);
+    rt.endMs = length ? nowMs + length : 0;
+}
+
+bool Level::useGizmo(const chk::GizmoRecord& g, uint64_t nowMs,
+                     const std::function<bool(const chk::GizmoRecord&)>& occupied) {
+    const giz::Template& t = gizmoTemplate(g);
+    GizmoRuntime& rt = gizmoRuntime_.at(g.instance);
+    if (!activate(t, rt.state)) return false;
+    setGizmoState(g, rt, nowMs);
+    if (t.cls == giz::Console || t.cls == giz::CompuConsole) {
+        // FUN_004bdaf0: every attached gizmo takes its turn; the console
+        // goes back to idle when they have settled (GConsolePlug_v0).
+        rt.waitingOn.clear();
+        for (const auto& [id, list] : map_.attachments) {
+            if (id != g.instance) continue;
+            for (uint16_t other : list) {
+                const chk::GizmoRecord* o = gizmoByInstance(other);
+                if (!o) continue;
+                GizmoRuntime& ort = gizmoRuntime_.at(other);
+                if (!toggle(gizmoTemplate(*o), ort.state, occupied(*o))) continue;
+                setGizmoState(*o, ort, nowMs);
+                rt.waitingOn.push_back(other);
+            }
+        }
+        // Nothing to wait for: one pass of the activation, then idle (a
+        // rebuild choice; the original waits on its attachments).
+        if (rt.waitingOn.empty()) {
+            const giz::Template& ct = gizmoTemplate(g);
+            uint64_t pass = 0;
+            for (size_t i = rt.play.first; i <= rt.play.last && i < ct.frames.size(); ++i) pass += ct.frames[i].durationMs;
+            rt.endMs = nowMs + pass;
+        }
+    }
+    return true;
+}
+
+std::vector<const chk::GizmoRecord*> Level::update(uint64_t nowMs) {
+    nowMs_ = nowMs;
+    // Settle the moving gizmos whose frames have played.
+    for (auto& [instance, rt] : gizmoRuntime_) {
+        if (!rt.endMs || nowMs < rt.endMs) continue;
+        const chk::GizmoRecord& g = *gizmoByInstance(instance);
+        const giz::Template& t = gizmoTemplate(g);
+        if ((t.cls == giz::Console || t.cls == giz::CompuConsole) && !rt.waitingOn.empty()) continue;
+        if (finish(t, rt.state)) setGizmoState(g, rt, rt.endMs);
+        else rt.endMs = 0;
+    }
+    // Consoles whose attached gizmos have all settled go back to idle.
+    for (auto& [instance, rt] : gizmoRuntime_) {
+        if (rt.waitingOn.empty()) continue;
+        rt.waitingOn.erase(std::remove_if(rt.waitingOn.begin(), rt.waitingOn.end(),
+                                          [&](uint16_t o) { return gizmoRuntime_.at(o).endMs == 0; }),
+                           rt.waitingOn.end());
+        if (rt.waitingOn.empty()) {
+            const chk::GizmoRecord& g = *gizmoByInstance(instance);
+            if (finish(gizmoTemplate(g), rt.state)) setGizmoState(g, rt, nowMs);
+        }
+    }
+    std::vector<const chk::GizmoRecord*> changed;
+    for (const auto& g : map_.gizmos) {
+        GizmoRuntime& rt = gizmoRuntime_.at(g.instance);
+        if (!rt.maskVaries) continue;
+        const size_t mask = gizmoMask(g);
+        if (mask != rt.mask) {
+            rt.mask = mask;
+            changed.push_back(&g);
+        }
+    }
+    return changed;
 }
 
 ScreenPoint Level::gizmoFrameTopLeft(const chk::GizmoRecord& g, size_t i) {
@@ -212,10 +413,9 @@ std::vector<size_t> Level::gizmoLayers(const chk::GizmoRecord& g, size_t f) {
 }
 
 void Level::drawGizmo(render::RgbaImage& dst, const chk::GizmoRecord& g, int originX, int originY, uint64_t ms) {
-    const giz::Template& t = gizmoTemplate(g);
     if (!gizmoVisible(g)) return;
     for (const size_t i : gizmoLayers(g, gizmoFrame(g, ms))) {
-        const render::RgbaImage* img = gizmoImage(t.frames[i]);
+        const render::RgbaImage* img = gizmoFrameImage(g, i);
         if (!img) continue;
         const ScreenPoint tl = gizmoFrameTopLeft(g, i);
         const int left = int(std::lround(tl.x)) - originX, top = int(std::lround(tl.y)) - originY;

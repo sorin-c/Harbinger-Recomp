@@ -99,65 +99,117 @@ std::map<uint16_t, int> startingPower(const chk::Level& level, const TemplateOf&
     return power;
 }
 
-GizmoPlay startingPlay(const giz::Template& t, const chk::GizmoRecord& g, int power) {
+GizmoState startingState(const giz::Template& t, const chk::GizmoRecord& g, int power) {
+    const auto& d = g.extra;
+    GizmoState st;
+    st.power = power;
+    switch (t.cls) {
+    case giz::Looped:
+    case giz::Looped2:
+        // GLoopedGizmoPlug_v22: u32 phase (plug+0x34), u16 mode (plug+0x7c).
+        st.phaseMs = u32At(d, 0);
+        st.state = u16At(d, 4);
+        break;
+    case giz::Bridge:
+    case giz::TwoWay:
+        // GBridgePlug_v22: u16 state; anything but 0 shows the last frame,
+        // and GBridgePlug_v21 saves the settled states as 0 or 3.
+        st.state = u16At(d, 0) == 0 ? 0 : 3;
+        break;
+    case giz::Chest:
+    case giz::Barrel:
+    case giz::TrashPile:
+        // GBarrelPlug_v22: label, six bytes, then u16 state.
+        st.state = d.size() >= 2 ? u16At(d, d.size() - 2) : 0;
+        break;
+    case giz::Console:
+    case giz::CompuConsole:
+        // GConsolePlug_v22: u16 state, u16, u16 power needed (GIPowerable,
+        // plug+0xde), label, ...
+        st.state = u16At(d, 0);
+        st.needed = int16_t(u16At(d, 4));
+        break;
+    case giz::Breaker:
+        // GBreakerPlug_v22: u16 state, u16 power needed.
+        st.state = u16At(d, 0);
+        st.needed = int16_t(u16At(d, 2));
+        break;
+    case giz::Incubator:
+    case giz::RandomPause:
+        // GIncubatorPlug_v22: u16 power needed (plug+0xc6).
+        st.needed = int16_t(u16At(d, 0));
+        break;
+    default:
+        break;
+    }
+    return st;
+}
+
+GizmoPlay playFor(const giz::Template& t, const GizmoState& st) {
     const size_t n = t.frames.size();
     if (n == 0) return hold(0);
     const size_t last = n - 1;
-    const auto& d = g.extra;
+    const uint16_t state = st.state;
     switch (t.cls) {
     case giz::Looped:
     case giz::Looped2: {
-        // GLoopedGizmoPlug_v22: u32 phase (plug+0x34), u16 mode (plug+0x7c).
         // GLoopedGizmoPlug_v17: mode 3 loops from the BeginIdle frame to the
         // end, the other modes over the frames before it (all of them when
         // there is none). Looped2 also runs backwards at times
         // (GLoopedGizmoPlug_v29); the rebuild plays it forwards.
         const size_t start = t.loopStart();
         size_t first = 0, end = last;
-        if (u16At(d, 4) == 3) first = start;
+        if (state == 3) first = start;
         else if (start > 0) end = start - 1;
         GizmoPlay p = range(GizmoPlay::Loop, first, end);
-        p.phaseMs = u32At(d, 0);
+        p.phaseMs = st.phaseMs;
         return p;
     }
     case giz::Bridge:
-    case giz::TwoWay:
-        // GBridgePlug_v22: u16 state; 0 shows the first frame, anything else
-        // the last (3 when saved, GBridgePlug_v21). GBridgePlug_v17/v28: it
-        // only moves while opening or closing.
-        return hold(u16At(d, 0) == 0 ? 0 : last);
+    case giz::TwoWay: {
+        // GBridgePlug_v17: 0 shows the first frame, 3 the last; 2 plays all
+        // the frames forwards and 1 backwards (GBridgePlug_v1 sets the
+        // reverse flag, plug+0x64, for 1). Doors: frame 0 is open.
+        if (state == 0) return hold(0);
+        if (state == 3) return hold(last);
+        GizmoPlay p = range(GizmoPlay::Once, 0, last);
+        p.reverse = state == 1;
+        return p;
+    }
     case giz::Chest:
     case giz::Barrel:
     case giz::TrashPile: {
-        // GBarrelPlug_v22: label, six bytes, then u16 state. GBarrelPlug_v17:
-        // states 0 and 4 loop the frames before BeginOpen (GBarrelPlug_v29
-        // goes back to frame 0), 2 plays the opening, the rest show the last.
-        const uint16_t state = d.size() >= 2 ? u16At(d, d.size() - 2) : 0;
-        const size_t open = firstTag(t, BeginOpen);  // FUN_00444710
+        // GBarrelPlug_v17: states 0 and 4 loop the frames before BeginOpen
+        // (GBarrelPlug_v29 goes back to frame 0), 2 plays the opening from
+        // BeginOpen (FUN_00444710) to the end, the rest show the last frame.
+        const size_t open = firstTag(t, BeginOpen);
         if (state == 0 || state == 4) return open == npos || open == 0 ? hold(0) : range(GizmoPlay::Loop, 0, open - 1);
+        if (state == 2) return range(GizmoPlay::Once, open == npos ? 0 : open, last);
         return hold(last);
     }
     case giz::Console:
     case giz::CompuConsole: {
-        // GConsolePlug_v22: u16 state, u16, u16 power needed (GIPowerable,
-        // plug+0xde), label, ... GConsolePlug_v17 / GCompuConsolePlug_v17:
-        // without enough power the console shows its last frame; otherwise
-        // it idles over the frames before BeginActivate (0x453800), forth
-        // and back for a Console (GConsolePlug_v29), looping for a
-        // CompuConsole (GCompuConsolePlug_v29).
-        const uint16_t state = u16At(d, 0);
-        const int needed = int16_t(u16At(d, 4));
+        // GConsolePlug_v17 / GCompuConsolePlug_v17: without enough power the
+        // console shows its last frame; 2 (activated) plays from
+        // BeginActivate (0x453800) to the last frame but one (but two for a
+        // CompuConsole), 4 shows the BeginActivate frame; otherwise it idles
+        // over the frames before BeginActivate, forth and back for a Console
+        // (GConsolePlug_v29), looping for a CompuConsole
+        // (GCompuConsolePlug_v29).
         const size_t act = firstTag(t, BeginActivate) == npos ? 0 : firstTag(t, BeginActivate);
-        if (state != 2 && power < needed) return hold(last);
-        if (state == 4 || state == 2) return hold(act);
-        if (t.cls == giz::CompuConsole && state == 5) return hold(n >= 2 ? n - 2 : 0);
-        return act == 0 ? hold(0) : range(t.cls == giz::Console ? GizmoPlay::PingPong : GizmoPlay::Loop, 0, act - 1);
+        const bool compu = t.cls == giz::CompuConsole;
+        if (state != 2 && st.power < st.needed) return hold(last);
+        if (state == 2) {
+            const size_t end = n >= (compu ? 3u : 2u) ? n - (compu ? 3 : 2) : 0;
+            return range(compu ? GizmoPlay::Once : GizmoPlay::PingPong, act, std::max(act, end));
+        }
+        if (state == 4) return hold(act);
+        if (compu && state == 5) return hold(n >= 2 ? n - 2 : 0);
+        return act == 0 ? hold(0) : range(compu ? GizmoPlay::Loop : GizmoPlay::PingPong, 0, act - 1);
     }
     case giz::Breaker: {
-        // GBreakerPlug_v22: u16 state, u16 power needed. GBreakerPlug_v17:
-        // 0 (off) shows the first frame; 3 and 5 (on) loop from after EndOpen
-        // to before BeginClose.
-        const uint16_t state = u16At(d, 0);
+        // GBreakerPlug_v17: 0 (off) shows the first frame; 3 and 5 (on) loop
+        // from after EndOpen to before BeginClose.
         size_t on, close;
         breakerFrames(t, on, close);
         if (state == 3 || state == 5) return close == 0 ? hold(0) : range(GizmoPlay::Loop, on, close - 1);
@@ -165,14 +217,12 @@ GizmoPlay startingPlay(const giz::Template& t, const chk::GizmoRecord& g, int po
     }
     case giz::Incubator:
     case giz::RandomPause: {
-        // GIncubatorPlug_v22: u16 power needed (plug+0xc6). FUN_004f9670:
-        // each BeginIdle frame starts a sequence, and the gizmo rests on the
-        // frame before the first. GIncubatorPlug_v28/v29: with enough power it
-        // waits (template u32 min, u32 max, in 10 ms), plays a random
-        // sequence and rests again; without it, it shows frame 0.
-        const int needed = int16_t(u16At(d, 0));
+        // FUN_004f9670: each BeginIdle frame starts a sequence, and the gizmo
+        // rests on the frame before the first. GIncubatorPlug_v28/v29: with
+        // enough power it waits (template u32 min, u32 max, in 10 ms), plays
+        // a random sequence and rests again; without it, it shows frame 0.
         const size_t first = firstTag(t, BeginIdle);
-        if (first == npos || first == 0 || power < needed) return hold(0);
+        if (first == npos || first == 0 || st.power < st.needed) return hold(0);
         GizmoPlay p;
         p.mode = GizmoPlay::Pauses;
         p.first = p.last = first - 1;
@@ -190,6 +240,87 @@ GizmoPlay startingPlay(const giz::Template& t, const chk::GizmoRecord& g, int po
     }
 }
 
+GizmoPlay startingPlay(const giz::Template& t, const chk::GizmoRecord& g, int power) {
+    return playFor(t, startingState(t, g, power));
+}
+
+bool usable(const giz::Template& t) {
+    switch (t.cls) {
+    case giz::Console: case giz::CompuConsole: case giz::Chest: case giz::Barrel: case giz::TrashPile: return true;
+    default: return false;
+    }
+}
+
+bool activate(const giz::Template& t, GizmoState& st) {
+    switch (t.cls) {
+    case giz::Console:
+    case giz::CompuConsole:
+        // GConsolePlug_v1 (GIActivatable slot 1): with enough power, from
+        // state 0 or 4 to 2; then FUN_004bdaf0 has every attached gizmo
+        // (GIAttacher) take its turn.
+        if (st.power < st.needed || (st.state != 0 && st.state != 4)) return false;
+        st.state = 2;
+        return true;
+    case giz::Chest:
+    case giz::Barrel:
+    case giz::TrashPile:
+        // GBarrelPlug_v1: from state 0 (or 4) to 2, the opening; its end
+        // (GBarrelPlug_v29) sets 3 and drops the contents (FUN_004d8dd0).
+        if (st.state != 0 && st.state != 4) return false;
+        st.state = 2;
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool toggle(const giz::Template& t, GizmoState& st, bool occupied) {
+    if (t.cls != giz::Bridge && t.cls != giz::TwoWay) return false;
+    // GBridgePlug_v1 (GIAttachable slot 1): a settled gizmo starts moving
+    // the other way: 0 to 2 unless an agent stands on it (FUN_004a01e0),
+    // 3 to 1. One already moving ignores it.
+    if (st.state == 0 && !occupied) {
+        st.state = 2;
+        return true;
+    }
+    if (st.state == 3) {
+        st.state = 1;
+        return true;
+    }
+    return false;
+}
+
+bool finish(const giz::Template& t, GizmoState& st) {
+    switch (t.cls) {
+    case giz::Bridge:
+    case giz::TwoWay:
+        // GBridgePlug_v29: 2 ends on 3, anything else on 0; FUN_004bd680
+        // tells whoever attached it.
+        if (st.state != 1 && st.state != 2) return false;
+        st.state = st.state == 2 ? 3 : 0;
+        return true;
+    case giz::Chest:
+    case giz::Barrel:
+    case giz::TrashPile:
+        if (st.state != 2) return false;
+        st.state = 3;
+        return true;
+    case giz::Console:
+    case giz::CompuConsole:
+        // GConsolePlug_v0 (GIAttacher slot 0, called back when an attached
+        // gizmo has finished): 2 goes back to 0.
+        if (st.state != 2) return false;
+        st.state = 0;
+        return true;
+    default:
+        return false;
+    }
+}
+
+uint64_t playLength(const giz::Template& t, const GizmoPlay& play) {
+    return play.mode == GizmoPlay::Once ? duration(t, play.first, play.last) : 0;
+}
+
 size_t playFrame(const giz::Template& t, const GizmoPlay& play, uint64_t ms, uint32_t seed) {
     if (t.frames.empty()) return 0;
     switch (play.mode) {
@@ -197,6 +328,19 @@ size_t playFrame(const giz::Template& t, const GizmoPlay& play, uint64_t ms, uin
         return std::min(play.first, t.frames.size() - 1);
     case GizmoPlay::Loop:
         return t.frameAt(ms + play.phaseMs, play.first, play.last);
+    case GizmoPlay::Once: {
+        // Played once (forwards, or backwards when `reverse`), then held on
+        // the end it reached.
+        const uint64_t total = duration(t, play.first, play.last);
+        if (ms >= total) return play.reverse ? play.first : play.last;
+        if (!play.reverse) return t.frameAt(ms, play.first, play.last);
+        uint64_t sum = 0;
+        for (size_t i = play.last + 1; i-- > play.first;) {
+            sum += t.frames[i].durationMs;
+            if (ms <= sum) return i;
+        }
+        return play.first;
+    }
     case GizmoPlay::PingPong: {
         const uint64_t one = duration(t, play.first, play.last);
         if (one == 0) return play.first;

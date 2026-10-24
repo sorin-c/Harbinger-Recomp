@@ -45,50 +45,73 @@ WalkMap::WalkMap(int width, int height) : w_(width), h_(height), cells_(size_t(w
 WalkMap::WalkMap(const Level& level) : WalkMap(level.map().width * 2, level.map().height * 2) {
     const auto& m = level.map();
     for (int x = 0; x < m.width; ++x)
-        for (int y = 0; y < m.height; ++y) {
-            const chk::Cell& c = m.at(x, y);
-            if (c.count == 0) {  // no tile: nothing to stand on
-                for (int k = 0; k < 4; ++k) setWalkable(2 * x + kSubDx[k], 2 * y + kSubDy[k], false);
-                continue;
-            }
-            // FUN_00448080 hands FUN_00447470 the top layer's brush and group.
-            const chk::Layer& top = c.layers[c.count - 1];
-            const brs::Brush* b = level.brush(top.brush);
-            if (!b) {
-                for (int k = 0; k < 4; ++k) setWalkable(2 * x + kSubDx[k], 2 * y + kSubDy[k], false);
-                continue;
-            }
-            // FUN_0043fac0: the group the brush registered the tile under,
-            // 0xe when it has no such tile.
-            const uint16_t group = brs::find(*b, top.tile) ? uint16_t(top.tile >> 12) : uint16_t(0xe);
-            paintCell(x, y, *b, group);
-        }
-    // FUN_0044a7c0 for each placed gizmo: its mask's half cells, from the
-    // half cell at the cell's left corner (2x, 2y + 1). FUN_004b5ca0 files
-    // cells of kind 0xd in another list, which this pass does not visit, and
-    // swaps the last two words: the file's `a` is the in-memory word 4 (bit 0
-    // set = blocked) and `b` word 3 (the height).
-    for (const auto& g : m.gizmos) {
-        if (!m.keeps(g)) continue;
-        const giz::Template& t = level.gizmoTemplate(g);
-        if (t.masks.empty() || t.frames.empty()) continue;
-        // The mask of the frame the gizmo starts its state on: a shut door
-        // blocks, an open one does not. Doors that open later will need the
-        // grid redone, as the original does on each frame's mask change.
-        const size_t f = std::min(level.gizmoFrame(g, 0), t.frames.size() - 1);
-        const size_t maskIndex = t.frames[f].mask < t.masks.size() ? t.frames[f].mask : 0;
-        for (const auto& mc : t.masks[maskIndex].cells) {
-            if (mc.kind == 0xd) continue;
-            const int sx = 2 * g.x + mc.dx, sy = 2 * g.y + 1 + mc.dy;
-            if (!inside(sx, sy)) continue;
-            setWalkable(sx, sy, !(mc.a & 1));
-            // FUN_00447740(.., height, 1): the height, unless it is 0 on a
-            // half cell already marked -1.
-            HalfCell& hc = at(sx, sy);
-            if (mc.b != 0 || hc.height != -1) hc.height = int8_t(mc.b);
-        }
-    }
+        for (int y = 0; y < m.height; ++y) paintFloor(level, x, y);
+    // FUN_0044a7c0 for each placed gizmo: its mask's half cells.
+    for (const auto& g : m.gizmos) paintGizmo(level, g, Box{0, 0, w_ - 1, h_ - 1});
     computeClearance();
+}
+
+void WalkMap::paintFloor(const Level& level, int x, int y) {
+    const chk::Cell& c = level.map().at(x, y);
+    if (c.count == 0) {  // no tile: nothing to stand on
+        for (int k = 0; k < 4; ++k) setWalkable(2 * x + kSubDx[k], 2 * y + kSubDy[k], false);
+        return;
+    }
+    // FUN_00448080 hands FUN_00447470 the top layer's brush and group.
+    const chk::Layer& top = c.layers[c.count - 1];
+    const brs::Brush* b = level.brush(top.brush);
+    if (!b) {
+        for (int k = 0; k < 4; ++k) setWalkable(2 * x + kSubDx[k], 2 * y + kSubDy[k], false);
+        return;
+    }
+    // FUN_0043fac0: the group the brush registered the tile under,
+    // 0xe when it has no such tile.
+    const uint16_t group = brs::find(*b, top.tile) ? uint16_t(top.tile >> 12) : uint16_t(0xe);
+    paintCell(x, y, *b, group);
+}
+
+void WalkMap::paintGizmo(const Level& level, const chk::GizmoRecord& g, const Box& box) {
+    // From the half cell at the cell's left corner (2x, 2y + 1).
+    // FUN_004b5ca0 files cells of kind 0xd in another list, which this pass
+    // does not visit, and swaps the last two words: the file's `a` is the
+    // in-memory word 4 (bit 0 set = blocked) and `b` word 3 (the height).
+    if (!level.map().keeps(g)) return;
+    const giz::Template& t = level.gizmoTemplate(g);
+    if (t.masks.empty() || t.frames.empty()) return;
+    // The mask of the frame the gizmo shows: a shut door blocks, an open
+    // one does not.
+    for (const auto& mc : t.masks[level.gizmoMask(g)].cells) {
+        if (mc.kind == 0xd) continue;
+        const int sx = 2 * g.x + mc.dx, sy = 2 * g.y + 1 + mc.dy;
+        if (!inside(sx, sy) || sx < box.x0 || sy < box.y0 || sx > box.x1 || sy > box.y1) continue;
+        setWalkable(sx, sy, !(mc.a & 1));
+        // FUN_00447740(.., height, 1): the height, unless it is 0 on a
+        // half cell already marked -1.
+        HalfCell& hc = at(sx, sy);
+        if (mc.b != 0 || hc.height != -1) hc.height = int8_t(mc.b);
+    }
+}
+
+void WalkMap::repaint(const Level& level, const chk::GizmoRecord& changed) {
+    // The original repaints a gizmo's half cells when its frame's mask
+    // changes. Here: every map cell under any of its masks gets its floor
+    // back, every gizmo is painted again inside that area (in level order,
+    // as at load), and clearance is redone within 3 half cells of it.
+    const giz::Template& t = level.gizmoTemplate(changed);
+    Box box{w_, h_, -1, -1};
+    for (const auto& m : t.masks)
+        for (const auto& c : m.cells) {
+            const int sx = 2 * changed.x + c.dx, sy = 2 * changed.y + 1 + c.dy;
+            box.x0 = std::min(box.x0, sx & ~1), box.y0 = std::min(box.y0, sy & ~1);
+            box.x1 = std::max(box.x1, sx | 1), box.y1 = std::max(box.y1, sy | 1);
+        }
+    box.x0 = std::max(box.x0, 0), box.y0 = std::max(box.y0, 0);
+    box.x1 = std::min(box.x1, w_ - 1), box.y1 = std::min(box.y1, h_ - 1);
+    if (box.x0 > box.x1 || box.y0 > box.y1) return;
+    for (int x = box.x0 / 2; x <= box.x1 / 2; ++x)
+        for (int y = box.y0 / 2; y <= box.y1 / 2; ++y) paintFloor(level, x, y);
+    for (const auto& g : level.map().gizmos) paintGizmo(level, g, box);
+    computeClearance(Box{box.x0 - 3, box.y0 - 3, box.x1 + 3, box.y1 + 3});
 }
 
 void WalkMap::setWalkable(int sx, int sy, bool walkable) {
@@ -110,9 +133,11 @@ void WalkMap::paintCell(int x, int y, const brs::Brush& b, uint16_t group) {
     for (int k = 0; k < 4; ++k) at(sx + kSubDx[k], sy + kSubDy[k]).height = int8_t(b.height * 2);
 }
 
-void WalkMap::computeClearance() {
-    for (int sx = 0; sx < w_; ++sx)
-        for (int sy = 0; sy < h_; ++sy) {
+void WalkMap::computeClearance() { computeClearance(Box{0, 0, w_ - 1, h_ - 1}); }
+
+void WalkMap::computeClearance(const Box& box) {
+    for (int sx = std::max(box.x0, 0); sx <= std::min(box.x1, w_ - 1); ++sx)
+        for (int sy = std::max(box.y0, 0); sy <= std::min(box.y1, h_ - 1); ++sy) {
             HalfCell& hc = at(sx, sy);
             if (hc.clearance == kBlocked) continue;
             uint8_t value = 0;

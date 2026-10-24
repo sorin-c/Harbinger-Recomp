@@ -69,6 +69,10 @@ bool SoundSystem::playing(int key) const {
     return it != voices_.end() && SDL_GetAudioStreamQueued(it->second) > 0;
 }
 
+void SoundSystem::stop(int key) {
+    if (const auto it = voices_.find(key); it != voices_.end()) SDL_ClearAudioStream(it->second);
+}
+
 void SoundSystem::play(int key, const audio::Pcm& pcm, bool restart) {
     if (!device_ || pcm.samples.empty() || (!restart && playing(key))) return;
     const SDL_AudioSpec spec{SDL_AUDIO_S16, pcm.channels, pcm.rate};
