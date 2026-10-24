@@ -1,8 +1,11 @@
 // levelshot: draw a level's floor, walls and gizmos to a .tga, for checking
 // the level, brush and gizmo formats against the original.
 //   levelshot <install dir> <level id> <out.tga> [layers=3]
-// layers: 1 = floors, 2 = and walls, 3 = and gizmos and agents.
+// layers: 1 = floors, 2 = and walls, 3 = and gizmos and agents, 4 = and the
+// walk grid (red: blocked half cells; orange, yellow: near walls, which the
+// player keeps clear of; see docs/movement.md).
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -12,6 +15,7 @@
 #include "engine/ini.hpp"
 #include "engine/vfs.hpp"
 #include "world/level.hpp"
+#include "world/walkmap.hpp"
 
 using namespace harbinger;
 
@@ -69,6 +73,30 @@ int main(int argc, char** argv) {
                 for (; next < objects.size() && objects[next].depth < d + 1; ++next) objects[next].draw();
             }
         for (; next < objects.size(); ++next) objects[next].draw();
+
+        if (layers > 3) {
+            const world::WalkMap walk(level);
+            for (int sx = 0; sx < walk.width(); ++sx)
+                for (int sy = 0; sy < walk.height(); ++sy) {
+                    const uint8_t c = walk.at(sx, sy).clearance;
+                    if (c == 0) continue;
+                    const uint32_t tint = c == world::WalkMap::kBlocked ? render::packRgba(255, 0, 0, 0)
+                                          : c == 2                       ? render::packRgba(255, 128, 0, 0)
+                                                                         : render::packRgba(255, 255, 0, 0);
+                    const auto top = world::toScreen(sx / 2.0, sy / 2.0);
+                    for (int v = 0; v < 32; ++v)
+                        for (int u = -32; u < 32; ++u) {
+                            if (std::abs(u + 0.5) / 32 + std::abs(v + 0.5 - 16) / 16 > 1) continue;
+                            const int px = int(top.x) + u - originX, py = int(top.y) + v - originY;
+                            if (px < 0 || py < 0 || px >= img.width || py >= img.height) continue;
+                            uint32_t& d = img.pixels[size_t(py) * size_t(img.width) + size_t(px)];
+                            uint32_t o = 0xFF000000u;
+                            for (int sh = 0; sh < 24; sh += 8)
+                                o |= (((d >> sh) & 0xFF) / 2 + ((tint >> sh) & 0xFF) / 2) << sh;
+                            d = o;
+                        }
+                }
+        }
 
         for (const auto& e : m.entries) {
             const auto p = world::toScreen(e.x, e.y);

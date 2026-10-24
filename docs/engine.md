@@ -162,12 +162,22 @@ to what they feed, as in the original. Frames draw over the gizmo's picture
 the way the original builds it. Using a gizmo (opening a door) comes with the
 game loop.
 
+## Milestone 11: walking (done)
+
+New Game puts the chosen character (Human, Gladiator or Culibine) on the
+level's Default entry point, facing its way, drawn from its body, armour and
+weapon layers (`*animgroup.mgr`). It walks at the original's speed (3.18 cells
+a second for the Human, measured under Wine) to where the mouse clicks, around
+walls and drops on the original's half-cell walk grid and path finder, or
+along a gamepad stick or the keys, sliding along walls. The camera follows it.
+Evidence and the parts still guessed: `docs/movement.md`.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
-3. Using gizmos (consoles opening doors, chests), the other classes' states.
-4. Running scripts from triggers. The player on screen, walking, using the
-   room graph.
+3. Using gizmos (consoles opening doors, chests), the other classes' states;
+   doors and lifts changing the walk grid.
+4. Running scripts from triggers. The room graph.
 5. The in-game loop, HUD and lighting.

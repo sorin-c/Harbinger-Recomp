@@ -1,16 +1,18 @@
 // harbinger: the rebuilt game. It boots to the front end: the main menu
 // (startup.itf), the character screen (new.itf), Options and Load Game, drawn
 // from the original interface, font, item and cursor files, with the menu
-// music and UI sounds. Play opens the first level, so far as a map to look
-// around: floor and walls, no objects or characters yet.
+// music and UI sounds. Play opens the first level with the chosen character
+// standing on its entry point, ready to walk.
 //
 //   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id]
-//             [--no-audio] [--settings config.cfg] [--run-ms ms]
-//             [--screenshot out.bmp [--time ms] [--mouse x,y]]
+//             [--character human|gladiator|culibine] [--no-audio] [--settings config.cfg] [--run-ms ms]
+//             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y]]
 //
 // Mouse, keyboard (up/down to move, left/right for sliders, Enter, Esc = back)
-// and gamepad (D-pad/stick, A, B = back) all drive the menus. In the level,
-// arrows/WASD, the screen edges or the left stick move the camera.
+// and gamepad (D-pad/stick, A, B = back) all drive the menus. In the level the
+// left stick, arrows or WASD walk the character in that direction (as in
+// Diablo II Resurrected on a controller), and clicking or holding the mouse
+// button walks it to the pointer, as in the original. The camera follows.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -45,7 +47,8 @@ struct Options {
     uint16_t level = 1;  // a new game starts in level 1 (FUN_00497850)
     bool audio = true;
     uint64_t timeMs = 0, runMs = 0;
-    std::optional<SDL_FPoint> mouse;
+    std::optional<SDL_FPoint> mouse, click, stick;  // screenshot mode: pointer, a click at 0 ms, a held stick
+    world::Character character = world::Character::Human;
 };
 
 std::optional<std::vector<uint8_t>> readFile(const std::string& path) {
@@ -93,6 +96,7 @@ public:
             playMusic(introMusic_ ? &*introMusic_ : nullptr);
         }
         level_ = opt.level;
+        character_ = opt.character;
         if (opt.screen == "new") openNew();
         else if (opt.screen == "options") openOptions();
         else if (opt.screen == "load") openLoad();
@@ -183,9 +187,9 @@ public:
         if (world_) {
             world_->draw();
             SDL_SetRenderDrawColor(ren_, 160, 255, 160, 255);
-            const std::string title = world_->level().map().name + "  (preview: map, objects and characters; no gameplay yet)";
+            const std::string title = world_->level().map().name + "  (walking only: no HUD, scripts or combat yet)";
             SDL_RenderDebugText(ren_, 8, 8, title.c_str());
-            SDL_RenderDebugText(ren_, 8, 20, "Move: arrows / WASD / screen edge / left stick    Back to menu: Esc / B");
+            SDL_RenderDebugText(ren_, 8, 20, "Walk: left stick / WASD / arrows, or click and hold    Back to menu: Esc / B");
         } else {
             screen_->draw(ren_);
         }
@@ -197,13 +201,18 @@ public:
         showCursor_ = true;
         screen_->pointerMove(p.x, p.y);
     }
+    // Screenshot mode: walk to a view pixel, or hold the stick in a direction.
+    void clickWorld(SDL_FPoint p) {
+        if (world_) world_->walkTo(p.x, p.y);
+    }
+    void holdStick(SDL_FPoint v) { stick_ = v; }
 
 private:
     // The game runs at 1024x768 with High Resolution on, 800x600 without
     // (Harbinger.ini [Video] HiRes; the front end is always 800x600).
     void startGame() {
         const int w = highRes_ ? 1024 : kScreenW, h = highRes_ ? 768 : kScreenH;
-        world_ = std::make_unique<WorldView>(assets_, ren_, level_, w, h);
+        world_ = std::make_unique<WorldView>(assets_, ren_, level_, character_, w, h);
         SDL_SetRenderLogicalPresentation(ren_, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
         gameW_ = w, gameH_ = h;
         mouse_ = {w / 2.0f, h / 2.0f};
@@ -225,9 +234,20 @@ private:
             case SDL_EVENT_GAMEPAD_ADDED: SDL_OpenGamepad(e.gdevice.which); break;
             case SDL_EVENT_MOUSE_MOTION:
                 mouse_ = {e.motion.x, e.motion.y};
-                showCursor_ = mouseInWindow_ = true;
+                showCursor_ = true;
                 break;
-            case SDL_EVENT_WINDOW_MOUSE_LEAVE: mouseInWindow_ = false; break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                // Swap Mouse Buttons makes the right button the one that walks.
+                if (e.button.button == (settings_.swapMouse ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT)) {
+                    mouse_ = {e.button.x, e.button.y};
+                    showCursor_ = mouseHeld_ = true;
+                    world_->walkTo(mouse_.x, mouse_.y);
+                    lastRetarget_ = now_;
+                }
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (e.button.button == (settings_.swapMouse ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT)) mouseHeld_ = false;
+                break;
             case SDL_EVENT_KEY_DOWN:
                 if (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT)) {
                     display_.fullscreen = !display_.fullscreen;
@@ -243,30 +263,34 @@ private:
             case SDL_EVENT_GAMEPAD_AXIS_MOTION:
                 if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) stick_.x = e.gaxis.value / 32767.0f;
                 if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) stick_.y = e.gaxis.value / 32767.0f;
-                if (e.gaxis.value > -8000 && e.gaxis.value < 8000) {  // dead zone
-                    if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) stick_.x = 0;
-                    if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) stick_.y = 0;
-                }
+                if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX || e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY)
+                    showCursor_ = false;  // playing on the pad: hide the pointer
                 break;
             default: break;
         }
     }
 
     void updateWorld(uint64_t nowMs) {
+        // The stick, with a radial dead zone (rebuild choice: 25% of the
+        // throw), or the keys, give a screen direction to walk in.
+        float dx = 0, dy = 0;
+        if (stick_.x * stick_.x + stick_.y * stick_.y > kStickDeadZone * kStickDeadZone) dx = stick_.x, dy = stick_.y;
         const bool* keys = SDL_GetKeyboardState(nullptr);
-        float dx = stick_.x, dy = stick_.y;
         if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]) dx -= 1;
         if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) dx += 1;
         if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) dy -= 1;
         if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]) dy += 1;
-        if (mouseInWindow_ && showCursor_) {  // the pointer at a screen edge scrolls too
-            constexpr float edge = 8;
-            if (mouse_.x < edge) dx -= 1;
-            if (mouse_.x > gameW_ - edge) dx += 1;
-            if (mouse_.y < edge) dy -= 1;
-            if (mouse_.y > gameH_ - edge) dy += 1;
+        if (dx != 0 || dy != 0) {
+            world_->steer(dx, dy);
+            steering_ = true;
+        } else if (steering_) {
+            world_->steer(0, 0);
+            steering_ = false;
+        } else if (mouseHeld_ && now_ - lastRetarget_ >= kRetargetMs) {
+            // Holding the button keeps walking towards the pointer.
+            world_->walkTo(mouse_.x, mouse_.y);
+            lastRetarget_ = now_;
         }
-        world_->setScroll(std::clamp(dx, -1.0f, 1.0f), std::clamp(dy, -1.0f, 1.0f));
         world_->update(nowMs);
     }
 
@@ -377,6 +401,7 @@ private:
                 case 0: startGame(); return;  // Play
                 case 2: case 3: case 4:  // Human / Gladiator / Culibine
                     screen_->select(uint32_t(action));
+                    character_ = world::Character(action - 2);
                     screen_->setDisabled(kPlay, false);
                     break;
                 default: break;
@@ -495,7 +520,11 @@ private:
     uint16_t level_ = 1;
     int gameW_ = kScreenW, gameH_ = kScreenH;
     SDL_FPoint stick_{0, 0};
-    bool mouseInWindow_ = false;
+    world::Character character_ = world::Character::Human;
+    bool mouseHeld_ = false, steering_ = false;
+    uint64_t lastRetarget_ = 0;
+    static constexpr float kStickDeadZone = 0.25f;
+    static constexpr uint64_t kRetargetMs = 100;  // rebuild choice
     bool showCursor_ = false, running_ = true, stickX_ = false, stickY_ = false;
     uint64_t now_ = 0;
 };
@@ -517,7 +546,16 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--settings") o.settings = v;
         else if (a == "--time") o.timeMs = std::stoull(v);
         else if (a == "--run-ms") o.runMs = std::stoull(v);
-        else if (a == "--mouse") {
+        else if (a == "--character") {
+            if (v == "human") o.character = world::Character::Human;
+            else if (v == "gladiator") o.character = world::Character::Gladiator;
+            else if (v == "culibine") o.character = world::Character::Culibine;
+            else throw std::runtime_error("--character expects human, gladiator or culibine");
+        } else if (a == "--click" || a == "--stick") {
+            const auto comma = v.find(',');
+            if (comma == std::string::npos) throw std::runtime_error(a + " expects x,y");
+            (a == "--click" ? o.click : o.stick) = SDL_FPoint{std::stof(v.substr(0, comma)), std::stof(v.substr(comma + 1))};
+        } else if (a == "--mouse") {
             const auto comma = v.find(',');
             if (comma == std::string::npos) throw std::runtime_error("--mouse expects x,y");
             o.mouse = SDL_FPoint{std::stof(v.substr(0, comma)), std::stof(v.substr(comma + 1))};
@@ -534,8 +572,8 @@ Options parseArgs(int argc, char** argv) {
     }
     if (o.data.empty()) throw std::runtime_error("Harbinger.ini not found. Put harbinger.exe in the Harbinger folder, or run:\n"
                                                  "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--no-audio] "
-                                                 "[--settings config.cfg] "
-                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y]]");
+                                                 "[--character human|gladiator|culibine] [--settings config.cfg] "
+                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y]]");
     return o;
 }
 
@@ -566,7 +604,11 @@ int main(int argc, char** argv) {
             if (shot) {
                 // Deterministic capture: simulate `--time` ms in 10 ms steps.
                 if (opt.mouse) game.setMouse(*opt.mouse);
-                for (uint64_t t = 0; t <= opt.timeMs; t += 10) game.update(t);
+                if (opt.stick) game.holdStick(*opt.stick);
+                for (uint64_t t = 0; t <= opt.timeMs; t += 10) {
+                    game.update(t);
+                    if (t == 0 && opt.click) game.clickWorld(*opt.click);
+                }
                 game.draw();
                 SDL_Surface* s = SDL_RenderReadPixels(ren, nullptr);
                 const bool ok = s && SDL_SaveBMP(s, opt.screenshot.c_str());

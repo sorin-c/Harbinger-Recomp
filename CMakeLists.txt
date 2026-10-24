@@ -13,6 +13,7 @@ set(HARBINGER_WARNINGS $<IF:$<CXX_COMPILER_ID:MSVC>,/W4,-Wall -Wextra -Wpedantic
 # File formats and engine core: no platform dependencies, used by tests and tools.
 add_library(harbinger_formats
   src/formats/acr.cpp
+  src/formats/animgroup.cpp
   src/formats/brs.cpp
   src/formats/chk.cpp
   src/formats/giz.cpp
@@ -57,6 +58,9 @@ add_library(harbinger_core
   src/ui/text.cpp
   src/world/level.cpp
   src/world/gizmo_state.cpp
+  src/world/motion.cpp
+  src/world/player.cpp
+  src/world/walkmap.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
 target_include_directories(harbinger_core SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/_deps/dr_libs)
@@ -104,7 +108,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-  foreach(t sqh gim core ui resources audio world)
+  foreach(t sqh gim core ui resources audio world movement)
     add_executable(test_${t} tests/test_${t}.cpp)
     target_link_libraries(test_${t} PRIVATE harbinger_core)
     add_test(NAME ${t} COMMAND test_${t})
