@@ -78,6 +78,11 @@ if(HARBINGER_BUILD_APPS)
   add_executable(harbinger src/app/harbinger.cpp src/app/assets.cpp src/app/screen.cpp src/app/sound.cpp)
   target_link_libraries(harbinger PRIVATE harbinger_core SDL3::SDL3)
   target_compile_options(harbinger PRIVATE ${HARBINGER_WARNINGS})
+  if(WIN32)
+    # Version information and an asInvoker manifest, so Windows sees a described, non-elevating app.
+    target_sources(harbinger PRIVATE src/app/win/harbinger.rc)
+    set_property(TARGET harbinger APPEND PROPERTY LINK_OPTIONS $<$<CXX_COMPILER_ID:MSVC>:/MANIFEST:NO>)
+  endif()
 
   add_executable(harbinger-viewer src/app/viewer.cpp)
   target_link_libraries(harbinger-viewer PRIVATE harbinger_core SDL3::SDL3)
