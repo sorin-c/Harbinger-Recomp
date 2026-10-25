@@ -102,8 +102,6 @@ public:
     std::vector<Action> takeActions();
     // The skills a plus button was pressed for since the last call.
     std::vector<world::Skill> takeSpentPoints() { return std::exchange(spent_, {}); }
-    // A message for the message line, shown for `durationMs`.
-    void notify(const std::string& text, uint64_t durationMs);
     void update(uint64_t nowMs, const Vitals& vitals, const StatsView* stats = nullptr);
     void draw(SDL_Renderer* ren) const;
 
@@ -150,7 +148,6 @@ private:
     void drawItem(SDL_Renderer* ren, uint16_t id, float x, float y, bool centred) const;
     void drawInventory(SDL_Renderer* ren) const;
     void drawStats(SDL_Renderer* ren) const;
-    void drawNotices(SDL_Renderer* ren) const;
     bool clickStats(float x, float y);
     static bool inside(const Control& c, float x, float y) {
         return x >= c.rect.x && x < c.rect.x + c.rect.w && y >= c.rect.y && y < c.rect.y + c.rect.h;
@@ -195,13 +192,6 @@ private:
     uint64_t pressedUntil_ = 0;
     // Rendered text boxes by control, rebuilt when their text changes.
     mutable std::vector<std::pair<std::string, Texture>> statsText_;
-    // The message line.
-    struct Notice {
-        std::string text;
-        uint64_t until = 0;
-        Texture tex{};
-    };
-    mutable std::vector<Notice> notices_;  // textures made on first draw
 };
 
 }  // namespace harbinger::app

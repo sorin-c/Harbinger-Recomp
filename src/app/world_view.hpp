@@ -6,6 +6,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <deque>
 #include <map>
 #include <memory>
 #include <optional>
@@ -26,6 +27,7 @@
 #include "world/player.hpp"
 #include "world/spawners.hpp"
 #include "world/umbilical.hpp"
+#include "world/story.hpp"
 #include "world/walkmap.hpp"
 
 namespace harbinger::app {
@@ -53,8 +55,8 @@ public:
     // steer, walkTo, attack and use do nothing.
     bool cinematic() const { return cutscene_->cinematic(); }
     // The player takes no orders: a cinematic, an umbilical trip under way
-    // or its list open, or just arrived by umbilical.
-    bool locked() const { return cinematic() || frozen_ || menu_ || travel_ || umbilicals_->busy(); }
+    // or its list open, just arrived by umbilical, or talking to an NPC.
+    bool locked() const { return cinematic() || frozen_ || menu_ || travel_ || umbilicals_->busy() || talking(); }
     // Closes a script's thought bubble: a click on it at view pixel (x, y),
     // or the close button (pad or key). False if nothing was closed.
     bool clickBubble(float x, float y) { return cutscene_->click(x, y); }
@@ -81,14 +83,17 @@ public:
     bool unlockCode(uint16_t level, uint16_t entry, bool gold);
     void setLevel(uint16_t level);
     // What the player takes from level to level: the inventory (with the
-    // catalogue it looks items up in), hit points, ranged energy, and
-    // experience, level and skills.
+    // catalogue it looks items up in), hit points, ranged energy,
+    // experience, level and skills, and the story (the quest it is on,
+    // what it has done).
     struct Carried {
         std::unique_ptr<world::ItemCatalog> catalog;
         std::unique_ptr<world::Inventory> inventory;
         double hitPoints = 0, energy = 0;
         std::optional<world::Stats> stats;
         std::unique_ptr<world::UmbilicalCodes> codes;
+        std::unique_ptr<world::StoryFiles> storyFiles;
+        std::unique_ptr<world::Story> story;
     };
     // Hands it over; this view is not used after.
     Carried takeCarried();
@@ -100,6 +105,10 @@ public:
     // Click to move: walk to the map point under view pixel (x, y). Drops a
     // gizmo the player was on the way to use.
     void walkTo(float x, float y);
+    // The same to a map point (a testing aid).
+    void walkToCell(double x, double y) {
+        if (!cinematic()) player_->walkTo(x, y);
+    }
     // Click to attack: if an enemy is drawn under view pixel (x, y), go and
     // hit it and return true.
     bool attackAt(float x, float y);
@@ -111,17 +120,36 @@ public:
     // nearest within Player::kShootRange.
     bool shootAt(float x, float y);
     bool shootNearest();
-    // Using gizmos (consoles, chests) and picking up items: walk up to the
-    // item or usable gizmo under view pixel (x, y) and take or use it on
-    // arrival; false if there is none there.
+    // Using gizmos (consoles, chests), picking up items and talking to
+    // NPCs: walk up to the item, NPC or usable gizmo under view pixel
+    // (x, y) and take, talk to or use it on arrival; false if there is none
+    // there.
     bool useAt(float x, float y);
-    // The same for the nearest item, else the nearest usable gizmo, within
-    // kUseRange cells of the player (pad and keys).
+    // The same for the nearest item, else the nearest NPC, else the nearest
+    // usable gizmo, within kUseRange cells of the player (pad and keys).
     bool useNearest();
-    bool usePending() const { return pendingUse_ != nullptr || pendingPickup_ != 0; }
+    bool usePending() const { return pendingUse_ != nullptr || pendingPickup_ != 0 || pendingTalk_ != nullptr; }
     // Rebuild choices: how near a gizmo's use point the player must stand
     // to use it, and how far the use button looks for one, in map cells.
     static constexpr double kUseReach = 1.5, kUseRange = 3.0;
+    // How near an NPC the player stops to talk (a rebuild choice).
+    static constexpr double kTalkReach = 2.0;
+
+    // The story: the quest and the conversation with an NPC, if one is
+    // open (the world stands still meanwhile, a rebuild choice).
+    world::Story& story() { return *story_; }
+    const world::Story& story() const { return *story_; }
+    bool talking() const { return story_->talking(); }
+    // The messages along the top of the view ("Player received ...", the
+    // dialogues' DisplayText), newest first (FUN_004e4520's list).
+    struct Message {
+        std::string text;
+        uint64_t until = 0;  // elapsed ms; 0 = for good
+    };
+    const std::deque<Message>& messages() const { return messages_; }
+    void say(const std::string& text, uint64_t forMs = kMessageMs);
+    static constexpr uint64_t kMessageMs = 3000;  // what every caller passes
+    static constexpr size_t kMaxMessages = 4;     // rebuild choice (the list's +0x12 is not read)
     // The map point under view pixel (x, y).
     world::WalkMap::Point mapPoint(float x, float y) const;
     void update(uint64_t nowMs);
@@ -143,12 +171,6 @@ public:
     // `announce` adds the "N Experience Awarded." message (GGiveExpEntityAction).
     // A level-up adds "You've reached level N!" and plays LevelUpSnd.
     void awardExperience(uint32_t amount, bool announce);
-    // Messages for the player's message line, and how long each stays (ms).
-    struct Notice {
-        std::string text;
-        uint64_t durationMs = 0;
-    };
-    std::vector<Notice> takeNotices() { return std::exchange(notices_, {}); }
     // A stats panel plus button: a bonus point into a skill.
     bool spendPoint(world::Skill s) { return player_->spendPoint(s); }
     void setLevelSeen() { player_->setLevelSeen(); }
@@ -184,6 +206,13 @@ private:
     void approach(const chk::GizmoRecord& g);
     bool occupied(const chk::GizmoRecord& g) const;
     void updateUmbilicals();
+    const chk::AgentRecord* npcAt(float x, float y) const;
+    void approachNpc(const chk::AgentRecord& a);
+    void bindStory();
+    void runAction(const dlg::Action& a);
+    void give(uint16_t item, uint32_t amount);
+    std::string itemName(uint16_t id) const;
+    void drawMessages() const;
 
     Assets& assets_;
     SDL_Renderer* ren_;
@@ -198,7 +227,6 @@ private:
     std::unique_ptr<world::Spawners> spawners_;
     std::vector<bool> wasHeld_;  // per foe, last frame
     std::vector<bool> rewarded_;  // per foe: its experience has been given
-    std::vector<Notice> notices_;
     std::unique_ptr<audio::Pcm> levelUpSound_;
     std::unique_ptr<world::Bolts> bolts_;
     world::EntryLookup entries_;
@@ -215,6 +243,13 @@ private:
     uint64_t equipRev_ = 0;
     bool wasCinematic_ = false;
     const chk::GizmoRecord* pendingUse_ = nullptr;  // walking up to use it
+    const chk::AgentRecord* pendingTalk_ = nullptr;  // an NPC the player is walking up to
+    world::Character character_;
+    std::unique_ptr<world::StoryFiles> storyFiles_;
+    std::unique_ptr<world::Story> story_;
+    std::vector<bool> wasDead_;  // per foe, last frame
+    std::deque<Message> messages_;
+    mutable std::map<std::string, Texture> messageTextures_;
     int screenW_, screenH_;
     double centreX_, centreY_;
     double camX_ = 0, camY_ = 0;  // map screen position at the centre of the view

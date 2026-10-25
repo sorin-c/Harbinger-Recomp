@@ -122,6 +122,18 @@ public:
     // then refills; false if there is none.
     bool takeHealthPack();
 
+    // What dialogues and quests ask of it. FUN_004cf9e0: whether an item
+    // with this id lies in the grid (not the equipment slots), and with
+    // `remove` takes the first one out.
+    bool inGrid(uint16_t id) const;
+    bool removeFromGrid(uint16_t id);
+    // Money a dialogue gives, and FUN_004ee620: takes `amount` if there is
+    // that much, else nothing (false).
+    void addMoney(uint32_t amount);
+    bool spend(uint32_t amount);
+    // GiveHealth: one pack onto the counter while it has room; false if full.
+    bool addHealthPack();
+
     // Changes whenever the equipment changes (the sprite and weapon follow it).
     uint64_t equipmentRevision() const { return equipRev_; }
 

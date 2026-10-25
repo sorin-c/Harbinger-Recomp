@@ -94,6 +94,7 @@ const fnt::Font& Assets::font(uint16_t id) {
 }
 
 itm::Item Assets::item(uint16_t id) { return itm::parse(read(lookup(items_, id, "item"))); }
+itm::Item Assets::itemHeader(uint16_t id) { return itm::parseHeader(read(lookup(items_, id, "item"))); }
 std::string Assets::itemImagePath(uint16_t id) { return lookup(itemImages_, id, "item image"); }
 std::string Assets::cursorPath(uint16_t id) { return lookup(cursors_, id, "cursor"); }
 

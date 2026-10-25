@@ -138,7 +138,6 @@ Hud::~Hud() {
     SDL_DestroyTexture(tip_.tex);
     SDL_DestroyTexture(money_.tex);
     for (auto& t : statsText_) SDL_DestroyTexture(t.second.tex);
-    for (auto& n : notices_) SDL_DestroyTexture(n.tex.tex);
     SDL_DestroyTexture(stats_.ownBackground.tex);
 }
 
@@ -615,18 +614,6 @@ void Hud::padStatsPress() {
         }
 }
 
-void Hud::notify(const std::string& text, uint64_t durationMs) {
-    Notice n;
-    n.text = text;
-    n.until = now_ + durationMs;
-    notices_.push_back(std::move(n));
-    // FUN_004e4520 keeps a fixed number of lines, dropping the oldest.
-    while (notices_.size() > 5) {
-        SDL_DestroyTexture(notices_.front().tex.tex);
-        notices_.erase(notices_.begin());
-    }
-}
-
 // --- update -------------------------------------------------------------
 
 void Hud::update(uint64_t nowMs, const Vitals& vitals, const StatsView* stats) {
@@ -634,13 +621,6 @@ void Hud::update(uint64_t nowMs, const Vitals& vitals, const StatsView* stats) {
     lastUpdate_ = now_ = nowMs;
     vitals_ = vitals;
     if (stats) statsView_ = *stats;
-    for (size_t i = 0; i < notices_.size();)
-        if (notices_[i].until <= now_) {
-            SDL_DestroyTexture(notices_[i].tex.tex);
-            notices_.erase(notices_.begin() + long(i));
-        } else {
-            ++i;
-        }
     double target = vitals.maxHitPoints > 0 ? std::clamp(vitals.hitPoints / vitals.maxHitPoints, 0.0, 1.0) : 0;
     if (target > 0 && target < kBarMin) target = kBarMin;
     if (shownHealth_ < target) shownHealth_ = std::min(target, shownHealth_ + kBarSpeed * dt);
@@ -1031,39 +1011,9 @@ void Hud::drawStats(SDL_Renderer* ren) const {
     }
 }
 
-void Hud::drawNotices(SDL_Renderer* ren) const {
-    // The message line (FUN_004e4520's list): where and in which font the
-    // original draws it is not traced. The rebuild centres the lines at the
-    // top of the view in the description popup's font (guessed).
-    if (notices_.empty() || popup_.controls.size() < 2) return;
-    const itf::TextBox* box = nullptr;
-    for (const auto& c : popup_.controls)
-        if (c.control->textBox) box = &*c.control->textBox;
-    if (!box) return;
-    float y = statsOpen_ ? float(stats_.y + stats_.mask.height) + 8 : 8;
-    for (auto& n : notices_) {
-        Texture& tex = n.tex;
-        if (!tex.tex) {
-            itf::TextBox b = *box;
-            const fnt::Font& f = assets_.font(b.font);
-            b.width = uint16_t(std::min(ui::measure(f, n.text).width + 4, screenW_));
-            b.height = uint16_t(f.lineHeight + 2);
-            b.padX = b.padY = 0;
-            b.align = 0;
-            const ui::BoxFonts fonts{&f, &assets_.font(b.fontAlt), &assets_.font(b.fontStar)};
-            const auto img = ui::renderTextBox(fonts, popup_.palette, b, n.text);
-            tex = assets_.upload(img.pixels, img.width, img.height);
-        }
-        const SDL_FRect dst{std::floor(float(screenW_ - tex.w) / 2), y, float(tex.w), float(tex.h)};
-        SDL_RenderTexture(ren, tex.tex, nullptr, &dst);
-        y += float(tex.h);
-    }
-}
-
 void Hud::draw(SDL_Renderer* ren) const {
     if (open_) drawInventory(ren);
     if (statsOpen_) drawStats(ren);
-    drawNotices(ren);
     drawPanel(ren, log_);
     drawPanel(ren, left_);
     drawPanel(ren, right_);

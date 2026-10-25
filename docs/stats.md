@@ -59,9 +59,8 @@ and nothing at all when the word is 0. It is not announced. **likely**.
 73 agent templates have a non-zero word (Vantir Infantry 25, the Overlord
 10000); the player and the NPCs have 0 or 1. **proven** (the files).
 
-`GGiveExpEntityAction_v8` calls FUN_004a5310 with announce = 1. The rebuild
-has `WorldView::awardExperience(amount, announce)` ready for it; the
-dialogue work (1a) wires the action.
+`GGiveExpEntityAction_v8` calls FUN_004a5310 with announce = 1; the rebuild's
+dialogue actions do the same through `WorldView::awardExperience`.
 
 ## Skills
 
@@ -95,7 +94,7 @@ D-pad up / down picks a skill, A spends a point, B or Y closes it.
 | Bonus box | Hidden with no points, else the points count over its image (text box padX −10, signed) | hidden **proven**; shown **likely** |
 | Tooltips after 500 ms | "Player name", "Current level", "Level up bonus", "Exp: X / Y", "<Skill> chance to hit +N%" with " (+bonus)", the Rigging and Override gadget / camera texts, "N full health hit points", "Increase <Skill> skill" | **proven** for Melee, Rigging, Life, Exp (Wine); the rest **likely** |
 | CHAR button blink | While the level is unseen, `ms % 1000 / 250 == 3` (GCtrlInvThreeStateBtn_v8) | **likely**; which phase is lit is **guessed** |
-| Messages | Centred at the top, under the panel when open, popup font, at most 5 lines | **guessed** |
+| Messages | The level-up and experience lines go to the view's message list (`WorldView::say`, docs/dialogue.md) | where it is drawn: **guessed** |
 
 The rebuild's panel matches the Wine capture pixel for pixel except 23
 pixels of a faint trace in the bar's window (the capture is 1 px lower than
@@ -111,6 +110,5 @@ work (1b). **likely**.
 
 ## Not yet
 
-- Mod chip skill bonuses, the gizmo skill reward, `GGiveExpEntityAction`
-  (1a), `GStatModAction` (1a).
+- Mod chip skill bonuses, the gizmo skill reward, `GStatModAction`.
 - Saving experience and skills with a game.
