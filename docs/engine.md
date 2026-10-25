@@ -224,6 +224,15 @@ item, one every half second, on the floor beside the chest. A click on an
 item, or E, Space or the pad's A, walks there and picks it up; money adds
 to a counter shown at the top left. Evidence: `docs/formats/loot.md`.
 
+## Milestone 18: walking between levels (done)
+
+Portals take the player from level to level. Stepping up to a portal walks
+the player in, and reaching its inner trigger loads the level it leads to,
+on the entry point it names; there the player walks out of that level's
+portal and play resumes. Money and carried items go along. On Om's Outer
+Sanctum (level 33) the portal leads to Lower Decks (level 32) entry 2.
+Evidence: `docs/formats/gizmo.md`, "Portals".
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips

@@ -25,6 +25,7 @@
 #include "render/sprite.hpp"
 #include "world/gizmo_state.hpp"
 #include "world/level.hpp"
+#include "world/portal.hpp"
 #include "world/script.hpp"
 #include "world/loot.hpp"
 #include "formats/gig.hpp"
@@ -573,6 +574,30 @@ static void testRealData(const char* dir) {
         CHECK(fired.size() == 1 && fired[0]->id == 4 && fired[0]->script == 11);
     }
 
+    // Every portal leads to a level and entry point that exist, and both its
+    // triggers are gizmo triggers on the portal itself.
+    {
+        const auto ids = mgr::parse(*vfs.read(ini.require("Paths", "Levels")));
+        std::map<uint16_t, size_t> entries;
+        for (const auto& [id, path] : ids.entries) entries[id] = world::Level(vfs, ini, id).map().entries.size();
+        size_t portals = 0;
+        for (const auto& [id, path] : ids.entries) {
+            world::Level lv(vfs, ini, id);
+            for (const auto& g : lv.map().gizmos) {
+                const auto l = world::portalLink(lv.gizmoTemplate(g), g);
+                if (!l) continue;
+                ++portals;
+                CHECK(entries.count(l->level) && l->entry < entries[l->level]);
+                CHECK(l->own < lv.map().entries.size());
+                size_t found = 0;
+                for (const auto& t : lv.map().gizmoTriggers)
+                    if (t.gizmo == g.instance && (t.id == l->inner || t.id == l->outer)) ++found;
+                CHECK(found == 2);
+            }
+        }
+        CHECK(portals == 49);
+    }
+
     // A sheet holds one frame per frame of its direction (all but a few
     // editor leftovers).
     size_t agentFiles = 0, anims = 0, sheets = 0, sheetMismatch = 0;
@@ -838,6 +863,43 @@ static void testLoot() {
     CHECK(once.size() == 1 && once[0].item == 7);
 }
 
+static void testPortals() {
+    // GGizmoTrigger_v3/_v4 and FUN_0051afa0: a gizmo trigger fires once, waits
+    // for its gizmo to go idle, then for the player to step out, before it
+    // can fire again.
+    chk::Level level;
+    chk::GizmoTrigger t;
+    t.x = 10, t.y = 10, t.radius = 1, t.id = 3, t.gizmo = 50;
+    level.gizmoTriggers.push_back(t);
+    world::GizmoTriggerWatch watch(level);
+    bool idle = false;
+    auto isIdle = [&](uint16_t g) { return g == 50 && idle; };
+    CHECK(watch.step(0, 0, 5, 5, isIdle).empty());
+    const auto fired = watch.step(5, 5, 10, 10, isIdle);
+    CHECK(fired.size() == 1 && fired[0]->id == 3);
+    CHECK(watch.step(10, 10, 10, 10, isIdle).empty());  // busy gizmo
+    idle = true;
+    CHECK(watch.step(10, 10, 10, 10, isIdle).empty());  // re-arming, still inside
+    CHECK(watch.step(10, 10, 14, 14, isIdle).empty());  // walking out
+    CHECK(watch.step(14, 14, 15, 15, isIdle).empty());  // outside: armed
+    CHECK(watch.step(15, 15, 10, 10, isIdle).size() == 1);
+
+    // GPortalPlug_v1: the record's words, and its two triggers' steps.
+    giz::Template portal;
+    portal.cls = giz::Portal;
+    const auto g = record(206, {0, 0, 32, 0, 2, 0, 1, 0, 0, 0, 1, 0, 0, 0});
+    const auto link = world::portalLink(portal, g);
+    CHECK(link && link->level == 32 && link->entry == 2 && link->own == 1 && link->inner == 1 && link->outer == 0);
+    CHECK(!world::portalLink(tagged(giz::Chest, {0}), g));
+    uint8_t phase = 0;
+    using S = world::PortalStep;
+    CHECK(world::portalStep(*link, phase, 1) == S::WalkOut && phase == 2);    // arriving
+    CHECK(world::portalStep(*link, phase, 0) == S::WalkedOut && phase == 0);
+    CHECK(world::portalStep(*link, phase, 0) == S::WalkIn && phase == 1);     // stepping up to it
+    CHECK(world::portalStep(*link, phase, 1) == S::Leave && phase == 0);
+    CHECK(world::portalStep(*link, phase, 7) == S::None && phase == 0);
+}
+
 int main() {
     testBrush();
     testLevel();
@@ -847,6 +909,7 @@ int main() {
     testScript();
     testScriptRunning();
     testLoot();
+    testPortals();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
         testRealData(dir);
     else

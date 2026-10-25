@@ -46,6 +46,12 @@ public:
     // Click to move: finds a path to (x, y) (GMoveAction, FUN_004239f0) and
     // walks it. Returns false if there is nowhere to go.
     bool walkTo(double x, double y);
+    // A scripted move (MoveTo on the player, as a portal's walk in and out):
+    // like walkTo, but when the path stops short of (x, y) the player walks
+    // the rest in a straight line. A rebuild choice: at the player's
+    // clearance limit some portal doorways end a cell before the portal's
+    // inner trigger, and the original's scripted walk reaches it.
+    bool walkStraightOn(double x, double y);
     // Direct control (a rebuild addition for sticks and keys): walk along map
     // direction (dx, dy) while it is non-zero, sliding along walls. Cancels
     // a click path. (0, 0) stops.

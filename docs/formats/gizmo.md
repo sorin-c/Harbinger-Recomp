@@ -319,6 +319,54 @@ player to the passable half cell nearest the use point and uses the gizmo
 on arrival if it is within 1.5 cells. A console with nothing attached
 plays its activation once and goes back to idle.
 
+## Portals
+
+A portal (class 16, `GPortalPlug`) is the doorway between two levels. Its
+record's 14 bytes of class data (`GPortalPlug_v22`) are seven words:
+
+| Offset | Plug field | Meaning |
+|---|---|---|
+| 0 | state | 0 in every shipped record |
+| 2 | +0xf4 | the level (`level.mgr` id) it leads to |
+| 4 | +0xf6 | the entry point it puts the player on there |
+| 6 | +0xf8 | the entry point in this level that arrives through it |
+| 8 | +0xde | power needed |
+| 10 | +0x104 | the inner trigger: a gizmo trigger inside the portal |
+| 12 | +0x106 | the outer trigger: a gizmo trigger in front of it |
+
+In 45 of the 49 shipped portals inner = 2·own − 1 and outer = 2·own − 2;
+the engine reads the words, not the rule.
+
+**Gizmo triggers.** A level's gizmo triggers (`docs/formats/level.md`) are
+circles that call their gizmo when the player walks in
+(`GGizmoTrigger_v3`: the trigger goes to state 2 and calls the gizmo's
+GIActivatable slot 1 with (−1, trigger id)). `GGizmoTrigger_v4` re-arms it
+(state 3) once the gizmo is idle (state 0), and `FUN_0051afa0` arms it
+again (state 0) once the player is outside the circle.
+
+**Walking through** (`GPortalPlug_v1`, the trigger id in the call's y; the
+portal's phase at +0x100):
+
+- Outer trigger, phase 2 (walking out): phase 0.
+- Outer trigger otherwise: phase 1, game state 8 (no orders), and a script
+  built in code: `Sound(278, NoWait)`, `Wait(1400)`,
+  `MoveTo(inner trigger's point, 0, NoWait)`.
+- Inner trigger, phase 1: game state 1, phase 0, then `GGame+0x132` =
+  level, `+0x136` = entry, and `FUN_004a1d20` loads that level.
+- Inner trigger otherwise (the player arrives standing in it): phase 2,
+  game state 8, and the script `Sound(278, NoWait)`,
+  `MoveTo(the portal's use point, 0, Wait)`, `Warp(0)`; `Warp(0)`
+  (`FUN_004a49e0`) gives play back (game state 1).
+
+The rebuild plays these scripts with its script runner and keeps the
+player's money and carried items across the change.
+
+**Rebuild choice.** A scripted move on the player walks the found path,
+then the rest in a straight line if the path stops short. At the player's
+clearance limit (2) the path into Om's Outer Sanctum's portal ends a cell
+before the inner trigger; the original's walk reaches it (the scene would
+never end otherwise), by a route not traced.
+
 ## Evidence
 
 | Claim | Label | Evidence |
@@ -343,10 +391,16 @@ plays its activation once and goes back to idle.
 | Mask cell fields | proven | `FUN_004b5ca0`, `FUN_004475f0`, `FUN_00447740` (`docs/movement.md`) |
 | 3D shape layout | proven | `FUN_004b3310`; every template parses to the last byte |
 | Shape placement and projection | proven | `FUN_004b25e0` (texture coordinates from the projection), the stored coordinates of 343 of 344 small templates (affine fit), Vantir Storage's door frames lying exactly inside or outside its shape |
+| Portal record words | proven | `GPortalPlug_v22`; every shipped portal leads to an existing level and entry, and both its triggers are gizmo triggers on it (test) |
+| Gizmo trigger states | proven | `GGizmoTrigger_v3`, `_v4`, `FUN_0051afa0` |
+| Walking through a portal | proven | `GPortalPlug_v1`, `FUN_004a1d20`, `FUN_004a49e0`; Om's Outer Sanctum's portal takes the player to Lower Decks entry 2 and back out (run) |
 | Drawn with a depth buffer, only the shape's triangles | likely | `FUN_004b2d20` and the Direct3D quads of `FUN_004e2eb0`; the depth state itself is not traced |
 
 ## Open questions
 
+- A portal's state 2 (frames from tag 7 to the last but one) can also
+  change level (`GPortalPlug_v29`, `FUN_004a1a20`); no shipped record starts
+  there.
 - The states of the other classes (Pillar, Splitter, Spawn, Portal,
   Umbilical, ChargingStn, Container, KeyConsole, Flicker, Animated), and
   using breakers, key consoles and lifts.
