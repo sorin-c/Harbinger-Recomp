@@ -48,6 +48,11 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
                               player_->walkTo(player_->x(), player_->y());
                           },
                           [this] { return !player_->path().empty(); }});
+    cutscene_->setAgents({[this](uint16_t instance, bool turn, double x, double y) {
+                              using O = world::Foes::Order;
+                              return foes_->order(instance, turn ? O::Turn : O::Move, x, y, elapsedMs_);
+                          },
+                          [this](uint16_t instance) { return foes_->ordered(instance); }});
     loot_ = std::make_unique<world::Loot>(assets.vfs(), assets.ini(), character, *level_, *walk_, rng_);
     spawners_ = std::make_unique<world::Spawners>(assets.vfs(), *level_);
     bolts_ = std::make_unique<world::Bolts>(assets.vfs(), assets.ini(), *walk_, rng_);
@@ -343,8 +348,14 @@ void WorldView::update(uint64_t nowMs) {
                          unsigned(a->instance));
     // A foe is out of play while its spawner holds it and while it plays
     // its Awake animation after.
-    for (size_t i = 0; i < foes_->all().size(); ++i)
-        foes_->hold(int(i), spawners_->pose(*foes_->all()[i].record, elapsedMs_).has_value());
+    // Once it is out and awake, its wake goes on (Foes::wake).
+    wasHeld_.resize(foes_->all().size());
+    for (size_t i = 0; i < foes_->all().size(); ++i) {
+        const bool held = spawners_->pose(*foes_->all()[i].record, elapsedMs_).has_value();
+        foes_->hold(int(i), held);
+        if (wasHeld_[i] && !held) foes_->wake(int(i), elapsedMs_);
+        wasHeld_[i] = held;
+    }
     if (const auto* f = foes_->find(player_->target())) {
         // A walking foe's velocity and the end of its walk, for leading it.
         double vx = 0, vy = 0;
@@ -403,9 +414,9 @@ void WorldView::update(uint64_t nowMs) {
                              im.strike.roll, im.strike.hit ? "hit" : "miss", im.strike.damage);
         }
     }
-    // The enemies think and move; their blows land on the player. They do
-    // not act during a script's cinematic (a rebuild choice).
-    if (!cinematic()) {
+    // The enemies think and move; their blows land on the player. During a
+    // cinematic only those a script moves act (a rebuild choice).
+    {
         world::Quarry q;
         q.x = player_->x(), q.y = player_->y();
         q.radius = player_->radius();
@@ -417,7 +428,7 @@ void WorldView::update(uint64_t nowMs) {
             q.vx = world::facingCos(player_->facing()) * step, q.vy = world::facingSin(player_->facing()) * step;
             if (!player_->path().empty()) q.dest = player_->path().back();
         }
-        for (const auto& h : foes_->update(elapsedMs_, q)) {
+        for (const auto& h : foes_->update(elapsedMs_, q, cinematic())) {
             if (h.strike.hit) player_->takeDamage(h.strike.damage, elapsedMs_);
             if (log)
                 std::fprintf(stderr, "enemy %d blow: roll %d %s, %d damage, player %.0f left\n", h.foe, h.strike.roll,

@@ -139,11 +139,16 @@ The handlers are the `GGame_v0` switch at `0x4a4600` (game commands),
 | `ActivateGizmo` | `FUN_004b9750` | GIActivatable slot 1 on the gizmo; with `Wait` the script waits until the gizmo is in state 3. |
 | `MoveTo`, `TurnToward` | `GAgentPlug_v0` (`0x4225b0`) -> `FUN_004227c0`, `FUN_004228d0` | the target is the agent instance (`FUN_004a50e0`). The first call starts action 1 (Move) or 4 (Turn) towards the cell (`FUN_004e51b0`) and marks a script order (agent+0x1f1 set, +0x1f0 cleared); the next call is done at once without `Wait`, and with `Wait` once the action has ended (+0x1f0). A dead agent (`FUN_004e4d70`) is done at once. |
 
-The trigger scripts use only these, plus `MoveTo` and `TurnToward` on agents
-that spawners let out (levels 33 and 70). The rebuild opens spawners
-(`docs/formats/gizmo.md`, "Spawners") but skips the agent commands on them
-for now. Portals build scripts in code with `MoveTo` on the player
-(instance 0) and `Warp`, which the rebuild plays. `ActivateGizmo` on a
+The trigger scripts the levels use have only these: `MoveTo` and
+`TurnToward` move Khapra and Croton out of their pods on Om's Outer Sanctum
+(level 33, script 31) and the two guards of the Security Checkpoint
+(level 70, script 80). The rebuild plays them on the enemies: a move finds
+a path as the enemies' moves do; a turn is done at once (the turn rate,
+agent slot 0xdc from `GBlindTurnAction_v1`, is not read). An ordered enemy's
+mind waits until the order is done (agent+0x1f1). During a cinematic only
+ordered enemies act (a rebuild choice: what minds do then is not traced).
+Portals build scripts in code with `MoveTo` on the player (instance 0) and
+`Warp`, which the rebuild plays. `ActivateGizmo` on a
 gizmo that does not take the activation is done at
 once.
 

@@ -57,6 +57,9 @@ public:
         bool engaged = false;      // mind+0x78 holds the target last fought
         bool provoked = false;     // hit by the player (GRoleMind_v8): fights back at the next think
         Policy policy = Policy::None;
+        // A script's order (agent+0x1f1): the mind leaves the agent be
+        // until the ordered action ends.
+        bool scripted = false;
         int step = 0;              // the policy's action index (mind+0x3c)
         Action action = Action::Idle;
         double goalX = 0, goalY = 0;  // mind+0x10..+0x1c: where a move goes
@@ -104,6 +107,19 @@ public:
     };
     const std::vector<Foe>& all() const { return foes_; }
     void hold(int id, bool held) { foes_[size_t(id)].held = held; }
+    // Out of its spawner and done waking: classes whose wake is the
+    // VantirAwake policy (GVantirAwakePolicy_v2, classes 3, 10, 12) take its
+    // second step, a move (BlindMove, action 0x11) to the point 2 cells
+    // ahead along their facing.
+    void wake(int id, uint64_t nowMs);
+
+    // A script's MoveTo or TurnToward (FUN_004227c0, FUN_004228d0) on the
+    // agent with `instance`: starts action 1 (Move, by path) or 4 (Turn)
+    // towards (x, y). False if no live foe has that instance.
+    enum class Order { Move, Turn };
+    bool order(uint16_t instance, Order o, double x, double y, uint64_t nowMs);
+    // Whether the foe with `instance` is still carrying out a script's order.
+    bool ordered(uint16_t instance) const;
     const Foe* find(int id) const;
     // The id of a live foe whose box (template+0x20 + 0.1 either side,
     // FUN_004a2590) holds map point (x, y), the nearest if several; or -1.
@@ -135,7 +151,9 @@ public:
     };
     // Runs every live foe's mind and body to `nowMs` against the player;
     // returns the blows that reached it.
-    std::vector<Hit> update(uint64_t nowMs, const Quarry& player);
+    // In a cinematic only foes carrying out a script's order act (a rebuild
+    // choice: what the minds do during cinematics is not traced).
+    std::vector<Hit> update(uint64_t nowMs, const Quarry& player, bool cinematic = false);
     // A bolt fired by foe `foe` in the last update: from the muzzle at
     // (x, y), height z, along `heading` (fired by whoever owns the bolts).
     struct Shot {

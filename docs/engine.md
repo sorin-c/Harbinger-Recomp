@@ -269,9 +269,18 @@ and Khapra and Croton rise out of them. Evidence: `docs/formats/gizmo.md`,
 Portals take the player from level to level. Stepping up to a portal walks
 the player in, and reaching its inner trigger loads the level it leads to,
 on the entry point it names; there the player walks out of that level's
-portal and play resumes. Money, carried items, hit points
-and energy go along. On Om's Outer Sanctum (level 33) the portal leads to Lower Decks (level 32) entry 2.
-Evidence: `docs/formats/gizmo.md`, "Portals".
+portal and play resumes. Money, carried items, hit points and energy go
+along. On Om's Outer Sanctum (level 33) the portal leads to Lower Decks
+(level 32) entry 2. Evidence: `docs/formats/gizmo.md`, "Portals".
+
+## Milestone 22: scripted enemy moves (done)
+
+Cutscenes move enemies: on Om's Outer Sanctum the twins step out of their
+pods towards the player, and at the Security Checkpoint (level 70) two
+guards step forward and face the player before the fight. Vantir, Khapra
+and Bowel Horses let out of a spawner take two steps forward once awake,
+then fight as usual. Evidence: `docs/formats/script.md`, `docs/formats/gizmo.md`
+("Spawners").
 
 ## Next
 
@@ -279,8 +288,8 @@ Evidence: `docs/formats/gizmo.md`, "Portals".
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
 3. The other classes' states (breakers, key consoles, lifts); the inventory.
-4. The scripts' agent commands (MoveTo, TurnToward) and the woken agents'
-   first steps, on the enemies' minds. The room graph.
+4. The other spawned classes' wake policies; Attack and StrikePose in
+   scripts. The room graph.
 5. Experience; the other particle descriptions; the long range and flanking
    policies.
 6. The in-game loop, HUD and lighting.
