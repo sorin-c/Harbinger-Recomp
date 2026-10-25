@@ -16,6 +16,7 @@
 #include "app/assets.hpp"
 #include "app/cutscene.hpp"
 #include "app/sound.hpp"
+#include "world/bolts.hpp"
 #include "world/combat.hpp"
 #include "world/foes.hpp"
 #include "world/level.hpp"
@@ -37,7 +38,10 @@ public:
     WorldView& operator=(const WorldView&) = delete;
 
     // Where the level's trigger scripts play their sounds and voice lines.
-    void setSound(SoundSystem* sound) { cutscene_->setSound(sound); }
+    void setSound(SoundSystem* sound) {
+        sound_ = sound;
+        cutscene_->setSound(sound);
+    }
     // A trigger script's cinematic mode: the player takes no orders, and
     // steer, walkTo, attack and use do nothing.
     bool cinematic() const { return cutscene_->cinematic(); }
@@ -59,6 +63,11 @@ public:
     // The pad's attack button: hit the nearest enemy within a few cells,
     // preferring those ahead. False if there is none.
     bool attackNearest();
+    // The same with the ranged weapon (right click, the pad's Y / Triangle
+    // or the left trigger, G): shoot the enemy under the pointer, or the
+    // nearest within Player::kShootRange.
+    bool shootAt(float x, float y);
+    bool shootNearest();
     // Using gizmos (consoles, chests) and picking up items: walk up to the
     // item or usable gizmo under view pixel (x, y) and take or use it on
     // arrival; false if there is none there.
@@ -83,6 +92,7 @@ public:
     const world::Player& player() const { return *player_; }
     const world::Foes& foes() const { return *foes_; }
     const world::Loot& loot() const { return *loot_; }
+    const world::Bolts& bolts() const { return *bolts_; }
     // What the player has picked up (item.mgr ids; money adds to money()).
     // A plain list until the inventory is rebuilt.
     const std::vector<uint16_t>& carried() const { return carried_; }
@@ -96,6 +106,9 @@ private:
     void drawPlayer() const;
     void drawTargetBar() const;
     void drawHealth() const;
+    void drawBolts() const;
+    int foeAt(float x, float y) const;
+    void playSound(uint16_t id);
     void drawGroundItems() const;
     // Where a ground item's picture sits on the map screen, and the part of
     // its image to draw; nullptr if it has no picture.
@@ -117,6 +130,8 @@ private:
     std::unique_ptr<world::Foes> foes_;
     std::unique_ptr<Cutscene> cutscene_;
     std::unique_ptr<world::Loot> loot_;
+    std::unique_ptr<world::Bolts> bolts_;
+    SoundSystem* sound_ = nullptr;
     uint32_t pendingPickup_ = 0;  // a ground item the player is walking to (Loot::GroundItem::id)
     std::vector<uint16_t> carried_;
     uint32_t money_ = 0;

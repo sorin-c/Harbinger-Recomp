@@ -26,15 +26,19 @@ bool segmentTouchesBox(double ax, double ay, double bx, double by, double cx, do
 // (dx, dy) = ((x - hotspot x) / 128, (|y| - mean) / 64), is a screen offset
 // turned into the map: (dy + dx, dy - dx).
 std::optional<WalkMap::Point> blowOffset(const std::vector<const anm::Animation*>& anims, size_t dir, uint16_t frame);
+// The height of that frame's tag circle above the ground, in map cells:
+// (hotspot y - mean |y|) / 64 (the screen offset FUN_0042a6a0 keeps as the
+// point's third coordinate). Where a ranged weapon's bolt leaves the muzzle.
+double blowHeight(const std::vector<const anm::Animation*>& anims, uint16_t frame);
 
 // One step along a click or AI path (GAgentPlug_v80, FUN_0041e200): turns
 // to the next waypoint, moves `step` cells, and drops the waypoint once an
 // axis has gone past it (moves under 0.00001 count as none).
 void followPath(std::vector<WalkMap::Point>& path, double& x, double& y, uint8_t& facing, double step);
 
-// A melee swing (agent state 4) driven by its animation's action tags
-// (GAgentPlug_v9, 0x41f330). The swing's clock starts at start(); frames
-// last `frameMs`.
+// A melee swing (agent state 4) or a shot (state 3) driven by its
+// animation's action tags (GAgentPlug_v9, 0x41f330). The swing's clock
+// starts at start(); frames last `frameMs`.
 class Swing {
 public:
     void start(uint64_t nowMs) { start_ = nowMs, frame_ = -1; }
@@ -43,6 +47,10 @@ public:
     struct Result {
         bool ended = false;                   // the animation ran out: the swing is over
         std::optional<WalkMap::Point> blow;   // a blow tag was reached: its map offset
+        double height = 0;                    // ... and its height (blowHeight)
+        // A -2 tag was reached (FUN_0041f8d0: aim at the target, leading it
+        // by this many ms plus the bolt's flight).
+        std::optional<int> aim;
     };
     // Runs the tags of every frame reached since the last call, in the
     // direction `facing` gives (read again after each repeat). At a -3 tag,

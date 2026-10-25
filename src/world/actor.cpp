@@ -45,6 +45,21 @@ std::optional<WalkMap::Point> blowOffset(const std::vector<const anm::Animation*
     return WalkMap::Point{dy + dx, dy - dx};
 }
 
+double blowHeight(const std::vector<const anm::Animation*>& anims, uint16_t frame) {
+    if (anims.empty() || !anims[0]->hotspot) return 0;
+    int sum = 0, count = 0;
+    for (const anm::Animation* a : anims)
+        for (const auto& d : a->directions)
+            for (const auto& raw : d.actions) {
+                const anm::Action act = anm::action(raw);
+                if (act.frame != frame || act.x < 0) continue;
+                sum += std::abs(int(act.y));
+                ++count;
+            }
+    if (count == 0) return 0;
+    return (anims[0]->hotspot->second - double(sum) / count) / 64.0;
+}
+
 void followPath(std::vector<WalkMap::Point>& path, double& x, double& y, uint8_t& facing, double step) {
     if (path.empty()) return;
     const WalkMap::Point target = path.front();
@@ -97,8 +112,11 @@ Swing::Result Swing::advance(const std::vector<const anm::Animation*>& anims, co
                         frame_ += act.y;
                         looped = true;
                     }
+                } else if (act.x == -2) {
+                    r.aim = act.y;
                 } else if (act.x >= 0 && !r.blow) {
                     r.blow = blowOffset(anims, dir, act.frame);
+                    r.height = blowHeight(anims, act.frame);
                 }
             }
         }

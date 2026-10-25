@@ -22,9 +22,9 @@ enum Class : uint16_t {
 // What an agent is doing. An animation's kind is the state it plays in:
 // FUN_00406280 files each animation under template+0x74 + kind * 0x10, and
 // FUN_00407950 picks one of a state's animations at random. Names from the
-// shipped files (Idle\Idle.anm is kind 0, Run\Move.anm 2, Bite\Melee.anm 4,
-// Die\Die.anm 5); the rest are not named yet.
-enum State : int16_t { Idle = 0, Move = 2, Melee = 4, Die = 5 };
+// shipped files (Idle\Idle.anm is kind 0, Run\Move.anm 2, Shoot\ShootBase.anm
+// 3, Bite\Melee.anm 4, Die\Die.anm 5); the rest are not named yet.
+enum State : int16_t { Idle = 0, Move = 2, Shoot = 3, Melee = 4, Die = 5 };
 
 // GAgentAnimCtr (vtable 0x54a05c): one animation the agent can play.
 struct Anim {

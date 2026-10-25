@@ -234,6 +234,17 @@ hurt, enemies wander when restless and go to where they last saw the player.
 At 0 hit points the player dies; a press starts the game again. Evidence:
 `docs/enemies.md`.
 
+## Milestone 18: shooting (done)
+
+The player fires the ranged weapon: the other mouse button on an enemy (or
+G, the pad's Y / Triangle or the left trigger) walks into range and plays
+the shoot animation, which aims (leading a walking target) and fires a
+bolt from the rifle's muzzle every 0.4 s. Bolts are the weapon's particle
+emitter (`.emt`, now read): they fly at its speed, stop at walls and hit
+the first hostile agent in their way with the original's ranged roll. Each
+shot costs energy, which comes back over time. Evidence: `docs/combat.md`
+("Ranged attacks"), `docs/formats/emitter.md`.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
@@ -241,5 +252,5 @@ At 0 hit points the player dies; a press starts the game again. Evidence:
 2. Display gamma, Bink video (later or skipped).
 3. The other classes' states (breakers, key consoles, lifts); the inventory.
 4. Spawners (and the scripts' agent commands with them). The room graph.
-5. The player's ranged attack, enemies that fire, experience.
+5. Enemies that fire, experience; the other particle descriptions.
 6. The in-game loop, HUD and lighting.

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "engine/ini.hpp"
@@ -59,11 +60,29 @@ public:
     // the melee animation (state 4) at it, again and again while it lives
     // (the -3 tag loops the swing). Walking or steering stops it.
     void attack(int id, double x, double y);
-    // Where the target is now, and whether it can still be hit; call before
-    // update while attacking.
-    void trackTarget(double x, double y, bool alive);
+    // Shoot the agent `id` standing at (x, y) with the ranged weapon: walk
+    // until it is within kShootRange and the line of fire is clear, then
+    // play the shoot animation (state 3) at it: the -2 tag aims, the
+    // weapon layer's tag fires (GAgentPlug_v14 -> v19), the -3 tag goes
+    // round again while the target lives and the energy lasts. Without a
+    // ranged weapon it is attack().
+    void shoot(int id, double x, double y);
+    // Where the target is now, whether it can still be hit, and how it is
+    // moving (map cells per ms, for leading it; and where its walk ends);
+    // call before update while attacking.
+    void trackTarget(double x, double y, bool alive, double vx = 0, double vy = 0,
+                     std::optional<WalkMap::Point> dest = {});
     // The agent being attacked, or -1.
     int target() const { return target_; }
+    // Shooting rather than hitting it.
+    bool shooting() const { return target_ >= 0 && rangedMode_; }
+    // A rebuild choice: how near the player goes to shoot, in map cells
+    // (the enemies' range comes from their shoot animation; the player's
+    // is not traced).
+    static constexpr double kShootRange = 8.0;
+    // The height the line of fire is checked at before shooting (a rebuild
+    // stand-in for the muzzle's, about 0.6 cells for the Human's rifle).
+    static constexpr double kMuzzleGuess = 0.6;
     // Map cells from the target at which the swing starts (a rebuild choice:
     // the blow lands about 0.65 cells ahead, the target's box is ~0.5 wide).
     static constexpr double kReach = 0.9;
@@ -78,11 +97,29 @@ public:
     };
     // Advances to `nowMs`; returns the blow if one lands in this step.
     std::optional<Blow> update(uint64_t nowMs);
+    // A shot fired in the last update: where the bolt leaves the muzzle, at
+    // which height, and its heading.
+    struct Shot {
+        double x = 0, y = 0, z = 0;
+        uint8_t heading = 0;
+    };
+    std::optional<Shot> takeShot() { return std::exchange(shot_, std::nullopt); }
 
     // The weapon the blows use (the equipped weapon's .wpn), and the
     // attack rating (GHumanPlayerPlug's +0x23c, 15 for a new character).
     const wpn::Weapon& weapon() const { return weapon_; }
     int meleeRating() const { return 15; }
+    // The ranged weapon (the first equipped weapon of kind 1-3: the
+    // Human's rifle), its rating (+0x23e, 15) and its energy (weapon+0x58,
+    // up to +0x60; a shot costs +0x68, and it comes back at +0x70 a second,
+    // FUN_00521e00 from GAgentPlug_v6).
+    const wpn::Weapon* rangedWeapon() const { return ranged_ ? &*ranged_ : nullptr; }
+    int rangedRating() const { return 15; }
+    double energy() const { return energy_; }
+    double maxEnergy() const { return ranged_ ? ranged_->ranged->maxEnergy : 0; }
+    // The speed the ranged weapon's bolts fly at (map cells per ms), for
+    // leading a moving target; set by whoever knows the effects.
+    void setBoltSpeed(double cellsPerMs) { boltSpeed_ = cellsPerMs; }
 
     // Hit points (plug+0x88) and their maximum (+0x90): each character's
     // constructor sets its own (Human 70, FUN_004f26c0; Gladiator 80,
@@ -123,6 +160,9 @@ private:
     void setState(agt::State s, uint64_t nowMs);
     void stepSteer(double step);
     std::optional<Blow> stepMelee(uint64_t nowMs);
+    void stepShoot(uint64_t nowMs);
+    bool canShoot() const;
+    void aim(int delayMs);
     void faceTarget();
     void noticeLoops(uint64_t nowMs);
     std::vector<const anm::Animation*> layerAnims(agt::State s);
@@ -149,7 +189,16 @@ private:
     int target_ = -1;
     double targetX_ = 0, targetY_ = 0;
     bool targetAlive_ = false;
+    double targetVx_ = 0, targetVy_ = 0;
+    std::optional<WalkMap::Point> targetDest_;
+    bool rangedMode_ = false;
     Swing swing_;
+
+    std::optional<wpn::Weapon> ranged_;
+    double energy_ = 0;
+    double boltSpeed_ = 0;
+    double aimX_ = 0, aimY_ = 0;  // plug+0x78, +0x80: where the shot goes
+    std::optional<Shot> shot_;
 
     double hitPoints_ = 0, maxHitPoints_ = 0;
     bool dead_ = false;

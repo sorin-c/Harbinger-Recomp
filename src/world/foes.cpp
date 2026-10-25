@@ -123,6 +123,14 @@ std::optional<Strike> Foes::blow(int id, double fromX, double fromY, double toX,
     const agt::Template& t = tmpl(f);
     if (!segmentTouchesBox(fromX, fromY, toX, toY, f.x, f.y, halfSize(t))) return std::nullopt;
     const Strike s = strike(rating, weapon, t, rng_, {wpn::Melee});
+    hurt(id, s, nowMs);
+    return s;
+}
+
+void Foes::hurt(int id, const Strike& s, uint64_t nowMs) {
+    if (id < 0 || size_t(id) >= foes_.size()) return;
+    Foe& f = foes_[size_t(id)];
+    if (f.dead) return;
     if (s.hit) {
         f.hitPoints -= s.damage;
         // FUN_004a2590: damage reaching the hit points kills (GAmpEnemyPlug_v61
@@ -139,7 +147,6 @@ std::optional<Strike> Foes::blow(int id, double fromX, double fromY, double toX,
             f.mind.provoked = true;
         }
     }
-    return s;
 }
 
 std::vector<const anm::Animation*> Foes::anims(const Foe& f, agt::State s) const {

@@ -67,9 +67,10 @@ Defender defenderOf(const agt::Template& t);
 // percent and truncated. Against a player, a type whose armour level plus
 // the roll exceeds the total is stopped. A hit does at least 1, and twice
 // as much on a roll of 49 or 50 unless the target is a player.
-// `types` limits the weapon's damage to those types (empty: all).
+// `types` limits the weapon's damage to those types (empty: all). A ranged
+// attack adds the weapon's +0x2d bonus instead of +0x2c.
 Strike strike(int rating, const wpn::Weapon& weapon, const Defender& target, Rng& rng,
-              const std::vector<uint16_t>& types = {});
+              const std::vector<uint16_t>& types = {}, bool ranged = false);
 inline Strike strike(int rating, const wpn::Weapon& weapon, const agt::Template& target, Rng& rng,
                      const std::vector<uint16_t>& types = {}) {
     return strike(rating, weapon, defenderOf(target), rng, types);

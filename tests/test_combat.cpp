@@ -1,7 +1,8 @@
-// Tests for fighting: the weapon files, the original's random numbers and
-// damage arithmetic, and the player hitting an enemy until it dies.
-// Synthetic cases always run; with HARBINGER_DATA set, every weapon file
-// parses and a fight in Storage (level 3) runs to the enemy's death.
+// Tests for fighting: the weapon and emitter files, the original's random
+// numbers and damage arithmetic, the line of fire, and the player hitting
+// and shooting an enemy until it dies. Synthetic cases always run; with
+// HARBINGER_DATA set, every weapon and effect file parses and fights in
+// Storage (level 3) and the Junkyard (level 2) run to a death.
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -12,8 +13,10 @@
 
 #include "engine/ini.hpp"
 #include "engine/vfs.hpp"
+#include "formats/emt.hpp"
 #include "formats/mgr.hpp"
 #include "formats/wpn.hpp"
+#include "world/bolts.hpp"
 #include "world/combat.hpp"
 #include "world/foes.hpp"
 #include "world/level.hpp"
@@ -61,6 +64,28 @@ static void testWeapon() {
         threw = true;
     }
     CHECK(threw);
+    // A ranged weapon (kinds 1-3) ends with GRangedWeapon_v7's 28 bytes.
+    auto gun = weaponFile(1.2, 1, {{1, 5, 0}});
+    put16(gun, 0x8000 | 65), put16(gun, 34);  // the lob bit and effect, the sound
+    for (uint16_t v : {0, 153, 82, 60, 85, 6}) put16(gun, v);  // light, size, energy, cost
+    const double recharge = 4;
+    gun.resize(gun.size() + 8);
+    std::memcpy(gun.data() + gun.size() - 8, &recharge, 8);
+    put16(gun, 0), put16(gun, 125);  // pierce, impact sound
+    const auto g = wpn::parse(gun);
+    CHECK(g.ranged && g.ranged->effect == 65 && g.ranged->lob && g.ranged->sound == 34);
+    CHECK(g.ranged->light[1] == 153 && g.ranged->lightSize == 60 && g.ranged->maxEnergy == 85);
+    CHECK(g.ranged->cost == 6 && g.ranged->recharge == 4 && g.ranged->pierce == 0 && g.ranged->impactSound == 125);
+}
+
+static void testLineOfFire() {
+    // FUN_00402120: a half cell taller than twice the bolt's height stops it.
+    world::WalkMap walk(20, 20);
+    walk.at(10, 6).height = 2;
+    CHECK(world::lineOfFire(walk, 1, 3.2, 8, 3.2, 1.1));   // 2 is not above 2.2...
+    CHECK(!world::lineOfFire(walk, 1, 3.2, 8, 3.2, 0.7));  // ... but above 1.4
+    CHECK(world::lineOfFire(walk, 1, 1.2, 8, 1.2, 0.5));   // another row
+    CHECK(!world::lineOfFire(walk, 1, 1, 12, 1, 0.5));     // off the map
 }
 
 static void testArithmetic() {
@@ -165,6 +190,96 @@ static void testRealData(const char* dir) {
         player.update(t += 10);
     }
     CHECK(player.state() == agt::Idle && player.target() == -1);
+
+    // Every effect file parses; the weapons' bolts (physics type 1 with a
+    // billboard) are decoded to the last byte.
+    const auto effects = mgr::parse(*vfs.read(ini.require("Paths", "Effects")));
+    int complete = 0, total = 0;
+    for (const auto& [eid, path] : effects.entries) {
+        const auto data = vfs.read(path);
+        if (!data) continue;
+        ++total;
+        try {
+            complete += emt::parse(*data).complete;
+        } catch (const std::runtime_error& e) {
+            std::fprintf(stderr, "%s: %s\n", path.c_str(), e.what());
+            CHECK(false);
+        }
+    }
+    std::printf("%d effect files parsed, %d decoded whole\n", total, complete);
+    CHECK(total > 170 && complete > 110);
+    // The E-16's bolt: effect 65 (HPlasma1.emt), 5 cells a second for 3 s.
+    CHECK(e16.ranged && e16.ranged->effect == 65 && e16.ranged->maxEnergy == 85 && e16.ranged->cost == 6);
+    CHECK(e16.ranged->recharge == 4 && e16.ranged->impactSound == 125);
+    world::Bolts bolts(vfs, ini, walk, rng);
+    const emt::Emitter* plasma = bolts.effect(65);
+    CHECK(plasma && plasma->basic->lifeMs == 3000 && std::fabs(plasma->basic->speed - 0.005) < 1e-6);
+    CHECK(plasma && plasma->billboard->image.find("1_Plasma") != std::string::npos);
+    CHECK(plasma && plasma->billboard->frameW == 128 && plasma->billboard->columns * plasma->billboard->rows == 8);
+}
+
+// Storage: the Human shoots the nearest enemy until it dies, spending and
+// regaining the rifle's energy.
+static void testShooting(const char* dir) {
+    Vfs vfs(dir);
+    const Ini ini = Ini::fromBytes(*vfs.read("Harbinger.ini"));
+    world::Level level(vfs, ini, 3);
+    world::WalkMap walk(level);
+    world::Rng rng(5);
+    world::Foes foes(vfs, ini, level, walk, rng);
+    world::Bolts bolts(vfs, ini, walk, rng);
+    world::Player player(vfs, ini, world::Character::Human, walk, level.map().entries[0]);
+    CHECK(player.rangedWeapon() && player.energy() == 85 && player.maxEnergy() == 85);
+    if (!player.rangedWeapon()) return;
+    player.setBoltSpeed(bolts.speedOf(*player.rangedWeapon()));
+    const int id = foes.nearest(player.x(), player.y(), world::Player::kShootRange);
+    CHECK(id >= 0);
+    if (id < 0) return;
+    const auto& foe = foes.all()[size_t(id)];
+    player.shoot(id, foe.x, foe.y);
+    int shots = 0, hits = 0;
+    double lowest = player.energy();
+    uint64_t t = 0;
+    for (; t < 60000 && !foe.dead; t += 10) {
+        player.trackTarget(foe.x, foe.y, !foe.dead);
+        player.update(t);
+        if (const auto s = player.takeShot()) {
+            ++shots;
+            CHECK(bolts.fire(world::Bolts::kPlayer, s->x, s->y, s->z, s->heading, *player.rangedWeapon(),
+                             player.rangedRating(), t));
+            CHECK(s->z > 0.3 && s->z < 1.2);  // the muzzle is off the ground
+        }
+        lowest = std::min(lowest, player.energy());
+        std::vector<world::Defender> defenders;
+        for (size_t i = 0; i < foes.all().size(); ++i) defenders.push_back(foes.defender(int(i)));
+        for (const auto& im : bolts.update(t, [&](int) {
+                 std::vector<world::Bolts::Body> out;
+                 for (size_t i = 0; i < foes.all().size(); ++i)
+                     if (!foes.all()[i].dead)
+                         out.push_back({int(i), foes.all()[i].x, foes.all()[i].y,
+                                        level.agentTemplate(*foes.all()[i].record).d20, &defenders[i]});
+                 return out;
+             })) {
+            if (im.target == id) ++hits;
+            foes.hurt(im.target, im.strike, t);
+        }
+    }
+    CHECK(foe.dead && shots >= 1 && hits >= 1);
+    CHECK(lowest <= 85 - 6);
+    std::printf("shooting: enemy (%d hit points) died after %d shots, %d reaching it, in %.1f s\n",
+                foe.maxHitPoints, shots, hits, t / 1000.0);
+    // The shooting stops with the target dead, and the rifle's energy comes
+    // back at 4 a second, up to 85.
+    for (int i = 0; i < 100; ++i) {
+        player.trackTarget(foe.x, foe.y, !foe.dead);
+        player.update(t += 10);
+    }
+    CHECK(player.state() == agt::Idle && player.target() == -1);
+    const double before = player.energy();
+    for (int i = 0; i < 100; ++i) player.update(t += 10);
+    const double after = player.energy();
+    if (std::fabs(after - std::min(85.0, before + 4.0)) >= 0.05) std::printf("energy %.2f -> %.2f\n", before, after);
+    CHECK(std::fabs(after - std::min(85.0, before + 4.0)) < 0.05);
 }
 
 // Junkyard: the enemies notice a player who stands still within sight, walk
@@ -233,8 +348,9 @@ static void testEnemies(const char* dir) {
 int main() {
     testWeapon();
     testArithmetic();
+    testLineOfFire();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
-        testRealData(dir), testEnemies(dir);
+        testRealData(dir), testShooting(dir), testEnemies(dir);
     else
         std::printf("HARBINGER_DATA not set; skipping real-data checks\n");
     if (failures) std::fprintf(stderr, "%d check(s) failed\n", failures);

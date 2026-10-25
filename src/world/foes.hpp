@@ -98,6 +98,13 @@ public:
     std::optional<Strike> blow(int id, double fromX, double fromY, double toX, double toY, int rating,
                                const wpn::Weapon& weapon, uint64_t nowMs);
 
+    // A hit rolled elsewhere (a bolt) lands on foe `id`: its hit points go
+    // down, at 0 or below it starts dying at `nowMs`, otherwise it turns on
+    // the attacker (GRoleMind_v8).
+    void hurt(int id, const Strike& s, uint64_t nowMs);
+    // The defence a bolt rolls against.
+    Defender defender(int id) const { return defenderOf(tmpl(foes_[size_t(id)])); }
+
     // A blow by foe `foe` that reached the player.
     struct Hit {
         int foe = -1;

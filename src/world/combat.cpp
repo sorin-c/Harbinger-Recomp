@@ -45,10 +45,10 @@ Defender defenderOf(const agt::Template& t) {
 }
 
 Strike strike(int rating, const wpn::Weapon& weapon, const Defender& target, Rng& rng,
-              const std::vector<uint16_t>& types) {
+              const std::vector<uint16_t>& types, bool ranged) {
     Strike s;
     s.roll = int(rng.next() % 50 + 1);
-    const int total = rating + s.roll + weapon.hitBonus;
+    const int total = rating + s.roll + (ranged ? weapon.bonus2d : weapon.hitBonus);
     s.critical = s.roll >= 49;
     if (!s.critical && total < target.defence) return s;
     bool dealt = false;

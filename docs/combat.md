@@ -26,10 +26,20 @@ version > 1.1 (GWeapon_v7, 0x51f780):
   u8                weapon+0x2d
 u16  n              FUN_0051fb20
 n x  u16 type, u16 level, u16 extra   -> FUN_005202b0: a map type -> (level, extra)
-ranged kinds: 26 or 28 more bytes (energy and projectile; not decoded)
+ranged kinds 1-3 (GRangedWeapon_v7, 0x521520), 28 more bytes:
+  u16 effect        +0x30: the bolt's emitter (effects.mgr id); the top bit (+0x7a) lobs it
+  u16 sound         +0x38: the shot's sound (sound.mgr id)
+  i16 r, g, b, size +0x44..+0x50: the bolt's light, colour / 255, radius / 100
+  i16 energy        +0x60 the maximum and +0x58 the start
+  i16 cost          +0x68: energy per shot
+  f64 recharge      +0x70: energy back per second
+  i16 pierce        +0x78
+  u16 impact sound  +0x40: played where a bolt hits (FUN_00521920)
 ```
 
-All 865 files parse; the melee and armour kinds end exactly after the list.
+All 865 files parse and end exactly after their last field. The E-16:
+effect 65, sound 34, energy 85, cost 6, recharge 4 a second, impact sound
+125.
 Damage types as the attack roll uses them: 0 melee, 1 plasma, 2 EMP, 3 and 4
 other damage, 5-8 effects (their own table, applied through another call),
 9 an armour's class, 10 not damage. The E-16 has melee level 7 and plasma
@@ -102,7 +112,7 @@ weapon object `FUN_004213a0` hands over, not traced (guessed).
   - `x = -3` (ChopBase, frame 9, y = -9): while the attack goes on, move the
     animation's start time by `y` frames (back to frame 0) and face the
     target again: the swing repeats.
-  - `x = -2` (ShootBase, frame 0): fire (ranged, not rebuilt yet).
+  - `x = -2` (ShootBase, frame 0): aim (see "Ranged attacks").
   - any other x: the blow lands (`GAgentPlug_v14` -> slot 5 ->
     `FUN_004a2590`). The Human's rifle layers carry it at frame 6
     (`ChopRifle2.anm`: (6, 159, 103) in direction 0).
@@ -116,6 +126,44 @@ weapon object `FUN_004213a0` hands over, not traced (guessed).
   hits the first hostile agent still alive whose square (template+0x20,
   about 0.39, + 0.1 each side) it touches (`FUN_0048b510`). Enemies' blows
   land on the player the same way; their minds are in `docs/enemies.md`.
+
+## Ranged attacks
+
+- The player's ranged weapon is its first equipped weapon of kind 1-3 (the
+  Human's E-16 is kind 3, a rifle that also strikes in melee).
+- The shot plays the shoot animation (state 3, `Dude\Shoot\ShootBase.anm`
+  plus the equipment's shoot layers): 7 frames, tags (0, -2, 200) and
+  (4, -3, -4) in the body, a point tag at frame 2 in the rifle layer.
+  - `x = -2` (`FUN_0041f8d0`): aim. The aim point (plug+0x78, +0x80) is the
+    target's position; a walking target is led by
+    `t = y * 0.001 + dist / (bolt speed - its speed towards the shooter)`
+    seconds (speeds in cells a second), but not past the end of its walk.
+  - the point tag (`GAgentPlug_v14` with the weapon in ranged mode): the
+    muzzle is the tag's point (`FUN_0042a6a0`, its height the tag circle's,
+    about 0.6 cells for the rifle); an aim point within 2 cells is pushed out
+    to 2 cells along the facing; the bolt heads from the muzzle to the aim
+    point (`GAgentPlug_v19` -> `FUN_00520bc0`).
+  - `x = -3`: back 4 frames, another shot: one every 0.4 s.
+- Firing (`GAgentPlug_v19`, `FUN_00520bc0`): checks the line of fire
+  (`FUN_00402120`), starts the weapon's emitter at the muzzle (one bolt for
+  every weapon in the game, `docs/formats/emitter.md`), takes the cost off
+  the energy (never below 0) and raises the shooter's visibility by 30.
+- Energy comes back every frame (`GAgentPlug_v6` -> `FUN_00521e00`):
+  `+= ms * 0.001 * (recharge + type 9 mods + a bonus)`, up to the maximum.
+- A bolt in flight (`FUN_00499320`, for each particle every frame): the
+  step from its last position must be clear of walls at its height + 0.1
+  (`FUN_00402120`: walking the half cells, stopped by one whose height byte
+  is above twice that, or the map's edge); a wall ends it (a weapon with
+  pierce would bounce, -25 each time; none of the player's has any). Then
+  the agents in the map buckets along the step: the first that is not the
+  shooter, not dead and hostile to it, whose circle (radius template+0x20)
+  the step crosses (`FUN_0048b390`), is hit: the impact sound plays and
+  `FUN_00452290` rolls with the ranged weapon. A bolt goes through targets
+  while its pierce, less each target's defence, stays above 0.
+- The ranged roll adds the weapon's +0x2d bonus instead of +0x2c, the
+  player's ranged rating (+0x23e, 15), and from a kind 3 weapon only damage
+  types 1-4 (`GRangedWeapon_v5` with `FUN_00520060`): the E-16's bolt does
+  plasma, its butt melee.
 
 ## Death
 
@@ -133,7 +181,16 @@ keeps its last frame: the corpse stays.
   cells, favouring those ahead.
 - **Which agents are enemies**: classes 1-19 and 37-40 (not the NPCs 20-28,
   the mines and cameras 29-36 and 41).
-- A small red bar over the enemy being fought stands in for the HUD's.
+- A small red bar over the enemy being fought stands in for the HUD's; the
+  player's hit points and energy are stand-in bars at the bottom left.
+- **Shooting**: the other mouse button on an enemy, G, the pad's Y /
+  Triangle or the left trigger. The player walks until the target is
+  within 8 cells and the line of fire at 0.6 cells is clear (the player's
+  range is not traced), shoots while the energy covers a shot, and stops
+  when the target dies.
+- Bolts are drawn over the map, at the billboard's first size, turned to
+  their flight; their lights, the impact effect and lobbed or bouncing
+  bolts are not rebuilt.
 - Walking or steering cuts a swing short.
 
 ## Evidence
@@ -153,7 +210,12 @@ keeps its last frame: the corpse stays.
 | Blow point | proven / likely | `FUN_0042a6a0`, `FUN_0042c450`; that the body animation holds the layers' tags is likely |
 | Segment against the target's square | likely | `FUN_0048b510`'s outcode tests; the argument order is inferred |
 | Melee damage only for a blow | guessed | see above |
-| Approach distance, picking | rebuild choice | |
+| Ranged weapon fields | proven | `GRangedWeapon_v7`; every file ends exactly |
+| Aim tag, lead, muzzle point | proven / likely | `FUN_0041f8d0`, `GAgentPlug_v14`; constants 0.001, 1000, 10, 2 |
+| Firing, energy cost, recharge | proven | `GAgentPlug_v19`, `FUN_00520bc0`, `FUN_00521e00` |
+| Bolt flight, wall and agent tests, pierce | proven / likely | `FUN_00499320`, `FUN_00402120`; `FUN_0048b390` as a circle test is likely |
+| Ranged roll: +0x2d bonus, types 1-4 for kind 3 | likely | `FUN_00452290`, `GRangedWeapon_v5`, `FUN_00520060` |
+| Approach distance, picking, shooting range | rebuild choice | |
 
 Not compared under Wine yet: the first enemies are a level away from the
 start, and the original's save files are not used.

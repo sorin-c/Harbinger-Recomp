@@ -25,6 +25,7 @@ add_library(harbinger_formats
   src/formats/gim.cpp
   src/formats/itf.cpp
   src/formats/itm.cpp
+  src/formats/emt.cpp
   src/formats/wpn.cpp
   src/formats/mgr.cpp
   src/formats/sqh.cpp
@@ -66,6 +67,7 @@ add_library(harbinger_core
   src/world/combat.cpp
   src/world/foes.cpp
   src/world/actor.cpp
+  src/world/bolts.cpp
   src/world/walkmap.cpp
   src/world/script.cpp
   src/world/loot.cpp

@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "formats/itm.hpp"
+#include "world/bolts.hpp"
 #include "world/motion.hpp"
 
 namespace harbinger::world {
@@ -80,9 +81,12 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
         // gladiator's blade over its gun, the right gauntlet over the left).
         // The original's choice (FUN_004213a0) is not traced: guessed.
         static constexpr uint16_t kRank[] = {0, 3, 0, 0, 1, 4, 0, 1, 2};
-        if (kRank[cls] > weaponRank) {
-            if (const std::string* w = weapons.find(item.socketed->word38)) {
-                weapon_ = wpn::parse(readOrThrow(vfs, *w));
+        if (const std::string* w = weapons.find(item.socketed->word38)) {
+            wpn::Weapon weapon = wpn::parse(readOrThrow(vfs, *w));
+            // The shots' weapon: the first that fires (kinds 1-3).
+            if (weapon.ranged && !ranged_) ranged_ = weapon;
+            if (kRank[cls] > weaponRank) {
+                weapon_ = std::move(weapon);
                 weaponRank = kRank[cls];
             }
         }
@@ -109,6 +113,8 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
         case Character::Culibine: maxHitPoints_ = 60; break;
     }
     hitPoints_ = maxHitPoints_;
+    // GRangedWeapon_v7 starts the energy full (+0x58 = +0x60).
+    if (ranged_) energy_ = std::max<double>(0, ranged_->ranged->maxEnergy);
 }
 
 void Player::takeDamage(int damage, uint64_t nowMs) {
@@ -147,6 +153,8 @@ void Player::attack(int id, double x, double y) {
     if (dead_) return;
     steerX_ = steerY_ = 0;
     if (target_ == id && state_ == agt::Melee) return;  // already swinging at it
+    if (state_ == agt::Shoot) setState(agt::Idle, lastMs_);
+    rangedMode_ = false;
     target_ = id;
     targetX_ = x;
     targetY_ = y;
@@ -155,10 +163,58 @@ void Player::attack(int id, double x, double y) {
     if (std::hypot(x - x_, y - y_) > kReach) path_ = walk_.findPath({x_, y_}, {x, y}, limit_);
 }
 
-void Player::trackTarget(double x, double y, bool alive) {
+void Player::shoot(int id, double x, double y) {
+    if (dead_) return;
+    if (!ranged_) return attack(id, x, y);
+    steerX_ = steerY_ = 0;
+    if (target_ == id && rangedMode_ && state_ == agt::Shoot) return;  // already shooting at it
+    if (state_ == agt::Melee) setState(agt::Idle, lastMs_);
+    target_ = id;
+    rangedMode_ = true;
+    targetX_ = x;
+    targetY_ = y;
+    targetAlive_ = true;
+    targetVx_ = targetVy_ = 0;
+    targetDest_.reset();
+    path_.clear();
+    if (!canShoot()) path_ = walk_.findPath({x_, y_}, {x, y}, limit_);
+}
+
+void Player::trackTarget(double x, double y, bool alive, double vx, double vy, std::optional<WalkMap::Point> dest) {
     targetX_ = x;
     targetY_ = y;
     targetAlive_ = alive;
+    targetVx_ = vx;
+    targetVy_ = vy;
+    targetDest_ = dest;
+}
+
+bool Player::canShoot() const {
+    // In range, and nothing tall between the player and the target at about
+    // a muzzle's height (a rebuild choice for when to stop walking).
+    if (std::hypot(targetX_ - x_, targetY_ - y_) > kShootRange) return false;
+    return lineOfFire(walk_, x_, y_, targetX_, targetY_, kMuzzleGuess + 0.1);
+}
+
+void Player::aim(int delayMs) {
+    // FUN_0041f8d0 at the -2 tag: aim at the target; if it is walking, lead
+    // it by delay * 0.001 s plus the bolt's flight, dist / (bolt speed -
+    // its speed towards the shooter), but no further than where its walk
+    // ends.
+    aimX_ = targetX_, aimY_ = targetY_;
+    const double speed = std::hypot(targetVx_, targetVy_) * 1000.0;  // cells per second
+    if (speed <= 0 || boltSpeed_ <= 0) return;
+    const double dist = std::hypot(targetX_ - x_, targetY_ - y_);
+    const uint8_t towards = facingTowards(targetX_ - x_, targetY_ - y_);
+    const uint8_t moving = facingTowards(targetVx_, targetVy_);
+    const double closing = facingCos(uint8_t(moving - towards)) * speed;
+    const double t = delayMs * 0.001 + dist / (boltSpeed_ * 1000.0 - closing);
+    double ax = targetX_ + t * facingCos(moving) * speed, ay = targetY_ + t * facingSin(moving) * speed;
+    if (targetDest_) {
+        const double toDest = std::hypot(targetDest_->x - targetX_, targetDest_->y - targetY_);
+        if (toDest < std::hypot(ax - targetX_, ay - targetY_)) ax = targetDest_->x, ay = targetDest_->y;
+    }
+    aimX_ = ax, aimY_ = ay;
 }
 
 void Player::faceTarget() {
@@ -206,10 +262,35 @@ std::optional<Player::Blow> Player::update(uint64_t nowMs) {
     const double step = speed_ * (halfLastDt_ + halfDt);
     halfLastDt_ = halfDt;
     if (dead_) return std::nullopt;
-    // A new order (walking, steering) cuts the swing short.
-    if (state_ == agt::Melee && target_ < 0 && (steerX_ != 0 || steerY_ != 0 || !path_.empty())) setState(agt::Idle, nowMs);
+    // GAgentPlug_v6 -> FUN_00521e00: the ranged weapon's energy comes back
+    // at its recharge rate (plus its type 9 mods and a bonus from the
+    // caller, not rebuilt), up to its maximum.
+    if (ranged_) energy_ = std::min<double>(ranged_->ranged->maxEnergy, energy_ + dt * 0.001 * ranged_->ranged->recharge);
+    // A new order (walking, steering) cuts the swing or the shot short.
+    const bool busy = state_ == agt::Melee || state_ == agt::Shoot;
+    if (busy && target_ < 0 && (steerX_ != 0 || steerY_ != 0 || !path_.empty())) setState(agt::Idle, nowMs);
     if (state_ == agt::Melee) return stepMelee(nowMs);
-    if (target_ >= 0) {
+    if (state_ == agt::Shoot) {
+        stepShoot(nowMs);
+        return std::nullopt;
+    }
+    if (target_ >= 0 && rangedMode_) {
+        if (!targetAlive_) {
+            target_ = -1;
+            path_.clear();
+        } else if (canShoot()) {
+            path_.clear();
+            if (energy_ >= ranged_->ranged->cost) {
+                faceTarget();
+                setState(agt::Shoot, nowMs);
+                swing_.start(nowMs);
+                stepShoot(nowMs);
+                return std::nullopt;
+            }
+        } else if (path_.empty()) {
+            target_ = -1;  // nowhere left to walk: give up
+        }
+    } else if (target_ >= 0) {
         if (!targetAlive_) {
             target_ = -1;
             path_.clear();
@@ -245,6 +326,40 @@ std::optional<Player::Blow> Player::stepMelee(uint64_t nowMs) {
         if (!targetAlive_) target_ = -1;
     }
     return blow;
+}
+
+void Player::stepShoot(uint64_t nowMs) {
+    const auto anims = layerAnims(agt::Shoot);
+    const double cost = ranged_ ? ranged_->ranged->cost : 0;
+    // At the -3 tag: another shot while the target lives, can still be shot
+    // at and the energy lasts (a rebuild condition: the original's
+    // GAttackAction decides, not traced).
+    const auto r = swing_.advance(anims, facing_, nowMs, kFrameMs, [&] {
+        if (target_ < 0 || !targetAlive_ || energy_ < cost || !canShoot()) return false;
+        faceTarget();
+        return true;
+    });
+    if (r.aim) aim(*r.aim);
+    if (r.blow && ranged_) {
+        // GAgentPlug_v14 with the weapon in ranged mode: the muzzle is the
+        // weapon layer's tag point; an aim point nearer than 2 cells is
+        // pushed out to 2 cells along the facing; the bolt heads from the
+        // muzzle to the aim point (GAgentPlug_v19 -> FUN_00520bc0).
+        const double mx = x_ + r.blow->x, my = y_ + r.blow->y;
+        double ax = aimX_, ay = aimY_;
+        if ((ax - x_) * (ax - x_) + (ay - y_) * (ay - y_) < 4.0) {
+            const uint8_t f = facingTowards(ax - x_, ay - y_);
+            ax = x_ + facingCos(f) * 2.0, ay = y_ + facingSin(f) * 2.0;
+        }
+        shot_ = Shot{mx, my, r.height, facingTowards(ax - mx, ay - my)};
+        energy_ = std::max(0.0, energy_ - cost);
+        // GAgentPlug_v19: firing makes the shooter more noticeable, +30.
+        visibility_ = uint8_t(std::min(255, visibility_ + 30));
+    }
+    if (r.ended) {
+        setState(agt::Idle, nowMs);
+        if (!targetAlive_) target_ = -1;
+    }
 }
 
 void Player::stepSteer(double step) {
@@ -289,7 +404,7 @@ Player::Pose Player::pose(uint64_t nowMs) {
     // FUN_0042c020: 100 ms a frame, looping over the first direction's count.
     const size_t frames = base.directions.empty() ? 0 : base.directions[0].frames.size();
     if (frames == 0 || dir >= base.directions.size() || base.directions[dir].frames.empty()) return pose;
-    const uint64_t start = state_ == agt::Melee ? swing_.startMs() : stateStart_;
+    const uint64_t start = (state_ == agt::Melee || state_ == agt::Shoot) ? swing_.startMs() : stateStart_;
     const size_t step = size_t((nowMs - std::min(nowMs, start)) / kFrameMs);
     // The death animation plays once and keeps its last frame.
     const size_t frame = state_ == agt::Die ? std::min(step, frames - 1) : step % frames;
