@@ -395,10 +395,14 @@ the first frame of its state 7 animation (nothing if it has none: drones
 wait unseen) and cannot be attacked. Spawners and splitters open on
 activation (event triggers' gizmo lists, `ActivateGizmo`); at Begin
 Activate the attached gizmos are activated, at End Activate the agents are
-let out, and Awake agents play their state 7 animation once. Not yet: the
-BlindMove step and enemy minds taking over afterwards (the enemy AI work),
-and a held agent waking when hit. On Om's Outer Sanctum (level 33) the
-cutscene opens both pods and the twins rise out of them.
+let out, and Awake agents play their state 7 animation once. Held and
+waking agents are out of the enemies' minds (they do not think and cannot
+be hit). Then VantirAwake's second step: classes 3, 10 and 12 walk to the
+point 2 cells ahead (`GBlindMoveAction_v1` finds the path as a move does,
+`FUN_004239f0`), and their minds take over. Not yet: the other classes'
+wake policies (10, 0x15, 0xb, the mind's slot 12), and a held agent waking
+when hit. On Om's Outer Sanctum (level 33) the cutscene opens both pods and
+the twins rise out of them.
 
 ## Portals
 

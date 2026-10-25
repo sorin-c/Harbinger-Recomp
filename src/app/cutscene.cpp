@@ -156,11 +156,23 @@ void Cutscene::runPortal(const chk::GizmoRecord& g, const world::PortalLink& lin
 }
 
 world::CommandResult Cutscene::moveCmd(const gsc::Line& line, bool first, uint64_t nowMs) {
-    // FUN_004227c0 on the agent the instance names (FUN_004a50e0); the
-    // player is instance 0 (likely). Other agents do not walk yet.
+    // FUN_004227c0 / FUN_004228d0 on the agent the instance names
+    // (FUN_004a50e0); the player is instance 0 (likely). The first call
+    // starts the action; the next is done at once without Wait, and with
+    // Wait once the action has ended.
     (void)nowMs;
     using R = world::CommandResult;
-    if (uint16_t(line.number(2)) != 0 || !player_.walkTo) return R::Skip;
+    const uint16_t instance = uint16_t(line.number(2));
+    const bool turn = line.command == gsc::Command::TurnToward;
+    if (instance != 0) {
+        if (!agents_.order) return R::Skip;
+        if (first) {
+            if (!agents_.order(instance, turn, line.number(0), line.number(1))) return R::Done;  // gone or dead
+            return line.waits() ? R::Running : R::Done;
+        }
+        return agents_.busy(instance) ? R::Running : R::Done;
+    }
+    if (turn || !player_.walkTo) return R::Skip;
     if (first) {
         player_.walkTo(line.number(0), line.number(1));
         return line.waits() ? R::Running : R::Done;
@@ -221,7 +233,8 @@ world::CommandResult Cutscene::run(const gsc::Line& line, bool first, uint64_t n
         case C::ThoughtBubble: return bubbleCmd(line, first, nowMs);
         case C::Sound: return soundCmd(line, first, nowMs);
         case C::ActivateGizmo: return gizmoCmd(line, first, nowMs);
-        case C::MoveTo: return moveCmd(line, first, nowMs);
+        case C::MoveTo:
+        case C::TurnToward: return moveCmd(line, first, nowMs);
         case C::Warp:
             // GGame_v0 case 0x11 -> FUN_004a49e0: 0 puts the game back in
             // play (state 1).
@@ -246,10 +259,8 @@ world::CommandResult Cutscene::run(const gsc::Line& line, bool first, uint64_t n
             if (line.text(0) == "Gizmo") highlight_ = uint16_t(line.number(1));
             return R::Done;
         default:
-            // The other agent commands (TurnToward, Attack, StrikePose), and
-            // MoveTo on agents other than the player, are not rebuilt yet:
-            // the shipped trigger scripts aim them at agents that spawners
-            // create.
+            // The other agent commands (Attack, StrikePose) are not rebuilt
+            // yet: the trigger scripts the levels use have none.
             return R::Skip;
     }
 }

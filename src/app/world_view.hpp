@@ -142,6 +142,7 @@ private:
     std::unique_ptr<Cutscene> cutscene_;
     std::unique_ptr<world::Loot> loot_;
     std::unique_ptr<world::Spawners> spawners_;
+    std::vector<bool> wasHeld_;  // per foe, last frame
     std::unique_ptr<world::Bolts> bolts_;
     SoundSystem* sound_ = nullptr;
     uint32_t pendingPickup_ = 0;  // a ground item the player is walking to (Loot::GroundItem::id)

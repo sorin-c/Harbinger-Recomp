@@ -40,6 +40,14 @@ public:
         std::function<bool()> walking;
     };
     void setPlayer(PlayerControl control) { player_ = std::move(control); }
+    // The other agents a script moves (MoveTo, TurnToward): `order` starts
+    // a move (or with `turn` a turn) towards (x, y) and says whether the
+    // agent is there to take it; `busy` whether it is still carrying it out.
+    struct AgentControl {
+        std::function<bool(uint16_t instance, bool turn, double x, double y)> order;
+        std::function<bool(uint16_t instance)> busy;
+    };
+    void setAgents(AgentControl control) { agents_ = std::move(control); }
 
     using Occupied = std::function<bool(const chk::GizmoRecord&)>;
     // Once a frame, after the player has moved from (x0, y0) to (x1, y1):
@@ -113,6 +121,7 @@ private:
     world::TriggerWatch triggers_;
     world::GizmoTriggerWatch gizmoTriggers_;
     PlayerControl player_;
+    AgentControl agents_;
     std::map<uint16_t, uint8_t> portalPhases_;  // portal instance -> plug+0x100
     bool portalMode_ = false;                   // GGame+0x43c = 8
     std::optional<LevelChange> levelChange_;

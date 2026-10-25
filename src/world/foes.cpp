@@ -242,6 +242,45 @@ void Foes::moveTo(Foe& f, double x, double y, uint64_t nowMs) {
     setState(f, f.path.empty() ? agt::Idle : agt::Move, nowMs);
 }
 
+void Foes::wake(int id, uint64_t nowMs) {
+    Foe& f = foes_[size_t(id)];
+    const uint16_t cls = tmpl(f).cls;
+    if (f.dead || (cls != 3 && cls != 10 && cls != 12)) return;
+    // GVantirAwakePolicy_v2: the goal is 2 cells along the facing;
+    // GBlindMoveAction_v1 finds a path there as a move does (FUN_004239f0).
+    startPolicy(f, Policy::Move, Quarry{}, nowMs, f.x + facingCos(f.facing) * 2.0, f.y + facingSin(f.facing) * 2.0);
+}
+
+bool Foes::order(uint16_t instance, Order o, double x, double y, uint64_t nowMs) {
+    for (Foe& f : foes_) {
+        if (f.record->instance != instance) continue;
+        if (f.dead) return false;  // FUN_004e4d70: done at once
+        Mind& m = f.mind;
+        m.policy = Policy::None;
+        m.scripted = true;
+        f.swing = Swing{};
+        if (o == Order::Move) {
+            moveTo(f, x, y, nowMs);
+        } else {
+            // GBlindTurnAction_v1: the agent's slot 0xdc turns it towards
+            // the point; its rate is not read, the rebuild turns at once.
+            f.path.clear();
+            if (x != f.x || y != f.y) f.facing = facingTowards(x - f.x, y - f.y);
+            m.action = Action::Idle;
+            setState(f, agt::Idle, nowMs);
+            m.scripted = false;
+        }
+        return true;
+    }
+    return false;
+}
+
+bool Foes::ordered(uint16_t instance) const {
+    for (const Foe& f : foes_)
+        if (f.record->instance == instance) return !f.dead && f.mind.scripted;
+    return false;
+}
+
 void Foes::startSwing(Foe& f, const Quarry& q, uint64_t nowMs) {
     // GAttackAction_v1 -> slot 0xe8: turn to the target (GAgentPlug_v58)
     // and play the melee animation, or with the holder in ranged mode the
@@ -527,21 +566,33 @@ std::optional<Foes::Hit> Foes::act(int id, Foe& f, const Quarry& q, uint64_t now
             break;
         }
     }
-    if (finished) {
+    if (finished && f.mind.scripted) {
+        // The script's order is done (agent+0x1f0); the agent stands.
+        f.mind.scripted = false;
+        f.mind.action = Action::Idle;
+        f.path.clear();
+        setState(f, agt::Idle, nowMs);
+    } else if (finished) {
         if (f.mind.policy != Policy::None) nextStep(f, q, nowMs);
         else if (!decide(f, q, nowMs)) rest(f, q, nowMs);  // GRoleMind_v1
     }
     return hit;
 }
 
-std::vector<Foes::Hit> Foes::update(uint64_t nowMs, const Quarry& player) {
+std::vector<Foes::Hit> Foes::update(uint64_t nowMs, const Quarry& player, bool cinematic) {
     std::vector<Hit> hits;
     for (size_t i = 0; i < foes_.size(); ++i) {
         Foe& f = foes_[i];
         if (f.dead || f.held) continue;
-        // GMind_v6: the first call only starts the clock.
         Mind& m = f.mind;
-        if (!m.lastThink) {
+        if (cinematic && !m.scripted) {
+            f.lastMs = nowMs;  // the walk picks up from here afterwards
+            continue;
+        }
+        // GMind_v6: the first call only starts the clock.
+        if (m.scripted) {
+            // Carrying out an order: the mind waits.
+        } else if (!m.lastThink) {
             m.lastThink = std::max<uint64_t>(nowMs, 1);
             f.stateStart = nowMs;
         } else if (nowMs - m.lastThink >= kThinkMs) {

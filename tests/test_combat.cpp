@@ -19,6 +19,7 @@
 #include "world/bolts.hpp"
 #include "world/combat.hpp"
 #include "world/foes.hpp"
+#include "world/motion.hpp"
 #include "world/level.hpp"
 #include "world/player.hpp"
 #include "world/walkmap.hpp"
@@ -422,12 +423,62 @@ static void testEnemies(const char* dir) {
     CHECK(!foes.all()[size_t(id)].mind.engaged && foes.all()[size_t(id)].mind.policy != world::Foes::Policy::Attack);
 }
 
+static void testScriptedFoes(const char* dir) {
+    Vfs vfs(dir);
+    const auto ini = Ini::fromBytes(*vfs.read("Harbinger.ini"));
+    world::Quarry nobody;  // no player to see
+    auto index = [](const world::Foes& foes, uint16_t instance) {
+        for (size_t i = 0; i < foes.all().size(); ++i)
+            if (foes.all()[i].record->instance == instance) return int(i);
+        return -1;
+    };
+    {
+        // Security Checkpoint (level 70), script 80: the guard Provost
+        // Vantir 8 steps to (14, 18), then turns to the player at (15, 33).
+        world::Level level(vfs, ini, 70);
+        world::WalkMap walk(level);
+        world::Rng rng(3);
+        world::Foes foes(vfs, ini, level, walk, rng);
+        const int g = index(foes, 8), other = index(foes, 9);
+        CHECK(g >= 0 && other >= 0);
+        if (g < 0 || other < 0) return;
+        const double ox = foes.all()[size_t(other)].x, oy = foes.all()[size_t(other)].y;
+        CHECK(foes.order(8, world::Foes::Order::Move, 14, 18, 0) && foes.ordered(8));
+        uint64_t t = 0;
+        while (foes.ordered(8) && t < 10000) foes.update(t += 20, nobody, true);
+        const auto& f = foes.all()[size_t(g)];
+        CHECK(!foes.ordered(8) && std::hypot(f.x - 14, f.y - 18) < 0.6 && t < 10000);
+        // In a cinematic the others stand.
+        CHECK(foes.all()[size_t(other)].x == ox && foes.all()[size_t(other)].y == oy);
+        CHECK(foes.order(8, world::Foes::Order::Turn, 15, 33, t) && !foes.ordered(8));
+        CHECK(f.facing == world::facingTowards(15 - f.x, 33 - f.y));
+        CHECK(!foes.order(4321, world::Foes::Order::Move, 1, 1, t));  // nobody
+    }
+    {
+        // Om's Outer Sanctum (level 33): Khapra (125) out of its pod walks
+        // 2 cells ahead (VantirAwake's BlindMove).
+        world::Level level(vfs, ini, 33);
+        world::WalkMap walk(level);
+        world::Rng rng(3);
+        world::Foes foes(vfs, ini, level, walk, rng);
+        const int k = index(foes, 125);
+        CHECK(k >= 0);
+        if (k < 0) return;
+        const auto& f = foes.all()[size_t(k)];
+        const double x0 = f.x, y0 = f.y;
+        const double gx = x0 + world::facingCos(f.facing) * 2, gy = y0 + world::facingSin(f.facing) * 2;
+        foes.wake(k, 0);
+        for (uint64_t t = 20; t <= 3000; t += 20) foes.update(t, nobody);
+        CHECK(std::hypot(f.x - gx, f.y - gy) < 0.6);
+    }
+}
+
 int main() {
     testWeapon();
     testArithmetic();
     testLineOfFire();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
-        testRealData(dir), testShooting(dir), testEnemyFire(dir), testEnemies(dir);
+        testRealData(dir), testShooting(dir), testEnemyFire(dir), testEnemies(dir), testScriptedFoes(dir);
     else
         std::printf("HARBINGER_DATA not set; skipping real-data checks\n");
     if (failures) std::fprintf(stderr, "%d check(s) failed\n", failures);
