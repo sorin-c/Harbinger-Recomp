@@ -137,12 +137,14 @@ The handlers are the `GGame_v0` switch at `0x4a4600` (game commands),
 | `Shake` | case `0xd` | shakes the view for the given milliseconds and holds the script that long. Each frame (`FUN_004a2cf0`) each axis moves by its amplitude (`Disp`) or by `rand() % amp - amp / 2` (`Rndm`). |
 | `Highlight` | `FUN_004a3270` | marks a gizmo (`Gizmo`) or agent to highlight, or clears it (`Off`). How the highlight is drawn is not read; the rebuild draws the gizmo a second time, added on (guessed). |
 | `ActivateGizmo` | `FUN_004b9750` | GIActivatable slot 1 on the gizmo; with `Wait` the script waits until the gizmo is in state 3. |
-| `MoveTo`, `TurnToward` | `GAgentPlug_v0` | agent action 1 or 4 towards the cell; with `Wait` until the action ends. |
+| `MoveTo`, `TurnToward` | `GAgentPlug_v0` (`0x4225b0`) -> `FUN_004227c0`, `FUN_004228d0` | the target is the agent instance (`FUN_004a50e0`). The first call starts action 1 (Move) or 4 (Turn) towards the cell (`FUN_004e51b0`) and marks a script order (agent+0x1f1 set, +0x1f0 cleared); the next call is done at once without `Wait`, and with `Wait` once the action has ended (+0x1f0). A dead agent (`FUN_004e4d70`) is done at once. |
 
 The trigger scripts use only these, plus `MoveTo` and `TurnToward` on agents
-that spawners create. Portals build scripts in code with `MoveTo` on the
-player (instance 0) and `Warp`, which the rebuild plays. The rebuild has no spawners yet, so it skips the agent
-commands, and `ActivateGizmo` on a gizmo it cannot use (a spawner) is done at
+that spawners let out (levels 33 and 70). The rebuild opens spawners
+(`docs/formats/gizmo.md`, "Spawners") but skips the agent commands on them
+for now. Portals build scripts in code with `MoveTo` on the player
+(instance 0) and `Warp`, which the rebuild plays. `ActivateGizmo` on a
+gizmo that does not take the activation is done at
 once.
 
 ### The thought bubble

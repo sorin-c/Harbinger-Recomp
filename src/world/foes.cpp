@@ -107,7 +107,7 @@ int Foes::at(double x, double y) const {
     double bestD = 1e9;
     for (size_t i = 0; i < foes_.size(); ++i) {
         const Foe& f = foes_[i];
-        if (f.dead) continue;
+        if (f.dead || f.held) continue;
         const double h = halfSize(tmpl(f));
         const double dx = std::fabs(x - f.x), dy = std::fabs(y - f.y);
         if (dx > h || dy > h) continue;
@@ -121,7 +121,7 @@ int Foes::nearest(double x, double y, double range, std::optional<uint8_t> facin
     double bestScore = 1e9;
     for (size_t i = 0; i < foes_.size(); ++i) {
         const Foe& f = foes_[i];
-        if (f.dead) continue;
+        if (f.dead || f.held) continue;
         const double dx = f.x - x, dy = f.y - y, d = std::hypot(dx, dy);
         if (d > range) continue;
         double score = d;
@@ -139,7 +139,7 @@ std::optional<Strike> Foes::blow(int id, double fromX, double fromY, double toX,
                                  const wpn::Weapon& weapon, uint64_t nowMs) {
     if (id < 0 || size_t(id) >= foes_.size()) return std::nullopt;
     Foe& f = foes_[size_t(id)];
-    if (f.dead) return std::nullopt;
+    if (f.dead || f.held) return std::nullopt;
     const agt::Template& t = tmpl(f);
     if (!segmentTouchesBox(fromX, fromY, toX, toY, f.x, f.y, halfSize(t))) return std::nullopt;
     const Strike s = strike(rating, weapon, t, rng_, {wpn::Melee});
@@ -150,7 +150,7 @@ std::optional<Strike> Foes::blow(int id, double fromX, double fromY, double toX,
 void Foes::hurt(int id, const Strike& s, uint64_t nowMs) {
     if (id < 0 || size_t(id) >= foes_.size()) return;
     Foe& f = foes_[size_t(id)];
-    if (f.dead) return;
+    if (f.dead || f.held) return;
     if (s.hit) {
         f.hitPoints -= s.damage;
         // FUN_004a2590: damage reaching the hit points kills (GAmpEnemyPlug_v61
@@ -538,7 +538,7 @@ std::vector<Foes::Hit> Foes::update(uint64_t nowMs, const Quarry& player) {
     std::vector<Hit> hits;
     for (size_t i = 0; i < foes_.size(); ++i) {
         Foe& f = foes_[i];
-        if (f.dead) continue;
+        if (f.dead || f.held) continue;
         // GMind_v6: the first call only starts the clock.
         Mind& m = f.mind;
         if (!m.lastThink) {

@@ -346,7 +346,7 @@ world::CommandResult Cutscene::gizmoCmd(const gsc::Line& line, bool first, uint6
     if (!g) return R::Skip;
     if (first) {
         const bool used = level_.useGizmo(*g, nowMs, *occupied_);
-        // Gizmos the rebuild cannot use yet (spawners) do not hold the script up.
+        // A gizmo that does not take the activation does not hold the script up.
         return used && line.waits() ? R::Running : R::Done;
     }
     return level_.gizmoState(*g).state == 3 ? R::Done : R::Running;

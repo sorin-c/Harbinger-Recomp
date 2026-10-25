@@ -69,7 +69,8 @@ GizmoPlay startingPlay(const giz::Template& t, const chk::GizmoRecord& g, int po
 // a console then toggles the gizmos attached to it (doors, bridges). Each
 // returns true if the state changed.
 bool usable(const giz::Template& t);
-// GIActivatable slot 1 (GConsolePlug_v1, GBarrelPlug_v1).
+// GIActivatable slot 1 (GConsolePlug_v1, GBarrelPlug_v1, GSpawnGizmoPlug_v1;
+// triggers and scripts activate spawners, players do not).
 bool activate(const giz::Template& t, GizmoState& st);
 // GIAttachable slot 1 (GBridgePlug_v1). `occupied`: an agent stands on the
 // gizmo, so it may not shut.

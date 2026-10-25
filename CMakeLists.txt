@@ -71,6 +71,7 @@ add_library(harbinger_core
   src/world/walkmap.cpp
   src/world/script.cpp
   src/world/loot.cpp
+  src/world/spawners.cpp
   src/world/portal.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
