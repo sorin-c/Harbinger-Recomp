@@ -2,13 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numbers>
 
 #include "world/motion.hpp"
 
 namespace harbinger::world {
 
 namespace {
+
+constexpr double kPi = 3.14159265358979323846;
 
 // FUN_004f90b0: the effects' own random numbers, a signed 32-bit draw
 // scaled to [-1, 1). The rebuild draws from the game's generator.
@@ -119,8 +120,8 @@ bool Bolts::fire(int shooter, double x, double y, double z, uint8_t heading, con
         // is turned to the emitter's heading (FUN_004e9150). The bolt keeps
         // its height: the weapons' bolts leave level (polar 64) and do not
         // accelerate.
-        const double turn = (heading + az) * std::numbers::pi / 128.0;
-        const double flat = std::sin(polar * std::numbers::pi / 128.0) * speed;
+        const double turn = (heading + az) * kPi / 128.0;
+        const double flat = std::sin(polar * kPi / 128.0) * speed;
         t.vx = std::cos(turn) * flat;
         t.vy = std::sin(turn) * flat;
         t.heading = facingTowards(t.vx, t.vy);
