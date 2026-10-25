@@ -251,4 +251,37 @@ bool Inventory::takeHealthPack() {
     return true;
 }
 
+bool Inventory::inGrid(uint16_t id) const {
+    return std::any_of(grid_.begin(), grid_.end(), [&](const Placed& p) { return p.item.id == id; });
+}
+
+bool Inventory::removeFromGrid(uint16_t id) {
+    // The original scans the grid's cells row by row and takes the item on
+    // the first cell that holds one; the rebuild takes the one whose
+    // top-left cell comes first (the same unless several are carried).
+    auto best = grid_.end();
+    for (auto it = grid_.begin(); it != grid_.end(); ++it)
+        if (it->item.id == id && (best == grid_.end() || std::pair(it->y, it->x) < std::pair(best->y, best->x)))
+            best = it;
+    if (best == grid_.end()) return false;
+    grid_.erase(best);
+    return true;
+}
+
+void Inventory::addMoney(uint32_t amount) {
+    money_ += std::min(std::numeric_limits<uint32_t>::max() - money_, amount);
+}
+
+bool Inventory::spend(uint32_t amount) {
+    if (money_ < amount) return false;
+    money_ -= amount;
+    return true;
+}
+
+bool Inventory::addHealthPack() {
+    if (packs_ >= layout_.maxHealthPacks) return false;
+    ++packs_;
+    return true;
+}
+
 }  // namespace harbinger::world

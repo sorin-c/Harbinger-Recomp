@@ -43,6 +43,9 @@ public:
 
     // `character`: 0 Human, 1 Gladiator, 2 Culibine (DAT_0058437c+0x5848c).
     Story(Host host, uint16_t character);
+    // A new level's world takes over the story (it is carried along).
+    void setHost(Host host) { host_ = std::move(host); }
+    bool begun() const { return quest_ != nullptr; }
 
     // FUN_004f6a10: starts the game at `quest`, the first entry of the
     // quest index.

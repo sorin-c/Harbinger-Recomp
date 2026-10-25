@@ -68,6 +68,10 @@ public:
     // Takes an item off the ground; returns it, or nothing if it is gone.
     std::optional<Drop> take(uint32_t id);
 
+    // Lays one item on the ground at map point (x, y), landing at once (a
+    // dialogue's gift the inventory has no room for).
+    void place(const Drop& d, double x, double y, uint64_t nowMs);
+
     const itm::Item* item(uint16_t id);
     static constexpr uint64_t kDropMs = 500;
 

@@ -172,6 +172,7 @@ uint16_t Story::npcDialog(uint16_t instance, bool advance) {
 
 bool Story::talk(uint16_t instance) {
     const uint16_t id = npcDialog(instance, true);
+    say("talk to " + std::to_string(instance) + (id ? "" : ": nothing to say"));
     const bool opened = id && openDialog(id, instance);
     // GCulibineNPCPlug_v77, as the talk action runs: the Talked event.
     event(qst::EntityKind::Agent, qst::Talked, instance);
