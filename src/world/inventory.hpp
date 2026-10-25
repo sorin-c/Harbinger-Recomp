@@ -1,7 +1,7 @@
 // The player's inventory (GInventory): the grid of carried items, the
 // equipment slots and the mod chip sockets of the equipped items, money, the
 // health pack counter, and the item held on the pointer while the inventory
-// screen rearranges things. Free of drawing; the screen is app/inventory_screen.
+// screen rearranges things. Free of drawing; the screen is app/hud.
 // Notes and evidence: docs/inventory.md
 #pragma once
 

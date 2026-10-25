@@ -608,7 +608,11 @@ void Hud::drawControl(SDL_Renderer* ren, const Panel& p, const Control& c) const
             // health and the empty spring at none.
             if (c.images.empty()) break;
             const Texture* t = c.images[0];
-            const float w = float(t->w / 2), l = std::floor(float(health) * w);
+            // The Gladiator's slider has its fill on the left half and the
+            // empty tube on the right, the Human's the other way round, so
+            // the window moves the other way (read from the art: likely).
+            const float w = float(t->w / 2);
+            const float l = cls == kHealthBar ? std::floor(float(health) * w) : std::floor(float(1 - health) * w);
             const SDL_FRect src{l, 0, w, float(t->h)}, dst{c.rect.x, c.rect.y, w, float(t->h)};
             SDL_RenderTexture(ren, t->tex, &src, &dst);
             break;

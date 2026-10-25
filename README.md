@@ -23,7 +23,9 @@ What exists so far:
 - `harbinger`, the game: the front end (main menu, character screen,
   Options, Load Game), drawn from the original files, with the menu music and
   sounds, and mouse, keyboard and gamepad input. Play opens the first level
-  (floor, walls, objects, characters and music so far) to look around in
+  (floor, walls, objects, characters and music so far) to look around in,
+  with the HUD and the inventory screen (CHAR, I or the pad's View button;
+  D-pad / stick, A, X and B drive it on a controller, see `docs/inventory.md`)
 - Level (`.chk`), brush (`.brs`), gizmo (`.giz`), agent (`.agt`), animation
   (`.anm`) and cutscene script (`.gsc`) parsers, and `levelshot`, which renders a whole level with its
   objects and characters to an image
