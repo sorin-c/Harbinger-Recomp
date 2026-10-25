@@ -4,6 +4,7 @@
 // Notes and evidence: docs/movement.md, docs/combat.md
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -131,6 +132,11 @@ public:
     // Takes a hit (GAgentPlug_v61): at 0 hit points the player dies, plays
     // its death animation once (GDieAction) and lies still.
     void takeDamage(int damage, uint64_t nowMs);
+    // Hit points back (a health pack; the amount is the caller's), up to the
+    // maximum; nothing for the dead.
+    void heal(double points) {
+        if (!dead_ && points > 0) hitPoints_ = std::min(maxHitPoints_, hitPoints_ + points);
+    }
     // How the player stands against an attack roll: the template's defence
     // and resistances, with the armour's class added to the defence
     // (FUN_004f0f40, FUN_004f0fb0) and its levels per damage type.
