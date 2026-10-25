@@ -200,6 +200,7 @@ private:
     void approachNpc(const chk::AgentRecord& a);
     void bindStory();
     void runAction(const dlg::Action& a);
+    void give(uint16_t item, uint32_t amount);
     std::string itemName(uint16_t id) const;
     void drawMessages() const;
 

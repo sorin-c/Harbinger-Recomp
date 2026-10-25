@@ -17,6 +17,8 @@ namespace {
 
 // The characters' health items (item.mgr: HumHealth.itm, GladHealth.itm,
 // CHealth.itm).
+constexpr uint16_t kMoneyItem = 12;  // item.mgr: money.itm
+
 uint16_t healthItem(world::Character c) {
     switch (c) {
         case world::Character::Gladiator: return 8;
@@ -253,20 +255,28 @@ void WorldView::say(const std::string& text, uint64_t forMs) {
     if (std::getenv("HARBINGER_STORY_LOG")) std::fprintf(stderr, "message: %s\n", text.c_str());
 }
 
+void WorldView::give(uint16_t item, uint32_t amount) {
+    // Into the inventory, which tells the quests (GInventory_v1: event 9
+    // with the item's id). With no room the rebuild drops it at the
+    // player's feet (how the pick-up refuses is not read).
+    if (inventory_->add({item, {}}, amount) == world::Inventory::Added::NoRoom) {
+        loot_->place({item, amount}, player_->x(), player_->y(), elapsedMs_);
+        return;
+    }
+    story_->event(qst::EntityKind::Player, qst::Picked, item);
+}
+
 void WorldView::runAction(const dlg::Action& a) {
     // The entity actions' slot 8 (docs/dialogue.md). The story keeps the
     // quest, the dialogs and the quest log itself.
     using T = dlg::ActionType;
     switch (a.type) {
-        case T::GiveItem: {
+        case T::GiveItem:
             // GGiveItemEntityAction_v8 -> FUN_00489090: the message, then the
-            // player picks the item up. With no room the rebuild drops it at
-            // the player's feet (the pick-up's own way is not read).
+            // player picks the item up (its slot 0xb8).
             say("Player received " + itemName(a.id));
-            if (inventory_->add({a.id, {}}) == world::Inventory::Added::NoRoom)
-                loot_->place({a.id, 0}, player_->x(), player_->y(), elapsedMs_);
+            give(a.id, 0);
             break;
-        }
         case T::TakeItem:
             // GTakeItemEntityAction_v8: only if it is in the grid.
             if (inventory_->inGrid(a.id)) {
@@ -275,9 +285,11 @@ void WorldView::runAction(const dlg::Action& a) {
             }
             break;
         case T::GiveMoney:
-            // A money item of that amount, picked up the same way.
+            // GGiveMoneyEntityAction_v8: a money item (money.itm) of that
+            // amount, picked up the same way. The message names the item
+            // (its slot 0x14); "N Uan" is the rebuild's guess at that name.
             say("Player received " + std::to_string(a.id) + " Uan");
-            inventory_->addMoney(a.id);
+            give(kMoneyItem, a.id);
             break;
         case T::TakeMoney:
             // GTakeMoneyEntityAction_v8: nothing unless there is that much.
@@ -290,8 +302,7 @@ void WorldView::runAction(const dlg::Action& a) {
             const uint16_t pack = healthItem(character_);
             for (uint16_t i = 0; i < a.id; ++i) {
                 if (i == 0) say("Player received " + itemName(pack));
-                if (inventory_->add({pack, {}}) == world::Inventory::Added::NoRoom)
-                    loot_->place({pack, 0}, player_->x(), player_->y(), elapsedMs_);
+                give(pack, 0);
             }
             break;
         }
