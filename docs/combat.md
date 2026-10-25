@@ -43,8 +43,14 @@ original's inventory tooltips ("Melee: Lvl. 7 (6 - 15)", "Plasma: Lvl. 5
 +0x90): `stats[0]` rolls of `stats[1] + rand % (stats[2] - stats[1])`, or
 `stats[0] * stats[2]` when the two are equal. (The template header
 `FUN_00406a60` puts stats 0, 1, 2 at template+0x38, +0x3a, +0x3c.) The
-player plugs set their own maximum instead (the Human's constructor
-`FUN_004f26c0` writes 70.0 to +0x94).
+player plugs set their own maximum instead: the constructors write it to
++0x90, Human 70, Gladiator 80 (`0x4054`), Culibine 60 (`0x404e`).
+
+The player takes damage in `GAgentPlug_v61`: at 0 hit points or below it
+starts the Die action (6); the enemy version (`GAmpEnemyPlug_v61`) also
+plays the hurt sound. The rebuild shows a stand-in bar until the HUD is
+rebuilt; three seconds after the player dies, a press starts the game
+again.
 
 ## Random numbers
 
@@ -58,11 +64,13 @@ rebuild seeds from the clock when a level starts.
 1. `roll = rand % 50 + 1`.
 2. `total = rating + roll + weapon hitBonus (+ mod-chip skill bonuses)`. The
    rating is the attacker's slot 100 (`GHumanPlayerPlug_v100` returns
-   +0x23c for melee, +0x23e for ranged); the player plugs' constructors
-   set both to 15.
+   +0x23c for melee, +0x23e for ranged; the player plugs' constructors
+   set both to 15; an enemy's, `GAgentPlug_v100`, is its stats[0] x 5).
 3. The blow hits if `roll >= 49` or `total >= ` the target's defence
    (template+0x10, the word after the `.agt` version: 20 for a brown biter,
-   27 for a Vantir Grunt).
+   27 for a Vantir Grunt). The player's defence is its template's (0 for
+   `dude.agt`) plus, for the armour and helmet it wears, their type 9
+   level and extra (`FUN_004f0f40`, `FUN_004f0fb0`): Alpha Advance gives 40.
 4. For each damage type of the weapon except 5-10: the level's range from
    the table at 0x54ffb0 (rows of min, max: level 1 = 1-4 ... level 7 =
    6-15 ... level 20 = 30-60), `points = min + rand % (max - min)`; then
@@ -70,7 +78,12 @@ rebuild seeds from the clock when a level starts.
    `.agt` list of (type, percent) pairs after the animations, read by
    `FUN_004085a0`; a type not listed does nothing) gives
    `damage += (int)(percent * 0.01 * points)`.
-5. If any type got through: at least 1, and doubled on a roll of 49 or 50.
+   The types go in order, 0 to 10. Against a player, a type is stopped
+   when the total is below the armour's level for that type plus the roll
+   (`FUN_004f10e0`), and the resistance is lowered by the armour's
+   modifiers (slot 114, `FUN_00520230`).
+5. If any type got through: at least 1, and doubled on a roll of 49 or 50,
+   except against a player.
 
 The blow kills when the damage reaches the target's hit points
 (`FUN_004a2590` -> `FUN_00420a50`).
@@ -100,8 +113,9 @@ weapon object `FUN_004213a0` hands over, not traced (guessed).
   ground), turned into the map as `(dy + dx, dy - dx)`. For the Human's
   rifle that is about 0.65 cells ahead.
 - `FUN_004a2590` then takes the segment from the attacker to that point and
-  hits the first agent whose square (template+0x20, about 0.39, + 0.1 each
-  side) it touches (`FUN_0048b510`).
+  hits the first hostile agent still alive whose square (template+0x20,
+  about 0.39, + 0.1 each side) it touches (`FUN_0048b510`). Enemies' blows
+  land on the player the same way; their minds are in `docs/enemies.md`.
 
 ## Death
 
@@ -129,6 +143,8 @@ keeps its last frame: the corpse stays.
 | `.wpn` layout | proven | `GWeapon_v7`, `FUN_0051fb20`, `FUN_005202b0`; all 865 files parse; E-16 and Alpha Advance match the tooltips |
 | Damage table | proven | 0x54ffb0; levels 5, 6, 7 match the E-16 tooltip ranges |
 | Attack roll | proven | `FUN_00452290` disassembly (0x452303-0x45258a) |
+| Player defence from armour, armour blocks, no double | proven | `FUN_004f0f40`, `FUN_004f0fb0`, `FUN_004f10e0`, `FUN_00452290` |
+| Player hit points per class | proven | the three player constructors |
 | Player rating 15 | proven | `FUN_004f26c0`, `FUN_004baa80` |
 | Defence = template+0x10 | proven | `FUN_00406a60` stores the word after the version there; `FUN_00452290` compares it |
 | Resistances | likely | `FUN_004085a0` reads template+0x204 by type; the `.agt` pairs fill it (loader not traced) |

@@ -224,6 +224,16 @@ item, one every half second, on the floor beside the chest. A click on an
 item, or E, Space or the pad's A, walks there and picks it up; money adds
 to a counter shown at the top left. Evidence: `docs/formats/loot.md`.
 
+## Milestone 17: enemies fight back (done)
+
+Enemies think every quarter second as the original's minds do. They notice
+the player within 9 cells when it is visible enough (running and fighting
+make it more visible) and nothing tall is in the way, walk up and swing;
+their blows roll against the player's defence and armour. Biters flee when
+hurt, enemies wander when restless and go to where they last saw the player.
+At 0 hit points the player dies; a press starts the game again. Evidence:
+`docs/enemies.md`.
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
@@ -231,6 +241,5 @@ to a counter shown at the top left. Evidence: `docs/formats/loot.md`.
 2. Display gamma, Bink video (later or skipped).
 3. The other classes' states (breakers, key consoles, lifts); the inventory.
 4. Spawners (and the scripts' agent commands with them). The room graph.
-5. Enemy AI (thinkers, their attacks), the player's ranged attack, hit
-   points and death, experience.
+5. The player's ranged attack, enemies that fire, experience.
 6. The in-game loop, HUD and lighting.
