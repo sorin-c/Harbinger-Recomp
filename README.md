@@ -11,6 +11,7 @@ the engine reads the original `res0.sqh` / `res1.sqh` archives.
 
 - Step 1, mapping the game: first pass done. See [docs/findings.md](docs/findings.md).
 - Step 2, rebuilding the engine: under way. See [docs/engine.md](docs/engine.md).
+- What is left, in order: [docs/plan.md](docs/plan.md).
 
 What exists so far:
 

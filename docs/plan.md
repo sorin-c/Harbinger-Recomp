@@ -1,0 +1,123 @@
+# Plan: from here to a playable, completable game
+
+Written 2026-10-25, after PR #14. It lists what is left, grouped into
+milestones in the order they should land, which of them can run as parallel
+threads, and a rough size for each.
+
+**Sizes** are counted in PR-sized pieces of work like the ones already merged
+(#8 enemy AI, #11 HUD and inventory): **S** is under one such PR, **M** is
+about one, **L** is two or three, **XL** is four or more.
+
+## Where we are
+
+In main: every archive and image format, levels, gizmos, agents, walking,
+gear, melee and ranged combat, player health and death, enemy AI (Attack
+policy only), spawners, portals between levels, trigger scripts and scripted
+enemy moves, gizmo use, chest loot, the HUD and the inventory screen with
+controller navigation, the front end (main menu, character screen, Options,
+Load Game screen).
+
+What the game still lacks falls into three groups:
+
+1. **Systems the story runs on**, not started yet: NPCs, dialogue (1,390
+   `.dlg` files), quests (156 `.qst` files, `GQuestMgr`), trade, the EZ-stash,
+   umbilicals and their codes, experience and levels, saving. Without these
+   the game cannot be finished, so they come first.
+2. **Systems that are partly there**: the remaining AI policies, bosses,
+   turrets and mines, gadgets (mines, cameras, amps), upgrade chips and the
+   weapon mod panel, firing modes, enemy drops, effects and lights,
+   environment hazards, the in-game menu, key configuration.
+3. **Polish and platforms**: playthrough checks against the original under
+   Wine, Bink video, Linux packaging, then Android and iOS.
+
+## Milestones
+
+### M1. Story systems (critical path)
+
+| # | Work | Size | Depends on | Notes |
+|---|---|---|---|---|
+| 1a | **NPCs and dialogue**: `GHumanNPC`/`GGladiatorNPC`/`GCulibineNPC`/`GSpyNPC` plugs, `.dlg` format (`GDialog`, `GDialogGroup`, `GDialogResponse`), the dialogue screen, the entity actions dialogue fires (`GSetQuestEntityAction`, `GGiveExpEntityAction`, `GLaunchTradeAction`, `GSetLevelEntityAction`, `GStatModAction`...) | L | none | The biggest unknown left. Controller: responses as a focus list, A to pick |
+| 1b | **Quests and the quest log**: `.qst` format (`GQuest`, `GQuestNode`), quest state, `GCtrlQuestLogButton`, the quest log panel (F1) | M | 1a's action list | The `.hpr` save text shows what the log holds |
+| 1c | **Experience and levels**: template+0x214 XP on kills, `GGiveExpEntityAction`, level thresholds, the stats panel (`GCtrlStatsLevel`, `GCtrlStatsSkillName/Value`), `.tre` skill trees (3 files, one per character, likely) | M | none | |
+| 1d | **Trade and EZ-stash**: `GCtrlTradeGrid`, tabs and pages, buy/sell prices, `GStash` shared across stashes, quick move (right-click / X) | M | the inventory (done); 1a for launching trade | |
+| 1e | **Umbilicals, codes and the room graph**: umbilical pads, codes as game state, `GScriptCmdSetLevel`/`SwapLevel`, gold area names, level changes that are not portals | M | portals (done) | The readme calls this the main way to travel |
+| 1f | **Saving and loading** in our own format: world state per visited level (gizmo states, dead agents, ground items), player, inventory, stash, quests, XP; quick save/load (F6/F7), autosave, the Load Game screen wired up, thumbnails | L | lands last in M1 but its design starts early, since every system above adds state | Original saves are not a goal |
+
+1a, 1c, 1d and 1e can run as four threads at once. 1b follows 1a. 1f needs a
+state-ownership design agreed first (a short doc), then grows with the others.
+
+### M2. Combat completeness
+
+| # | Work | Size | Depends on | Notes |
+|---|---|---|---|---|
+| 2a | **Remaining AI**: LongRange, Flank and Wait policies, squads (plug+0x218), flocking, trooper rest `FUN_00423e40`, `GRoleMind_v13` combat states, fire-blocked flag, weapon mode switching | L | none | |
+| 2b | **Bosses, turrets and mines**: `GVantirBossPlug`, `GScintBossPlug`, `GCimBossPlug`, `GBossThinker` and their awake policies; `GTurretPlug`, `GTurretMinePlug` | L | 2a helps | Every boss must be beatable for the game to be completable |
+| 2c | **Gadgets and firing modes**: Human mines, Gladiator camera (with camera/body toggle), Culibine amps (`GAmplifierItem`, radial mods 7-0), ranged mods 1-4, the Ctrl rigging menu | L | none | Controller: rigging menu as a radial or bumper cycle |
+| 2d | **Upgrade chips and the weapon mod panel**: `GModChipItem`, `GCtrlWeaponModBtn`, `weaponmodleft.itf`, stat changes on weapons, energy lines in tooltips, injector colours | M | the inventory | |
+| 2e | **Drops and ground items**: enemy loot groups on death, the drop layout `FUN_004d9500`, dropping items from the inventory, the item swirl, Alt to highlight grounded items | M | none | |
+| 2f | **Effects**: bolt lights and impacts, lob and bounce bolts, the 50 undecoded emitters, additive blending, level lighting | M | none | |
+| 2g | **Environment**: heat, radiation, radiation sinks and poison zones with the HUD warning lights (`GCtrlWarningLight`), charging stations, health pack curing poison | S | none | |
+
+All seven can run in parallel with each other and with M1.
+
+### M3. Game shell
+
+| # | Work | Size | Depends on | Notes |
+|---|---|---|---|---|
+| 3a | **In-game menu** (Esc / Start): resume, save, load, options, quit; death screen with restart (Space) | S | 1f for save/load buttons | |
+| 3b | **Automap**: `GCtrlMap`, Tab, explored cells | M | none | |
+| 3c | **Key configuration**: `keyconfig.itf`, KeyField, button tooltips (`GCtrlButton_v10`) | S | none | |
+| 3d | **Controller pass**: one consistent D2R/D3-style scheme across every screen from M1-M3 (dialogue, trade, stash, map, quest log, stats, mods, rigging), button glyphs, auto-target for ranged attacks, gadget buttons, on-screen hints | M | each screen as it lands | Each screen thread does its own nav; this pass makes them consistent |
+| 3e | **Video and ending**: Bink 1 playback for the logos, intro and ending (FFmpeg's decoder, or skip with a still), credits | M | none | The only part needing an outside library |
+
+### M4. Playthrough and fidelity
+
+| # | Work | Size | Depends on |
+|---|---|---|---|
+| 4a | **Full playthrough, Human**: start to ending in the rebuild, with each act compared to the original under Wine; a bug list per act | L | M1, 2b |
+| 4b | **Full playthrough, Gladiator and Culibine** | L | 4a |
+| 4c | **Fidelity sweep**: the numbers labelled *guessed* in `docs/` (health pack heal, shoot range, panel offsets...) checked against the original | M | 4a |
+
+Playthroughs can start act by act as soon as M1 covers that act, so 4a overlaps
+the end of M1 and M2.
+
+### M5. Platforms
+
+| # | Work | Size | Depends on |
+|---|---|---|---|
+| 5a | **Windows release**: versioned zip from CI, first-run data folder picker | S | M4 |
+| 5b | **Linux**: AppImage or tarball, data path rules, CI artifact; Steam Deck as the controller test case | S | none (can start any time) |
+| 5c | **Android** (bonus): SDL3 Android build, touch controls, picking the data folder | L | M4 |
+| 5d | **iOS** (bonus) | L | 5c |
+
+## Order and parallel threads
+
+```
+now ──► M1 story systems ─────────────────┐
+   ├──► M2 combat completeness ────────────┤
+   ├──► M3 shell (3b, 3c, 3e any time) ────┼──► M4 playthroughs ──► M5 release, mobile
+   └──► 5b Linux packaging (small, any time)
+```
+
+A sensible first wave of four threads: **1a dialogue + NPCs**, **1c
+experience and stats**, **1e umbilicals and the room graph**, **2a remaining
+AI**. Then **1b quests**, **1d trade and stash**, **2b bosses**, **2c
+gadgets** as those finish, with the save design (1f) written early so each
+thread records its state the same way.
+
+Threads touching the same files should not run at once: 1a and 1b both own the
+entity-action list, and 2c and 2d both change weapons and the inventory.
+
+## Rough total
+
+About 30-35 PR-sized pieces. With four threads at a time that is several weeks
+of steady work, M1 being the long pole (dialogue and quests carry most of the
+story).
+
+## Risks
+
+- **Dialogue and quest formats** are the largest undecoded area; 1a may grow.
+- **Original comparison** needs saves or a level skip under Wine to reach late
+  acts quickly; the playthrough threads may need a small Wine-side aid (a
+  save from Sorin's own playthrough would help most).
+- **Bink** may need FFmpeg as a dependency, which is heavy for mobile.
