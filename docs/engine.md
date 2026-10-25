@@ -100,6 +100,7 @@ harbinger --data <dir> --screen options|load [--settings file.cfg]
   (borderless, at the desktop resolution). Applied on Accept and kept in
   `display.ini` next to `config.cfg`; Alt+Enter toggles fullscreen anywhere.
   The 800x600 screens are scaled to fit with black bars.
+  Widescreen and custom sizes came later (milestone 23).
 
 ## Milestone 5: the first level (done)
 
@@ -281,6 +282,42 @@ guards step forward and face the player before the fight. Vantir, Khapra
 and Bowel Horses let out of a spawner take two steps forward once awake,
 then fight as usual. Evidence: `docs/formats/script.md`, `docs/formats/gizmo.md`
 ("Spawners").
+
+## Milestone 23: widescreen and custom resolutions (done)
+
+A rebuild addition (the original is 4:3 only). Options has two rows above
+its buttons: the size and the aspect.
+
+- **Aspect, 4:3 or 16:9.** At 16:9 the game view keeps the original's height
+  (768 with High Resolution, 600 without) and widens to 1366 (1066), so more
+  of the level shows at the sides. 4:3 stays 1024x768 / 800x600. The front
+  end (and Bink video, when it comes) stays 800x600 and is pillarboxed.
+- **Size.** Windows of the picked aspect that fit the desktop (800x600 and
+  1024x768 always), fullscreen at the desktop's resolution (borderless), and
+  the display's own fullscreen modes of that shape (exclusive). Any other
+  size can be typed on the size row (digits, x, digits, Enter) or written in
+  `display.ini` (`width`/`height` for the window, `fullscreen=WxH|desktop`,
+  `aspect=4:3|16:9`). Whatever the size, the view is scaled to fit it, with
+  bars where the shapes differ. `--aspect` and `--size WxH` set them for one
+  run (and the size of a `--screenshot`).
+- **HUD.** FUN_004c4af0's 1024x768 moves are the view's growth past 800x600
+  (x + 224 for right-hand panels, + 112 for centred ones), so the rebuild
+  applies the same rule to the wider view: the left and right panels and the
+  log button stay on their edges, the inventory (kind 3) on the right edge,
+  centred panels centred. At 4:3 nothing changes (checked against the
+  Wine-matched 1024x768 HUD).
+- **Thought bubbles.** Script positions are for 800x600 and scaled by
+  FUN_004c97d0's rule inside the 4:3 middle of the wide view, so a bubble
+  keeps its place beside the speaker (seen on the Refuse Disposal portal
+  scene). Cinematic bars span the full width.
+- **Camera.** The original never clamps the camera (it centres on the
+  followed agent or the script's point), so neither does the rebuild; a wide
+  view just shows more of the dark around a level's edge, as a 4:3 one does
+  near it. Script camera points are map cells, unaffected.
+- **Fairness.** At 16:9 the player sees about 2 more cells to each side (171 pixels; 7.5 cells from the middle instead of 5.7), but
+  enemies still notice at 9 cells (`Foes::kSight`), and the player still has
+  to walk within `Player::kShootRange` (8) to shoot, so seeing further does
+  not let the player hit from outside an enemy's sight.
 
 ## Next
 

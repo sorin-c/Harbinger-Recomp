@@ -47,7 +47,7 @@ then in the current folder, so on Windows you can copy `harbinger.exe` and
 Windows zip (`harbinger-windows`) is attached to every CI run under the
 repository's Actions tab. Your settings are kept in
 `%APPDATA%\harbinger-recomp\harbinger\` (`config.cfg`, and `display.ini` for the
-window size or fullscreen, set in Options or with Alt+Enter); the game folder is only read.
+window size or fullscreen and the 4:3 or 16:9 widescreen view, set in Options or with Alt+Enter); the game folder is only read.
 
 ## Build
 

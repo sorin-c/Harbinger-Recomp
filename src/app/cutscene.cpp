@@ -394,8 +394,10 @@ void Cutscene::showBubble(const std::string& text, int x, int y, int w, int h, u
     }
     // FUN_004c97d0: positions are for 800 x 600; at 1024 x 768 the bubble's
     // centre moves out by 0.28 of itself. The rebuild scales the same way
-    // for any view size.
-    x += int((screenW_ / 800.0 - 1) * (x + w / 2));
+    // within the 4:3 middle of a widescreen view, so a bubble keeps its place
+    // beside the player (who stands in the middle) instead of drifting out.
+    const int classicW = screenH_ * 4 / 3;
+    x += (screenW_ - classicW) / 2 + int((classicW / 800.0 - 1) * (x + w / 2));
     y += int((screenH_ / 600.0 - 1) * (y + h / 2));
 
     if (bubble_.voicing) stopPcm(kVoiceKey);

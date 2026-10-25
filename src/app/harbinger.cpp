@@ -6,6 +6,7 @@
 //
 //   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y]
 //             [--character human|gladiator|culibine] [--no-audio] [--settings config.cfg] [--run-ms ms]
+//             [--aspect 4:3|16:9] [--size WxH]
 //             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use]
 //                                   [--inventory] [--pad udlrax]]
 //
@@ -24,6 +25,11 @@
 // the stick move the focus over the slots and grid, A picks up and puts
 // down, X equips or takes off, B closes. Q, a click on the health button or
 // the D-pad's up uses a health pack.
+//
+// Options adds two rows to the original's (rebuild): the display size
+// (windows and fullscreen modes; type digits on the row for any other size)
+// and the aspect, 4:3 or 16:9 (widescreen: the game view widens to 1366x768).
+// --aspect and --size set them for one run.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -64,6 +70,8 @@ struct Options {
     bool use = false;     // screenshot mode: the use button at 0 ms and every 1.5 s
     bool inventory = false;  // screenshot mode: the inventory open
     std::string pad;         // screenshot mode: pad presses at 0 ms (u d l r = D-pad, a = A, x = X)
+    std::optional<Aspect> aspect;            // this run's aspect, over display.ini
+    std::optional<std::pair<int, int>> size;  // this run's window (or the capture's) size
     uint64_t timeMs = 0, runMs = 0;
     std::optional<SDL_FPoint> mouse, click, stick;  // screenshot mode: pointer, a click at 0 ms, a held stick
     std::optional<SDL_FPoint> at;  // the player's start, map cells (a testing aid)
@@ -94,7 +102,14 @@ Display loadDisplay(const std::string& path) {
 
 void applyDisplay(SDL_Window* win, const Display& d) {
     if (d.fullscreen) {
-        SDL_SetWindowFullscreen(win, true);  // borderless, at the desktop's resolution
+        // At the desktop's resolution, borderless; or the display mode
+        // nearest the chosen size (exclusive).
+        SDL_DisplayMode mode;
+        const bool exclusive = d.fullW && SDL_GetClosestFullscreenDisplayMode(SDL_GetDisplayForWindow(win), d.fullW,
+                                                                              d.fullH, 0, true, &mode);
+        if (d.fullW && !exclusive) SDL_Log("no fullscreen mode near %d x %d: %s", d.fullW, d.fullH, SDL_GetError());
+        SDL_SetWindowFullscreenMode(win, exclusive ? &mode : nullptr);
+        SDL_SetWindowFullscreen(win, true);
     } else {
         SDL_SetWindowFullscreen(win, false);
         SDL_SetWindowSize(win, d.width, d.height);
@@ -152,7 +167,8 @@ public:
                     display_.fullscreen = !display_.fullscreen;
                     applyDisplay(win_, display_);
                     saveDisplay();
-                    if (current_ == kOptionsItf) showDisplay(display_);
+                    if (current_ == kOptionsItf) listChoices(display_);
+                } else if (typeSize(e.key)) {
                 } else if (e.key.key == SDLK_UP) focus(-1);
                 else if (e.key.key == SDLK_DOWN || e.key.key == SDLK_TAB) focus(1);
                 else if (e.key.key == SDLK_LEFT) adjust(-1);
@@ -251,9 +267,10 @@ public:
 
 private:
     // The game runs at 1024x768 with High Resolution on, 800x600 without
-    // (Harbinger.ini [Video] HiRes; the front end is always 800x600).
+    // (Harbinger.ini [Video] HiRes; the front end is always 800x600). The
+    // 16:9 aspect keeps the height and widens the view (rebuild).
     void startGame() {
-        const int w = highRes_ ? 1024 : kScreenW, h = highRes_ ? 768 : kScreenH;
+        const int h = highRes_ ? 768 : kScreenH, w = gameViewWidth(h, display_.aspect);
         world_ = std::make_unique<WorldView>(assets_, ren_, level_, character_, w, h,
                                              Hud::inventoryLayout(assets_, character_), entry_, at_);
         world_->setSound(sound_.get());
@@ -479,25 +496,108 @@ private:
         screen_->setSlider(kSound, 3, settings_.sound);
         screen_->setSlider(kGamma, 4, settings_.gamma);
         screen_->setCheck(kHighRes, 5, highRes_);
-        // A rebuild addition: the display choice, in the free row above the
-        // buttons, in the labels' font. Action 6 is unused by the original.
-        displayChoice_ = screen_->addChoice(170, 388, 460, 10, 6);
-        int maxW = 0, maxH = 0;
-        SDL_Rect usable;
-        if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(win_), &usable)) maxW = usable.w, maxH = usable.h;
-        choices_ = displayChoices(maxW, maxH);
-        choice_ = 0;
-        for (size_t i = 0; i < choices_.size(); ++i)
-            if (choices_[i] == display_) choice_ = i;
-        if (!(choices_[choice_] == display_)) {  // a size from the file that is not offered: offer it too
-            choices_.insert(choices_.end() - 1, display_);
-            choice_ = choices_.size() - 2;
-        }
-        showDisplay(display_);
+        // Rebuild additions, in the free row above the buttons, in the
+        // labels' font: the display size and the aspect. Actions 6 and 7 are
+        // unused by the original.
+        displayChoice_ = screen_->addChoice(kSizeRow.x, kSizeRow.y, kSizeRow.w, 10, 6);
+        aspectChoice_ = screen_->addChoice(kAspectRow.x, kAspectRow.y, kAspectRow.w, 10, 7);
+        pickedAspect_ = display_.aspect;
+        typed_.reset();
+        listChoices(display_);
     }
 
-    void showDisplay(const Display& d) {
-        if (current_ == kOptionsItf) screen_->setText(displayChoice_, "Display    -  " + d.describe() + "  +");
+    // The sizes for the picked aspect, with `current` selected (added to the
+    // list when it is not offered: a custom size).
+    void listChoices(const Display& current) {
+        int maxW = 0, maxH = 0;
+        const SDL_DisplayID screen = SDL_GetDisplayForWindow(win_);
+        SDL_Rect usable;
+        if (SDL_GetDisplayUsableBounds(screen, &usable)) maxW = usable.w, maxH = usable.h;
+        // The display's fullscreen modes, one per size, of the picked shape.
+        std::vector<std::pair<int, int>> modes;
+        int count = 0;
+        if (SDL_DisplayMode** list = SDL_GetFullscreenDisplayModes(screen, &count)) {
+            for (int i = 0; i < count; ++i) {
+                const int w = list[i]->w, h = list[i]->h;
+                const bool wide = w * 9 == h * 16 || (w == 1366 && h == 768);
+                if ((pickedAspect_ == Aspect::Wide) == wide && (wide || w * 3 == h * 4)) modes.emplace_back(w, h);
+            }
+            SDL_free(list);
+        }
+        choices_ = displayChoices(pickedAspect_, maxW, maxH, modes);
+        // Fullscreen choices keep the window size to come back to.
+        for (Display& d : choices_)
+            if (d.fullscreen) d.width = current.width, d.height = current.height;
+        choice_ = choices_.size();
+        for (size_t i = 0; i < choices_.size(); ++i)
+            if (choices_[i].sameSize(current)) choice_ = i;
+        if (choice_ == choices_.size()) {
+            Display d = current;
+            d.aspect = pickedAspect_;
+            // A window goes with the windows, a fullscreen size at the end.
+            const auto at = d.fullscreen ? choices_.end()
+                                         : std::find_if(choices_.begin(), choices_.end(), [](const Display& o) { return o.fullscreen; });
+            choice_ = size_t(choices_.insert(at, d) - choices_.begin());
+        }
+        showDisplay();
+    }
+
+    void showDisplay() {
+        if (current_ != kOptionsItf) return;
+        if (typed_) screen_->setText(displayChoice_, "Size    " + *typed_ + "_    Enter");
+        else screen_->setText(displayChoice_, "-  " + choices_[choice_].describe() + "  +");
+        screen_->setText(aspectChoice_, std::string("Aspect   -  ") + describe(pickedAspect_) + "  +");
+    }
+
+    // Typing a size on the size row (rebuild): digits, then x (or a space)
+    // and more digits, Enter takes it as a custom window or fullscreen size.
+    // True if the key went to it.
+    bool typeSize(const SDL_KeyboardEvent& k) {
+        if (current_ != kOptionsItf) return false;
+        const bool onRow = screen_->focused() == displayChoice_ ||
+                           (showCursor_ && SDL_PointInRectFloat(&mouse_, &kSizeRow));
+        if (!onRow && !typed_) return false;
+        int digit = -1;
+        if (k.key >= SDLK_0 && k.key <= SDLK_9) digit = int(k.key - SDLK_0);
+        else if (k.key >= SDLK_KP_1 && k.key <= SDLK_KP_9) digit = int(k.key - SDLK_KP_1) + 1;
+        else if (k.key == SDLK_KP_0) digit = 0;
+        if (!typed_) {
+            if (digit < 0) return false;
+            typed_ = "";
+        }
+        if (k.key == SDLK_UP || k.key == SDLK_DOWN || k.key == SDLK_TAB) {  // moving away drops it
+            typed_.reset();
+            showDisplay();
+            return false;
+        }
+        std::string& t = *typed_;
+        if (digit >= 0 && t.size() < 11) {
+            t += char('0' + digit);
+        } else if ((k.key == SDLK_X || k.key == SDLK_SPACE || k.key == SDLK_KP_MULTIPLY) && !t.empty() &&
+                   t.find('x') == std::string::npos) {
+            t += " x ";
+        } else if (k.key == SDLK_BACKSPACE) {
+            if (t.size() >= 3 && t.compare(t.size() - 3, 3, " x ") == 0) t.resize(t.size() - 3);
+            else if (!t.empty()) t.pop_back();
+        } else if (k.key == SDLK_RETURN || k.key == SDLK_KP_ENTER) {
+            int w = 0, h = 0;
+            if (parseSize(t, w, h)) {
+                Display d = choices_[choice_];
+                if (d.fullscreen) d.fullW = w, d.fullH = h;
+                else d.width = w, d.height = h;
+                typed_.reset();
+                listChoices(d);
+            } else {
+                screen_->playSlot(Screen::kHoverSound, false);  // not a size (320x240 to 16384x16384)
+            }
+            return true;
+        } else if (k.key == SDLK_ESCAPE) {
+            typed_.reset();
+        } else if (digit < 0) {
+            return true;  // other keys do nothing while typing
+        }
+        showDisplay();
+        return true;
     }
 
     // Load Game (interface 0xd). The rebuild cannot read the original's saves
@@ -567,16 +667,25 @@ private:
             case 0: SDL_Log("Configure Controls: not rebuilt yet"); return;
             case 1: swapChanged_ = !swapChanged_; return;
             case 5: highResChanged_ = !highResChanged_; return;
-            case 6: {  // display choice (rebuild): shown now, applied on Accept
+            case 6: {  // display size (rebuild): shown now, applied on Accept
+                typed_.reset();
                 const int n = int(choices_.size());
                 choice_ = size_t((int(choice_) + screen_->choiceStep(displayChoice_) + n) % n);
-                showDisplay(choices_[choice_]);
+                showDisplay();
                 return;
             }
-            case -2:  // Accept: apply the toggles, write config.cfg
-                if (!(choices_[choice_] == display_)) {
-                    display_ = choices_[choice_];
-                    applyDisplay(win_, display_);
+            case 7:  // aspect (rebuild): the sizes offered follow it
+                typed_.reset();
+                pickedAspect_ = pickedAspect_ == Aspect::Wide ? Aspect::Classic : Aspect::Wide;
+                listChoices(choices_[choice_]);
+                return;
+            case -2: {  // Accept: apply the toggles, write config.cfg
+                Display picked = choices_[choice_];
+                picked.aspect = pickedAspect_;
+                if (!picked.sameSize(display_) || picked.aspect != display_.aspect) {
+                    const bool resize = !picked.sameSize(display_);
+                    display_ = picked;
+                    if (resize) applyDisplay(win_, display_);
                     saveDisplay();
                 }
                 if (swapChanged_) settings_.swapMouse = !settings_.swapMouse;
@@ -584,6 +693,7 @@ private:
                 saveSettings();
                 pending_ = kStartupItf;
                 return;
+            }
             case -3:  // Cancel: back to the stored settings
                 settings_ = saved_;
                 applyVolumes();
@@ -655,7 +765,11 @@ private:
     Display display_;
     std::string displayPath_;
     std::vector<Display> choices_;
-    size_t choice_ = 0, displayChoice_ = 0;
+    size_t choice_ = 0, displayChoice_ = 0, aspectChoice_ = 0;
+    Aspect pickedAspect_ = Aspect::Classic;
+    std::optional<std::string> typed_;  // a size being typed on the Options screen
+    // The Options screen's rebuild rows (800x600 pixels).
+    static constexpr SDL_FRect kSizeRow{130, 388, 330, 18}, kAspectRow{460, 388, 220, 18};
     bool swapChanged_ = false, highResChanged_ = false, highRes_ = true;
     SDL_FPoint mouse_{kScreenW / 2.0f, kScreenH / 2.0f};
     std::unique_ptr<WorldView> world_;
@@ -709,6 +823,14 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--time") o.timeMs = std::stoull(v);
         else if (a == "--run-ms") o.runMs = std::stoull(v);
         else if (a == "--pad") o.pad = v;
+        else if (a == "--aspect") {
+            if (v != "4:3" && v != "16:9") throw std::runtime_error("--aspect expects 4:3 or 16:9");
+            o.aspect = v == "16:9" ? Aspect::Wide : Aspect::Classic;
+        } else if (a == "--size") {
+            int w = 0, h = 0;
+            if (!parseSize(v, w, h)) throw std::runtime_error("--size expects WxH, from 320x240 to 16384x16384");
+            o.size = std::pair{w, h};
+        }
         else if (a == "--character") {
             if (v == "human") o.character = world::Character::Human;
             else if (v == "gladiator") o.character = world::Character::Gladiator;
@@ -739,7 +861,7 @@ Options parseArgs(int argc, char** argv) {
     }
     if (o.data.empty()) throw std::runtime_error("Harbinger.ini not found. Put harbinger.exe in the Harbinger folder, or run:\n"
                                                  "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y] [--no-audio] "
-                                                 "[--character human|gladiator|culibine] [--settings config.cfg] "
+                                                 "[--character human|gladiator|culibine] [--settings config.cfg] [--aspect 4:3|16:9] [--size WxH] "
                                                  "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use] "
                                                  "[--inventory] [--pad udlrax]]");
     return o;
@@ -756,14 +878,21 @@ int main(int argc, char** argv) {
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) throw std::runtime_error(SDL_GetError());
         // The window as it was left (display.ini next to the settings).
         const std::string displayPath = shot ? "" : prefDir().empty() ? "" : prefDir() + "display.ini";
-        const Display display = loadDisplay(displayPath);
+        Display display = loadDisplay(displayPath);
+        // --aspect and --size override it for this run (a size is a window).
+        if (opt.aspect) display.aspect = *opt.aspect;
+        if (opt.size) display.fullscreen = false, display.width = opt.size->first, display.height = opt.size->second;
+        // A capture of the game is taken at its 1024x768 (1366x768 at 16:9),
+        // of the front end at 800x600, unless --size says otherwise.
+        if (shot && !opt.size) {
+            const bool game = opt.screen == "game";
+            display.width = game ? gameViewWidth(768, display.aspect) : kScreenW;
+            display.height = game ? 768 : kScreenH;
+        }
         SDL_Window* win = nullptr;
         SDL_Renderer* ren = nullptr;
-        // A capture of the game is taken at its 1024x768.
-        const bool shotGame = shot && opt.screen == "game";
-        if (!SDL_CreateWindowAndRenderer("Harbinger", shot ? (shotGame ? 1024 : kScreenW) : display.width,
-                                         shot ? (shotGame ? 768 : kScreenH) : display.height,
-                                         shot ? 0 : SDL_WINDOW_RESIZABLE, &win, &ren))
+        if (!SDL_CreateWindowAndRenderer("Harbinger", display.width, display.height, shot ? 0 : SDL_WINDOW_RESIZABLE,
+                                         &win, &ren))
             throw std::runtime_error(SDL_GetError());
         if (display.fullscreen && !shot) applyDisplay(win, display);
         SDL_SetRenderLogicalPresentation(ren, kScreenW, kScreenH, SDL_LOGICAL_PRESENTATION_LETTERBOX);
