@@ -46,13 +46,34 @@ struct Strike {
     int damage = 0;
 };
 
+// What an attack roll needs to know about the one being hit.
+struct Defender {
+    int defence = 0;  // template+0x10; a player's armour adds its class to it (FUN_004f0f40)
+    // Damage taken per damage type in percent (template+0x204); a type not
+    // listed does no damage.
+    std::vector<std::pair<uint16_t, uint16_t>> resistances;
+    // A player (GPlayerPlug): its armour and helmet can stop a damage type
+    // (FUN_004f10e0, their levels for it) and a hit on it is never doubled.
+    bool player = false;
+    int armour[11] = {};
+};
+// An enemy's (or any template's) side of the roll.
+Defender defenderOf(const agt::Template& t);
+
 // One attack (FUN_00452290 for a blow, not a projectile): the roll
 // rand % 50 + 1 plus the attacker's rating and the weapon's bonus must reach
-// the target's defence (template+0x10); then each damage type the weapon
-// has, other than 5-10, rolls its level's range, scaled by the target's
-// resistance to it in percent and truncated. A hit does at least 1.
-// `types` limits the weapon's damage to those types (empty: all).
-Strike strike(int rating, const wpn::Weapon& weapon, const agt::Template& target, Rng& rng,
-              const std::vector<uint16_t>& types = {});
+// the target's defence; then each damage type 0-4 the weapon has, in type
+// order, rolls its level's range, scaled by the target's resistance to it in
+// percent and truncated. Against a player, a type whose armour level plus
+// the roll exceeds the total is stopped. A hit does at least 1, and twice
+// as much on a roll of 49 or 50 unless the target is a player.
+// `types` limits the weapon's damage to those types (empty: all). A ranged
+// attack adds the weapon's +0x2d bonus instead of +0x2c.
+Strike strike(int rating, const wpn::Weapon& weapon, const Defender& target, Rng& rng,
+              const std::vector<uint16_t>& types = {}, bool ranged = false);
+inline Strike strike(int rating, const wpn::Weapon& weapon, const agt::Template& target, Rng& rng,
+                     const std::vector<uint16_t>& types = {}) {
+    return strike(rating, weapon, defenderOf(target), rng, types);
+}
 
 }  // namespace harbinger::world
