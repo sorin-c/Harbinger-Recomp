@@ -22,6 +22,7 @@
 #include "world/actor.hpp"
 #include "world/combat.hpp"
 #include "world/sprite_cache.hpp"
+#include "world/stats.hpp"
 #include "world/walkmap.hpp"
 
 namespace harbinger::world {
@@ -113,24 +114,23 @@ public:
     std::optional<Shot> takeShot() { return std::exchange(shot_, std::nullopt); }
 
     // The weapon the blows use (the equipped weapon's .wpn), and the
-    // attack rating (GHumanPlayerPlug's +0x23c, 15 for a new character).
+    // attack rating: the Melee skill (plug+0x23c, 15 for a new character).
     const wpn::Weapon& weapon() const { return weapon_; }
-    int meleeRating() const { return 15; }
+    int meleeRating() const { return stats_.meleeRating(); }
     // The ranged weapon (the first equipped weapon of kind 1-3: the
-    // Human's rifle), its rating (+0x23e, 15) and its energy (weapon+0x58,
+    // Human's rifle), its rating (the Ranged skill, +0x23e) and its energy (weapon+0x58,
     // up to +0x60; a shot costs +0x68, and it comes back at +0x70 a second,
     // FUN_00521e00 from GAgentPlug_v6).
     const wpn::Weapon* rangedWeapon() const { return ranged_ ? &*ranged_ : nullptr; }
-    int rangedRating() const { return 15; }
+    int rangedRating() const { return stats_.rangedRating(); }
     double energy() const { return energy_; }
     double maxEnergy() const { return ranged_ ? ranged_->ranged->maxEnergy : 0; }
     // The speed the ranged weapon's bolts fly at (map cells per ms), for
     // leading a moving target; set by whoever knows the effects.
     void setBoltSpeed(double cellsPerMs) { boltSpeed_ = cellsPerMs; }
 
-    // Hit points (plug+0x88) and their maximum (+0x90): each character's
-    // constructor sets its own (Human 70, FUN_004f26c0; Gladiator 80,
-    // FUN_004baa80; Culibine 60, FUN_0046fe50).
+    // Hit points (plug+0x88) and their maximum (+0x90): 2 x (Life + 20),
+    // which gives a new Human 70, a Gladiator 80 and a Culibine 60.
     double hitPoints() const { return hitPoints_; }
     double maxHitPoints() const { return maxHitPoints_; }
     bool dead() const { return dead_; }
@@ -172,6 +172,29 @@ public:
 
     // The animation groups the sprite is built from, bottom first.
     const std::vector<std::string>& layers() const { return layers_; }
+
+    // Experience, level and skills (docs/stats.md).
+    const Stats& stats() const { return stats_; }
+    // Experience from a kill or a script (FUN_004ef480). At each level
+    // reached the maximum hit points follow Life again and the character
+    // is healed to it (slot 39), and the weapons' energy is refilled.
+    // Returns the levels gained.
+    int gainExperience(uint32_t amount);
+    // A stats panel plus button (slot 115): a bonus point into a skill.
+    // A point in Life raises the maximum hit points but heals nothing
+    // (GGladPlayerPlug_v120). False if it could not be spent.
+    bool spendPoint(Skill s);
+    // A skill raised by a script or a gizmo (slot 120); returns the amount
+    // added (the skill stops at 50).
+    int raiseSkill(Skill s, int amount);
+    void setLevelSeen() { stats_.setLevelSeen(); }
+    // What the equipment adds to a skill, shown on the stats panel
+    // (FUN_004f25e0): the melee weapon's hit bonus (weapon+0x2c) for Melee,
+    // the ranged weapon's (+0x2d) for Ranged. The mod chips' and armour's
+    // effects on skills (FUN_00520230 types 0xd-0xf) are not rebuilt yet.
+    int skillBonus(Skill s) const;
+    // What a portal brings from the last level.
+    void carryStats(const Stats& s);
 
     // What the character starts a new game with (item.mgr ids, in the
     // order the original adds them).
@@ -227,6 +250,7 @@ private:
     double aimX_ = 0, aimY_ = 0;  // plug+0x78, +0x80: where the shot goes
     std::optional<Shot> shot_;
 
+    Stats stats_;
     double hitPoints_ = 0, maxHitPoints_ = 0;
     bool dead_ = false;
     uint64_t diedAt_ = 0;

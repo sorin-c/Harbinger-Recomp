@@ -40,6 +40,8 @@ f64  version            FUN_00406a60 (header)
 u16  defence            template+0x10, what an attack roll must reach (docs/combat.md)
 f64  unknown, unknown
 u16  stats[n]           n = 10 from 1.86, else 9; one fewer below 1.6, one fewer below 1.2
+                        stat 7 -> template+0x42 (its bit 15 also +0x9), stat 8 -> +0x214
+                        (experience for a kill, docs/stats.md), stat 9 -> +0x44
 str  name
 -- slot 2, the class's own load --
 u8   type byte          checked against slot 7

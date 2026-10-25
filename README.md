@@ -34,8 +34,8 @@ What exists so far:
 - Gameplay in main so far: walking (mouse, keyboard or gamepad), gear and
   melee and ranged combat, player health and death, enemy AI with melee and
   ranged attacks, spawners, portals between levels, scripted cutscenes and
-  enemy moves, gizmo use (doors, consoles), chest loot, and the HUD and
-  inventory screen with full controller navigation
+  enemy moves, gizmo use (doors, consoles), chest loot, experience and levels with the
+  stats panel, and the HUD and inventory screen with full controller navigation
 
 ```
 harbinger --data "C:/Games/Harbinger"

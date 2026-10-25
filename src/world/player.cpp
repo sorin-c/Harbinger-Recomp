@@ -45,7 +45,7 @@ const char* characterSection(Character c) {
 }
 
 Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& walk, const chk::EntryPoint& start)
-    : vfs_(vfs), walk_(walk), sprites_(vfs) {
+    : vfs_(vfs), walk_(walk), sprites_(vfs), stats_(character) {
     const std::string section = characterSection(character);
     template_ = agt::parse(readOrThrow(vfs, ini.require(section, "Agent")));
     animIndex_ = mgr::parse(readOrThrow(vfs, ini.require(section, "Anims")));
@@ -63,12 +63,44 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
     x_ = start.x;
     y_ = start.y;
     facing_ = uint8_t(start.facing & 0xff);
-    switch (character) {
-        case Character::Human: maxHitPoints_ = 70; break;
-        case Character::Gladiator: maxHitPoints_ = 80; break;
-        case Character::Culibine: maxHitPoints_ = 60; break;
-    }
+    maxHitPoints_ = stats_.maxHitPoints();
     hitPoints_ = maxHitPoints_;
+}
+
+int Player::gainExperience(uint32_t amount) {
+    const int levels = stats_.addExperience(amount);
+    if (levels > 0 && !dead_) {
+        // FUN_004ef480, for each level: slot 39 sets the maximum from Life
+        // and the hit points to it; the weapons' energy goes back to full.
+        maxHitPoints_ = stats_.maxHitPoints();
+        hitPoints_ = maxHitPoints_;
+        energy_ = maxEnergy();
+    }
+    return levels;
+}
+
+bool Player::spendPoint(Skill s) {
+    if (dead_ || !stats_.spendPoint(s)) return false;
+    maxHitPoints_ = stats_.maxHitPoints();
+    return true;
+}
+
+int Player::raiseSkill(Skill s, int amount) {
+    const int added = stats_.raise(s, amount);
+    maxHitPoints_ = stats_.maxHitPoints();
+    return added;
+}
+
+int Player::skillBonus(Skill s) const {
+    if (s == Skill::Melee) return weapon_.hitBonus;
+    if (s == Skill::Ranged) return ranged_ ? ranged_->bonus2d : 0;
+    return 0;
+}
+
+void Player::carryStats(const Stats& s) {
+    stats_ = s;
+    maxHitPoints_ = stats_.maxHitPoints();
+    hitPoints_ = std::min(hitPoints_, maxHitPoints_);
 }
 
 void Player::takeDamage(int damage, uint64_t nowMs) {

@@ -29,7 +29,14 @@ enum : uint16_t {
     kCulHealthBar = 0x28,
     kCulEnergyBar = 0x2A,
     kGladDropSlot = 0x30,
+    kStatsName = 0x3E,
+    kStatsSkillName = 0x3F,   // 0x3f-0x42, one per row
+    kStatsSkillValue = 0x43,  // 0x43-0x46
+    kStatsLevel = 0x47,
+    kStatsBonus = 0x48,
+    kStatsNextLevel = 0x4A,
     kStatsThreeStateBtn = 0x4B,
+    kStatsPlusBtn = 0x4C,     // 0x4c-0x4f
     kQuestLogButton = 0x56,
 };
 
@@ -111,14 +118,22 @@ Hud::Hud(Assets& assets, world::Character character, int screenW, int screenH, S
     load(log_, itfPath(character, "logbuttons"));
     load(inv_, itfPath(character, "inventory"));
     load(popup_, "res\\common\\interface\\descpopup\\descpopup.itf");
+    // The stats panel's bar, bonus and plus button art is drawn with its own
+    // palette: through the background's the next level bar comes out
+    // magenta instead of green (likely).
+    load(stats_, itfPath(character, "stats"), true);
+    statsText_.resize(stats_.controls.size());
 }
 
 Hud::~Hud() {
     SDL_DestroyTexture(tip_.tex);
     SDL_DestroyTexture(money_.tex);
+    for (auto& t : statsText_) SDL_DestroyTexture(t.second.tex);
+    for (auto& n : notices_) SDL_DestroyTexture(n.tex.tex);
+    SDL_DestroyTexture(stats_.ownBackground.tex);
 }
 
-void Hud::load(Panel& p, const std::string& path) {
+void Hud::load(Panel& p, const std::string& path, bool ownPalette) {
     p.itf = itf::parse(assets_.read(path));
     const itf::Control* bg = nullptr;
     for (const auto& c : p.itf.controls)
@@ -130,6 +145,41 @@ void Hud::load(Panel& p, const std::string& path) {
         // As in the front end, the panel's art and text take the background's palette.
         p.palette = assets_.image(bg->images[0]).palette;
         p.mask = assets_.rgba(bg->images[0], &p.palette);
+        if (ownPalette) {
+            // The stats panel's background (encoding 7) carries palette
+            // alpha: 0 for the magenta of the next level bar's window. The
+            // original shows the see-through parts inside the panel (the
+            // window, the key green around the glass) black, while the world
+            // shows through those on its outline: holes not reachable from
+            // the image's edge are filled black (matched against the
+            // original; it leaves a faint trace in the window, up to 14 per
+            // channel, that is not reproduced).
+            const gim::Image& img = assets_.image(bg->images[0]);
+            const gim::Frame& f = img.frames[0];
+            auto& px = p.mask.pixels;
+            const int w = p.mask.width, h = p.mask.height;
+            if (img.encoding() == 7)
+                for (size_t i = 0; i < px.size() && i < f.index.size(); ++i)
+                    if (f.opaque[i] && f.index[i] < img.palette.size() && img.palette[f.index[i]].a == 0) px[i] = 0;
+            std::vector<uint8_t> outside(px.size(), 0);
+            std::vector<int> todo;
+            for (int x = 0; x < w; ++x) todo.push_back(x), todo.push_back((h - 1) * w + x);
+            for (int y = 0; y < h; ++y) todo.push_back(y * w), todo.push_back(y * w + w - 1);
+            while (!todo.empty()) {
+                const int i = todo.back();
+                todo.pop_back();
+                if (i < 0 || size_t(i) >= px.size() || outside[size_t(i)] || (px[size_t(i)] >> 24)) continue;
+                outside[size_t(i)] = 1;
+                const int x = i % w;
+                if (x > 0) todo.push_back(i - 1);
+                if (x + 1 < w) todo.push_back(i + 1);
+                todo.push_back(i - w), todo.push_back(i + w);
+            }
+            for (size_t i = 0; i < px.size(); ++i)
+                if (!(px[i] >> 24) && !outside[i]) px[i] = render::packRgba(0, 0, 0, 255);
+            p.ownBackground = assets_.upload(p.mask.pixels, p.mask.width, p.mask.height);
+        }
+
         const SDL_FPoint at = panelPosition(p.itf.kind, bg->x, bg->y, screenW_);
         p.x = at.x, p.y = at.y;
     }
@@ -137,10 +187,13 @@ void Hud::load(Panel& p, const std::string& path) {
     for (const auto& c : p.itf.controls) {
         Control w;
         w.control = &c;
-        for (const auto& img : c.images) w.images.push_back(&assets_.texture(img, &p.palette));
+        const bool own = ownPalette && c.classId != itf::Backgd;
+        for (const auto& img : c.images) w.images.push_back(&assets_.texture(img, own ? nullptr : &p.palette));
+        if (c.classId == itf::Backgd && p.ownBackground.tex && !w.images.empty()) w.images[0] = &p.ownBackground;
         const float x = c.classId == itf::Backgd ? p.x : p.x + c.x, y = c.classId == itf::Backgd ? p.y : p.y + c.y;
         w.rect = {x, y, 0, 0};
         if (!w.images.empty()) w.rect.w = float(w.images[0]->w), w.rect.h = float(w.images[0]->h);
+        else if (c.textBox) w.rect.w = float(c.textBox->width), w.rect.h = float(c.textBox->height);
         if (slotKind(c.classId) >= 0) {
             w.slot = slot++;
             // The Culibine's gauntlet slots have no image: a gauntlet-sized box (guessed).
@@ -171,13 +224,34 @@ bool Hud::setInventoryOpen(bool open) {
     open_ = open;
     if (open) focus_ = {}, clampFocus();
     setTooltip({}, 0, 0, 0);
+    // GCtrlInvThreeStateBtn_v7: closing the inventory closes the stats
+    // panel (FUN_004cb350); opening it while a level-up is unseen
+    // (plug+0x214 clear) opens the stats panel as well (FUN_004cb380).
+    if (!open) statsOpen_ = false;
+    else if (statsView_ && !statsView_->stats.levelSeen()) setStatsOpen(true);
     return true;
+}
+
+void Hud::setStatsOpen(bool open) {
+    if (open && !open_) return;  // it opens from the inventory
+    if (open == statsOpen_) return;
+    statsOpen_ = open;
+    statsFocus_ = 0;
+    setTooltip({}, 0, 0, 0);
+    if (open) actions_.push_back(Action::StatsSeen);
 }
 
 double Hud::viewCentreX() const {
     // The world centres on the part the inventory leaves free: the player
     // stands at x 270 of 1024 in the original with it open.
     return open_ ? inv_.x / 2.0 : screenW_ / 2.0;
+}
+
+double Hud::viewCentreY() const {
+    // And on the part below the stats panel while that is open: in the
+    // original the player moves down 135 pixels when it opens, half the
+    // panel's height (270).
+    return statsOpen_ ? (stats_.y + stats_.mask.height + screenH_) / 2.0 : screenH_ / 2.0;
 }
 
 const Hud::Control* Hud::find(const Panel& p, uint16_t cls) const {
@@ -188,6 +262,7 @@ const Hud::Control* Hud::find(const Panel& p, uint16_t cls) const {
 
 bool Hud::covers(float x, float y) const {
     if (open_ && inv_.hit(x, y)) return true;
+    if (statsOpen_ && stats_.hit(x, y)) return true;
     return left_.hit(x, y) || right_.hit(x, y) || log_.hit(x, y);
 }
 
@@ -263,6 +338,12 @@ bool Hud::pointerDown(float x, float y) {
         }
     if (log_.hit(x, y)) {
         actions_.push_back(Action::QuestLog);
+        return true;
+    }
+    if (statsOpen_ && stats_.hit(x, y)) return clickStats(x, y);
+    if (const Control* c = open_ ? find(inv_, kStatsThreeStateBtn) : nullptr; c && inside(*c, x, y)) {
+        toggleStats();
+        sound(5);
         return true;
     }
     if (open_ && inv_.hit(x, y)) {
@@ -426,12 +507,131 @@ void Hud::sound(int slot) const {
     if (size_t(slot) < s.size() && s[size_t(slot)]) sound_(slot, s[size_t(slot)], true);
 }
 
+// --- stats panel --------------------------------------------------------
+
+std::optional<world::Skill> Hud::skillOf(const Control& c) const {
+    if (!statsView_) return std::nullopt;
+    const uint16_t cls = c.control->classId;
+    int row = -1;
+    if (cls >= kStatsSkillName && cls < kStatsSkillName + 4) row = cls - kStatsSkillName;
+    else if (cls >= kStatsSkillValue && cls < kStatsSkillValue + 4) row = cls - kStatsSkillValue;
+    else if (cls >= kStatsPlusBtn && cls < kStatsPlusBtn + 4) row = cls - kStatsPlusBtn;
+    const auto shown = statsView_->stats.shown();
+    if (row < 0 || size_t(row) >= shown.size()) return std::nullopt;
+    return shown[size_t(row)];
+}
+
+// FUN_004cb130 hands the panel its values: the level (message 0x2f), each
+// shown skill with the equipment's bonus (0x2b + row), the plus buttons
+// (0x34 enabled while there are points and the skill is under 50, else
+// 0x35), the points (0x30) and the next level fraction (0x31).
+std::string Hud::statsText(const Control& c) const {
+    if (!statsView_) return {};
+    const world::Stats& st = statsView_->stats;
+    switch (c.control->classId) {
+        case kStatsName: return statsView_->name;
+        case kStatsLevel: return std::to_string(st.level());
+        case kStatsBonus:
+            // GCtrlStatsBonus_v7: "*" and the points, in the box's '*' font.
+            return st.points() ? "*" + std::to_string(st.points()) : std::string();
+        case itf::StaticTextBox: return c.control->text;  // "Lvl"
+        default: break;
+    }
+    if (const auto sk = skillOf(c)) {
+        if (c.control->classId >= kStatsSkillName && c.control->classId < kStatsSkillName + 4) return c.control->text;
+        if (c.control->classId >= kStatsSkillValue && c.control->classId < kStatsSkillValue + 4) {
+            // GCtrlStatsSkillValue_v7: skill plus bonus, starred when there
+            // is a bonus.
+            const int bonus = statsView_->bonus[size_t(*sk)];
+            const std::string v = std::to_string(st.skill(*sk) + bonus);
+            return bonus > 0 ? "*" + v : v;
+        }
+    }
+    return {};
+}
+
+std::string Hud::statsTip(const Control& c) const {
+    if (!statsView_) return {};
+    const world::Stats& st = statsView_->stats;
+    switch (c.control->classId) {
+        case kStatsName: return "Player name";        // GCtrlStatsName_v10
+        case kStatsLevel: return "Current level";     // GCtrlStatsLevel_v10
+        case kStatsNextLevel: return world::experienceTip(st);
+        case kStatsBonus: return st.points() ? "Level up bonus" : std::string();  // GCtrlStatsBonus_v10 / v9
+        default: break;
+    }
+    if (const auto sk = skillOf(c)) {
+        if (c.control->classId >= kStatsPlusBtn) return st.canSpend(*sk) ? world::plusTip(*sk) : std::string();
+        return world::skillTip(*sk, st, statsView_->bonus[size_t(*sk)]);
+    }
+    return {};
+}
+
+bool Hud::clickStats(float x, float y) {
+    if (!statsView_) return true;
+    for (const auto& c : stats_.controls) {
+        const uint16_t cls = c.control->classId;
+        if (cls < kStatsPlusBtn || cls >= kStatsPlusBtn + 4 || !inside(c, x, y)) continue;
+        // GCtrlStatsPlusBtn_v7: an enabled button spends a point (slot 115).
+        const auto sk = skillOf(c);
+        if (sk && statsView_->stats.canSpend(*sk)) {
+            spent_.push_back(*sk);
+            pressedPlus_ = cls - kStatsPlusBtn;
+            pressedUntil_ = now_ + 150;
+            sound(5);
+        }
+    }
+    return true;
+}
+
+void Hud::padStatsMove(int dy) {
+    if (!statsOpen_ || !statsView_) return;
+    pad_ = true;
+    const int rows = int(statsView_->stats.shown().size());
+    statsFocus_ = std::clamp(statsFocus_ + dy, 0, std::max(0, rows - 1));
+}
+
+void Hud::padStatsPress() {
+    if (!statsOpen_ || !statsView_) return;
+    pad_ = true;
+    for (const auto& c : stats_.controls)
+        if (c.control->classId == kStatsPlusBtn + statsFocus_) {
+            const auto sk = skillOf(c);
+            if (sk && statsView_->stats.canSpend(*sk)) {
+                spent_.push_back(*sk);
+                pressedPlus_ = statsFocus_;
+                pressedUntil_ = now_ + 150;
+                sound(5);
+            }
+        }
+}
+
+void Hud::notify(const std::string& text, uint64_t durationMs) {
+    Notice n;
+    n.text = text;
+    n.until = now_ + durationMs;
+    notices_.push_back(std::move(n));
+    // FUN_004e4520 keeps a fixed number of lines, dropping the oldest.
+    while (notices_.size() > 5) {
+        SDL_DestroyTexture(notices_.front().tex.tex);
+        notices_.erase(notices_.begin());
+    }
+}
+
 // --- update -------------------------------------------------------------
 
-void Hud::update(uint64_t nowMs, const Vitals& vitals) {
+void Hud::update(uint64_t nowMs, const Vitals& vitals, const StatsView* stats) {
     const double dt = lastUpdate_ ? double(nowMs - lastUpdate_) / 1000.0 : 0;
     lastUpdate_ = now_ = nowMs;
     vitals_ = vitals;
+    if (stats) statsView_ = *stats;
+    for (size_t i = 0; i < notices_.size();)
+        if (notices_[i].until <= now_) {
+            SDL_DestroyTexture(notices_[i].tex.tex);
+            notices_.erase(notices_.begin() + long(i));
+        } else {
+            ++i;
+        }
     double target = vitals.maxHitPoints > 0 ? std::clamp(vitals.hitPoints / vitals.maxHitPoints, 0.0, 1.0) : 0;
     if (target > 0 && target < kBarMin) target = kBarMin;
     if (shownHealth_ < target) shownHealth_ = std::min(target, shownHealth_ + kBarSpeed * dt);
@@ -480,6 +680,21 @@ void Hud::update(uint64_t nowMs, const Vitals& vitals) {
                 ax = r.x + r.w / 2, ay = r.y, ab = r.y + r.h;
             }
         }
+        // The stats panel's tooltips (each control's slot 10).
+        if (text.empty() && statsOpen_ && !pad_ && now_ - hoverSince_ >= kHealthTipDelayMs)
+            for (const auto& c : stats_.controls)
+                if (c.control->classId != itf::Backgd && inside(c, mouseX_, mouseY_)) {
+                    text = statsTip(c);
+                    if (text.empty()) continue;
+                    ax = c.rect.x + c.rect.w / 2, ay = c.rect.y, ab = c.rect.y + c.rect.h;
+                    break;
+                }
+        if (text.empty() && statsOpen_ && pad_ && statsView_)
+            for (const auto& c : stats_.controls)
+                if (c.control->classId == kStatsSkillName + statsFocus_) {
+                    if (const auto sk = skillOf(c)) text = world::skillTip(*sk, statsView_->stats, statsView_->bonus[size_t(*sk)]);
+                    ax = c.rect.x + c.rect.w / 2, ay = c.rect.y, ab = c.rect.y + c.rect.h;
+                }
         if (text.empty() && !pad_)
             for (uint16_t cls : {kHealthBtn, kGladHealthBtn, kCulHealthBtn})
                 if (const Control* c = find(left_, cls);
@@ -641,8 +856,17 @@ void Hud::drawControl(SDL_Renderer* ren, const Panel& p, const Control& c) const
                 image(0);
             break;
         case kInvThreeStateBtn:
-            // GCtrlThreeStateBtn: nothing while off, image 1 while on.
+            // GCtrlThreeStateBtn: nothing while off, image 1 while on. While
+            // a level-up is unseen the closed button blinks
+            // (GCtrlInvThreeStateBtn_v8 flips its state when the clock's
+            // quarter second, (ms % 1000) / 250, turns 3 and back): lit for
+            // that last quarter of each second (which phase is lit is
+            // guessed).
             if (open_) image(1);
+            else if (statsView_ && !statsView_->stats.levelSeen() && (now_ % 1000) / 250 == 3) image(1);
+            break;
+        case kStatsThreeStateBtn:
+            if (statsOpen_) image(1);
             break;
         case kInjectorBtn:
             // An injector in its slot shows a full bottle (the colour and
@@ -724,8 +948,113 @@ void Hud::drawInventory(SDL_Renderer* ren) const {
     }
 }
 
+void Hud::drawStats(SDL_Renderer* ren) const {
+    if (!statsView_) return;
+    const world::Stats& st = statsView_->stats;
+    for (size_t i = 0; i < stats_.controls.size(); ++i) {
+        const Control& c = stats_.controls[i];
+        const uint16_t cls = c.control->classId;
+        auto image = [&](size_t k, float w = -1) {
+            if (k >= c.images.size()) return;
+            const Texture* t = c.images[k];
+            const float ww = w < 0 ? float(t->w) : w;
+            const SDL_FRect src{0, 0, ww, float(t->h)}, dst{c.rect.x, c.rect.y, ww, float(t->h)};
+            SDL_RenderTexture(ren, t->tex, &src, &dst);
+        };
+        if (cls == itf::Backgd) {
+            image(0);
+            continue;
+        }
+        if (cls == kStatsNextLevel) {
+            // GCtrlStatsNextLevel_v3: the bar's image cut to the fraction
+            // of the way to the next level (message 0x31), from the left.
+            if (c.images.empty()) continue;
+            const float w = std::floor(float(st.levelProgress()) * float(c.images[0]->w));
+            if (w >= 1) image(0, w);
+            continue;
+        }
+        if (cls >= kStatsPlusBtn && cls < kStatsPlusBtn + 4) {
+            // GCtrlStatsPlusBtn: images disabled, up, pressed.
+            const auto sk = skillOf(c);
+            if (!sk) continue;
+            if (!st.canSpend(*sk)) image(0);
+            else if (pressedPlus_ == cls - kStatsPlusBtn && now_ < pressedUntil_) image(2);
+            else image(1);
+            if (pad_ && statsFocus_ == cls - kStatsPlusBtn) {
+                SDL_SetRenderDrawColor(ren, kFocus.r, kFocus.g, kFocus.b, kFocus.a);
+                const SDL_FRect a{c.rect.x - 2, c.rect.y - 2, c.rect.w + 4, c.rect.h + 4};
+                SDL_RenderRect(ren, &a);
+            }
+            continue;
+        }
+        if (cls == kStatsBonus && !st.points()) {
+            // GCtrlStatsBonus: nothing with no points (message 0x33; the
+            // original shows nothing there at level 1); with points its
+            // text box, on its image (likely).
+            continue;
+        }
+        if (!c.control->textBox) continue;
+        const std::string text = statsText(c);
+        auto& cache = statsText_[i];
+        if (cache.first != text || (!cache.second.tex && !text.empty())) {
+            SDL_DestroyTexture(cache.second.tex);
+            cache = {text, {}};
+            if (!text.empty()) {
+                const itf::TextBox& b = *c.control->textBox;
+                const ui::BoxFonts fonts{&assets_.font(b.font), &assets_.font(b.fontAlt), &assets_.font(b.fontStar)};
+                // The bonus box is 0 by 0 in the file and grows to its image
+                // (FUN_00466a90), right-aligned 10 pixels in from its edge.
+                render::RgbaImage back;
+                if (cls == kStatsBonus && !c.control->images.empty()) back = assets_.rgba(c.control->images[0]);
+                const auto img = ui::renderTextBox(fonts, stats_.palette, b, text, -1, back.width ? &back : nullptr);
+                cache.second = assets_.upload(img.pixels, img.width, img.height);
+            }
+        }
+        if (cache.second.tex) {
+            const SDL_FRect dst{c.rect.x, c.rect.y, float(cache.second.w), float(cache.second.h)};
+            SDL_RenderTexture(ren, cache.second.tex, nullptr, &dst);
+        }
+        if (pad_ && cls == kStatsSkillName + statsFocus_) {
+            SDL_SetRenderDrawColor(ren, kFocus.r, kFocus.g, kFocus.b, kFocus.a);
+            const SDL_FRect a{c.rect.x - 2, c.rect.y - 2, c.rect.w + 4, c.rect.h + 4};
+            SDL_RenderRect(ren, &a);
+        }
+    }
+}
+
+void Hud::drawNotices(SDL_Renderer* ren) const {
+    // The message line (FUN_004e4520's list): where and in which font the
+    // original draws it is not traced. The rebuild centres the lines at the
+    // top of the view in the description popup's font (guessed).
+    if (notices_.empty() || popup_.controls.size() < 2) return;
+    const itf::TextBox* box = nullptr;
+    for (const auto& c : popup_.controls)
+        if (c.control->textBox) box = &*c.control->textBox;
+    if (!box) return;
+    float y = statsOpen_ ? float(stats_.y + stats_.mask.height) + 8 : 8;
+    for (auto& n : notices_) {
+        Texture& tex = n.tex;
+        if (!tex.tex) {
+            itf::TextBox b = *box;
+            const fnt::Font& f = assets_.font(b.font);
+            b.width = uint16_t(std::min(ui::measure(f, n.text).width + 4, screenW_));
+            b.height = uint16_t(f.lineHeight + 2);
+            b.padX = b.padY = 0;
+            b.align = 0;
+            const ui::BoxFonts fonts{&f, &assets_.font(b.fontAlt), &assets_.font(b.fontStar)};
+            const auto img = ui::renderTextBox(fonts, popup_.palette, b, n.text);
+            tex = assets_.upload(img.pixels, img.width, img.height);
+        }
+        const SDL_FRect dst{std::floor(float(screenW_ - tex.w) / 2), y, float(tex.w), float(tex.h)};
+        SDL_RenderTexture(ren, tex.tex, nullptr, &dst);
+        y += float(tex.h);
+    }
+}
+
 void Hud::draw(SDL_Renderer* ren) const {
     if (open_) drawInventory(ren);
+    if (statsOpen_) drawStats(ren);
+    drawNotices(ren);
     drawPanel(ren, log_);
     drawPanel(ren, left_);
     drawPanel(ren, right_);

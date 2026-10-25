@@ -54,7 +54,8 @@ The rebuild adds the 10 pixels without knowing where they come from. At
 | InvThreeStateBtn (CHAR) | Nothing while closed, image 1 ("On") while the inventory is open. | **proven** (Wine, both states) |
 | ThreeStateBtn (MAP) | Drawn off. A click is reported (there is no map yet). | |
 | InjectorBtn | A full bottle when the injector slot holds one. Colour and fill level are not decoded. | **guessed** |
-| DropItemBtn, QuestLogButton, Stats | Not drawn (the background shows). | |
+| DropItemBtn, QuestLogButton | Not drawn (the background shows). | |
+| Stats (0x4B) | Opens the stats panel, see `docs/stats.md`. The CHAR button blinks while a new level is unseen. | |
 
 ## Inventory screen
 
@@ -154,7 +155,7 @@ its own maximum (**guessed**). A first ranged weapon starts full.
 
 ## Not yet
 
-- The weapon mod panel, stats panel, map and quest log.
+- The weapon mod panel, map and quest log.
 - Dropping items on the floor.
 - Injector colours.
 - Energy lines in weapon descriptions.

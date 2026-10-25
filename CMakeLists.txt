@@ -63,6 +63,7 @@ add_library(harbinger_core
   src/world/gizmo_state.cpp
   src/world/motion.cpp
   src/world/player.cpp
+  src/world/stats.cpp
   src/world/sprite_cache.cpp
   src/world/combat.cpp
   src/world/foes.cpp
@@ -124,7 +125,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-  foreach(t sqh gim core ui resources audio world movement combat inventory)
+  foreach(t sqh gim core ui resources audio world movement combat inventory stats)
     add_executable(test_${t} tests/test_${t}.cpp)
     target_link_libraries(test_${t} PRIVATE harbinger_core)
     add_test(NAME ${t} COMMAND test_${t})

@@ -44,7 +44,7 @@ them, 798 vtables and 2,157 virtual functions were named in Ghidra
 | `.gim` images | 10,158 | **Done.** See `docs/formats/gim.md`. Decoder, `gim2tga`, tests |
 | `.wav` / `.mp3` | 421 / 517 | Standard RIFF PCM and LAME MP3 (proven by signatures) |
 | `.gsc` scripts | 205 | Plain text, `Version 0.x` then one command per line (proven) |
-| `.dlg` `.qst` `.tre` | 1,390 / 156 / 3 | Binary, start with a version `double`, contain plain strings (likely) |
+| `.dlg` `.qst` `.tre` | 1,390 / 156 / 3 | Binary, start with a version `double`, contain plain strings (likely). The three `.tre` are one identical 130-byte quest file, not skill trees (docs/stats.md) |
 | `.itm` `.wpn` `.gig` `.gkt` `.gac` | 1,137 / 964 / 408 / 1 / 4 | Item, weapon, item-group, kit and account data |
 | `.anm` `.agt` | 550 / 117 | Animation and agent definitions; `.anm` reference sprite sheet paths |
 | `.giz` `.brs` `.chk` `.mck` | 798 / 20 / 93 / 93 | Gizmos, brushes, level chunk maps and their collision/marker maps (likely) |
