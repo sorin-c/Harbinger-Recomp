@@ -53,7 +53,8 @@ Cutscene::Cutscene(Assets& assets, SDL_Renderer* ren, world::Character character
                    int screenH)
     : assets_(assets), ren_(ren), level_(level), screenW_(screenW), screenH_(screenH),
       scripts_(readIndex(assets, world::characterSection(character), "Scripts")),
-      speech_(readIndex(assets, world::characterSection(character), "Speech")), triggers_(level.map()) {}
+      speech_(readIndex(assets, world::characterSection(character), "Speech")), triggers_(level.map()),
+      gizmoTriggers_(level.map()) {}
 
 Cutscene::~Cutscene() {
     stopPcm(kVoiceKey);
@@ -88,12 +89,96 @@ void Cutscene::fire(const chk::EventTrigger& t, uint64_t nowMs) {
         if (auto s = script(t.script)) runner_.start(std::move(s));
 }
 
+void Cutscene::fire(const chk::GizmoTrigger& t, uint64_t nowMs) {
+    if (std::getenv("HARBINGER_SCRIPT_LOG"))
+        std::fprintf(stderr, "%llu ms: gizmo trigger %u fires, gizmo %u\n", (unsigned long long)nowMs, unsigned(t.id),
+                     unsigned(t.gizmo));
+    // GGizmoTrigger_v3: the gizmo's GIActivatable slot 1, with the
+    // trigger's id.
+    const chk::GizmoRecord* g = level_.gizmoByInstance(t.gizmo);
+    if (!g) return;
+    if (const auto link = world::portalLink(level_.gizmoTemplate(*g), *g)) runPortal(*g, *link, t.id, nowMs);
+    else level_.useGizmo(*g, nowMs, *occupied_);
+}
+
+void Cutscene::runPortal(const chk::GizmoRecord& g, const world::PortalLink& link, uint16_t trigger, uint64_t nowMs) {
+    // GPortalPlug_v1. Walking in and out are scripts the portal makes up
+    // and starts like a trigger's, in game state 8 (no bars). Not rebuilt:
+    // the light effect it puts at the doorway (FUN_004825b0, effect 0x3a).
+    using C = gsc::Command;
+    auto number = [](double v) { return gsc::Arg{gsc::Arg::Number, v, {}}; };
+    auto word = [](const char* w) { return gsc::Arg{gsc::Arg::Word, 0, w}; };
+    auto line = [](C c, std::vector<gsc::Arg> args) {
+        gsc::Line l;
+        l.command = c;
+        l.args = std::move(args);
+        return l;
+    };
+    constexpr double kPortalSound = 0x116;  // sound.mgr 278
+    const world::PortalStep step = world::portalStep(link, portalPhases_[g.instance], trigger);
+    auto script = std::make_shared<gsc::Script>();
+    switch (step) {
+    case world::PortalStep::None:
+    case world::PortalStep::WalkedOut:
+        return;
+    case world::PortalStep::Leave:
+        // Back to play (game state 1), and the other level loads.
+        portalMode_ = false;
+        levelChange_ = LevelChange{link.level, link.entry};
+        if (std::getenv("HARBINGER_SCRIPT_LOG"))
+            std::fprintf(stderr, "%llu ms: portal %u leaves for level %u, entry %u\n", (unsigned long long)nowMs,
+                         unsigned(g.instance), unsigned(link.level), unsigned(link.entry));
+        return;
+    case world::PortalStep::WalkIn: {
+        // Sound 278, wait 1.4 s, then walk to the inner trigger, which
+        // fires on arrival.
+        const chk::GizmoTrigger* inner = nullptr;
+        for (const auto& t : level_.map().gizmoTriggers)
+            if (t.id == link.inner) inner = &t;
+        if (!inner) return;
+        script->lines = {line(C::Sound, {number(kPortalSound), word("NoWait")}), line(C::Wait, {number(1400)}),
+                         line(C::MoveTo, {number(inner->x), number(inner->y), number(0), word("NoWait")})};
+        break;
+    }
+    case world::PortalStep::WalkOut: {
+        // Sound 278, walk out to the portal's use point (its plug's target,
+        // slot 1 at plug+0xc), then play resumes (Warp 0: game state 1).
+        const auto out = level_.gizmoUsePoint(g);
+        script->lines = {line(C::Sound, {number(kPortalSound), word("NoWait")}),
+                         line(C::MoveTo, {number(out.x), number(out.y), number(0), word("Wait")}),
+                         line(C::Warp, {number(0)})};
+        break;
+    }
+    }
+    portalMode_ = true;
+    if (player_.stop) player_.stop();
+    runner_.start(std::move(script));
+}
+
+world::CommandResult Cutscene::moveCmd(const gsc::Line& line, bool first, uint64_t nowMs) {
+    // FUN_004227c0 on the agent the instance names (FUN_004a50e0); the
+    // player is instance 0 (likely). Other agents do not walk yet.
+    (void)nowMs;
+    using R = world::CommandResult;
+    if (uint16_t(line.number(2)) != 0 || !player_.walkTo) return R::Skip;
+    if (first) {
+        player_.walkTo(line.number(0), line.number(1));
+        return line.waits() ? R::Running : R::Done;
+    }
+    return player_.walking() ? R::Running : R::Done;
+}
+
 void Cutscene::update(uint64_t nowMs, double x0, double y0, double x1, double y1, const Occupied& occupied) {
     nowMs_ = nowMs;
     occupied_ = &occupied;
     playerX_ = x1, playerY_ = y1;
     if (!detached_) camX_ = x1, camY_ = y1;
     for (const chk::EventTrigger* t : triggers_.step(x0, y0, x1, y1)) fire(*t, nowMs);
+    const auto idle = [&](uint16_t instance) {
+        const chk::GizmoRecord* g = level_.gizmoByInstance(instance);
+        return !g || level_.gizmoState(*g).state == 0;
+    };
+    for (const chk::GizmoTrigger* t : gizmoTriggers_.step(x0, y0, x1, y1, idle)) fire(*t, nowMs);
     updateMode(nowMs);
     runner_.update([&](const gsc::Line& l, bool first, uint64_t now) { return run(l, first, now); }, nowMs);
     shakeX_ = shakeY_ = 0;
@@ -136,6 +221,12 @@ world::CommandResult Cutscene::run(const gsc::Line& line, bool first, uint64_t n
         case C::ThoughtBubble: return bubbleCmd(line, first, nowMs);
         case C::Sound: return soundCmd(line, first, nowMs);
         case C::ActivateGizmo: return gizmoCmd(line, first, nowMs);
+        case C::MoveTo: return moveCmd(line, first, nowMs);
+        case C::Warp:
+            // GGame_v0 case 0x11 -> FUN_004a49e0: 0 puts the game back in
+            // play (state 1).
+            if (line.number(0) == 0) portalMode_ = false;
+            return R::Done;
         case C::Wait:
             // GGame_v0 case 0xc.
             if (first) waitUntil_ = nowMs + uint64_t(line.number(0));
@@ -155,9 +246,10 @@ world::CommandResult Cutscene::run(const gsc::Line& line, bool first, uint64_t n
             if (line.text(0) == "Gizmo") highlight_ = uint16_t(line.number(1));
             return R::Done;
         default:
-            // Agents (MoveTo, TurnToward, Attack, StrikePose) and the rest
-            // are not rebuilt yet: the shipped trigger scripts aim them at
-            // agents that spawners create, which the rebuild does not have.
+            // The other agent commands (TurnToward, Attack, StrikePose), and
+            // MoveTo on agents other than the player, are not rebuilt yet:
+            // the shipped trigger scripts aim them at agents that spawners
+            // create.
             return R::Skip;
     }
 }
@@ -254,7 +346,7 @@ world::CommandResult Cutscene::gizmoCmd(const gsc::Line& line, bool first, uint6
     if (!g) return R::Skip;
     if (first) {
         const bool used = level_.useGizmo(*g, nowMs, *occupied_);
-        // Gizmos the rebuild cannot use yet (spawners) do not hold the script up.
+        // A gizmo that does not take the activation does not hold the script up.
         return used && line.waits() ? R::Running : R::Done;
     }
     return level_.gizmoState(*g).state == 3 ? R::Done : R::Running;

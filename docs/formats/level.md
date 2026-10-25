@@ -93,7 +93,8 @@ repeat eventTriggers:   GEventTrigger, FUN_0048d200
                         1.18-1.19 kept the script inline, 1.17 and older nothing
 repeat gizmoTriggers:   GGizmoTrigger, FUN_004baa50
   trigger
-  u16  gizmo            the gizmo instance it fires
+  u16  gizmo            the gizmo instance it fires (GIActivatable slot 1 with
+                        (-1, id); portals read the id: docs/formats/gizmo.md)
 -- FUN_00504a90: placed sounds (none in the shipped levels) --
 u32  n
 n x sound               GSoundInfo, FUN_005037c0: f64 x, y; u16 sound; u16; u32

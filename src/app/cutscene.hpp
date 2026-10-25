@@ -17,6 +17,7 @@
 #include "formats/mgr.hpp"
 #include "world/level.hpp"
 #include "world/player.hpp"
+#include "world/portal.hpp"
 #include "world/script.hpp"
 
 namespace harbinger::app {
@@ -31,13 +32,30 @@ public:
 
     void setSound(SoundSystem* sound) { sound_ = sound; }
 
+    // How scripts move the player (agent 0 in MoveTo): walk to a map point,
+    // stop, and whether it is still walking.
+    struct PlayerControl {
+        std::function<void(double x, double y)> walkTo;
+        std::function<void()> stop;
+        std::function<bool()> walking;
+    };
+    void setPlayer(PlayerControl control) { player_ = std::move(control); }
+
     using Occupied = std::function<bool(const chk::GizmoRecord&)>;
     // Once a frame, after the player has moved from (x0, y0) to (x1, y1):
     // fires the triggers that move sets off and runs the current script.
     void update(uint64_t nowMs, double x0, double y0, double x1, double y1, const Occupied& occupied);
 
-    // Cinematic mode (game states 3 to 6): the player takes no orders.
-    bool cinematic() const { return mode_ != Mode::Off; }
+    // Cinematic mode (game states 3 to 6), or a portal walking the player
+    // (game state 8): the player takes no orders.
+    bool cinematic() const { return mode_ != Mode::Off || portalMode_; }
+    bool portalMode() const { return portalMode_; }
+    // Set once the player has walked into a portal: the level and entry
+    // point to load (GGame+0x132, +0x136, then FUN_004a1d20).
+    struct LevelChange {
+        uint16_t level = 0, entry = 0;
+    };
+    const std::optional<LevelChange>& levelChange() const { return levelChange_; }
     bool running() const { return runner_.running(); }
     // Where the camera looks, in map cells, while a script holds it; empty
     // while it follows the player.
@@ -70,7 +88,10 @@ private:
     world::CommandResult bubbleCmd(const gsc::Line& line, bool first, uint64_t nowMs);
     world::CommandResult soundCmd(const gsc::Line& line, bool first, uint64_t nowMs);
     world::CommandResult gizmoCmd(const gsc::Line& line, bool first, uint64_t nowMs);
+    world::CommandResult moveCmd(const gsc::Line& line, bool first, uint64_t nowMs);
     void fire(const chk::EventTrigger& t, uint64_t nowMs);
+    void fire(const chk::GizmoTrigger& t, uint64_t nowMs);
+    void runPortal(const chk::GizmoRecord& g, const world::PortalLink& link, uint16_t trigger, uint64_t nowMs);
     std::shared_ptr<const gsc::Script> script(uint16_t id);
     // Sounds a script plays, by key; without an audio device they "play"
     // for their length so scripts keep their timing.
@@ -90,6 +111,11 @@ private:
     mgr::Index scripts_, speech_;
     std::map<uint16_t, std::shared_ptr<const gsc::Script>> loaded_;
     world::TriggerWatch triggers_;
+    world::GizmoTriggerWatch gizmoTriggers_;
+    PlayerControl player_;
+    std::map<uint16_t, uint8_t> portalPhases_;  // portal instance -> plug+0x100
+    bool portalMode_ = false;                   // GGame+0x43c = 8
+    std::optional<LevelChange> levelChange_;
     world::ScriptRunner runner_;
     const Occupied* occupied_ = nullptr;  // during update()
     std::map<int, uint64_t> soundEnds_;   // key -> when it ends (no audio device)

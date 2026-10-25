@@ -156,6 +156,13 @@ bool Player::walkTo(double x, double y) {
     return !path_.empty();
 }
 
+bool Player::walkStraightOn(double x, double y) {
+    walkTo(x, y);
+    const WalkMap::Point end = path_.empty() ? WalkMap::Point{x_, y_} : path_.back();
+    if (std::hypot(end.x - x, end.y - y) > 1e-6) path_.push_back({x, y});
+    return true;
+}
+
 void Player::steer(double dx, double dy) {
     if (dead_) return;
     steerX_ = dx;

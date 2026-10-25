@@ -423,6 +423,16 @@ private:
             if (a == Hud::Action::UseHealthPack) world_->useHealthPack();  // the map and quest log are not rebuilt yet
         world_->setViewCentre(hud_->viewCentreX());
         world_->update(nowMs);
+        if (const auto change = world_->levelChange()) {
+            // A portal: the next level, with the player on its entry point
+            // (FUN_004a1d20 sets the load going), carrying what it has.
+            auto carried = world_->takeCarried();
+            level_ = change->level, entry_ = change->entry;
+            startGame();
+            world_->carry(std::move(carried));
+            hud_->attach(&world_->inventory(), &world_->catalog());
+            return;
+        }
         const world::Player& p = world_->player();
         hud_->update(nowMs, Hud::Vitals{p.hitPoints(), p.maxHitPoints(), p.energy(), p.maxEnergy()});
     }

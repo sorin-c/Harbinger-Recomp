@@ -75,6 +75,8 @@ add_library(harbinger_core
   src/world/inventory_layout.cpp
   src/world/item_catalog.cpp
   src/world/item_text.cpp
+  src/world/spawners.cpp
+  src/world/portal.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
 target_include_directories(harbinger_core SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/_deps/dr_libs)

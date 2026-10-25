@@ -68,6 +68,9 @@ public:
         int hitPoints = 0, maxHitPoints = 0;
         bool dead = false;
         uint64_t diedAt = 0;  // when the death animation started
+        // Out of play: in its spawner, or waking (docs/formats/gizmo.md,
+        // "Spawners"). It does not think, and cannot be found or hit.
+        bool held = false;
 
         double x = 0, y = 0;
         uint8_t facing = 0;
@@ -100,6 +103,7 @@ public:
         Mind mind;
     };
     const std::vector<Foe>& all() const { return foes_; }
+    void hold(int id, bool held) { foes_[size_t(id)].held = held; }
     const Foe* find(int id) const;
     // The id of a live foe whose box (template+0x20 + 0.1 either side,
     // FUN_004a2590) holds map point (x, y), the nearest if several; or -1.

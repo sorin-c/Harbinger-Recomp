@@ -319,6 +319,135 @@ player to the passable half cell nearest the use point and uses the gizmo
 on arrival if it is within 1.5 cells. A console with nothing attached
 plays its activation once and goes back to idle.
 
+## Spawners
+
+A **spawner** (class 18, `GSpawnGizmo` / `GSpawnGizmoPlug`: pods, Vantir
+stations, bug nests, the NPCs' alcoves) holds agents until a trigger or a
+script activates it. The 223 spawners in the levels hold 244 agents.
+
+**What a spawner holds.** The template ends with a list of slots, three
+`i16` each (`GSpawnGizmo_v4`): `a`, `b`, a pixel of the first frame, and
+`c` (0, 3 or 7; not traced). The level record, after the splitter's eight
+bytes, has one `u16` per slot (`GSpawnGizmoPlug_v22`, plug+0x10c). The
+agents themselves are placed in the level like any other: an enemy
+record's trailing word (`GEnemyPlug_v71`, plug+0x218) names the spawner's
+instance in its low 12 bits and the slot in its top 4. On load,
+`FUN_0044b6b0` stores the agent's GIActivatable in the spawner's slot
+(plug+0x110). In the shipped levels each slot word is the agent.mgr id of
+the agent in that slot, and the agent stands on the slot's spawn point:
+`(a, b)` placed on the map by `FUN_004b3690`, as for use points (all 244,
+two of them 0.13 cells off; test). The automap reads the same points
+(`FUN_0044b760`, case 0x12).
+
+**The record.** `GSplitterPlug_v22`: `u16` state (plug+0x7c), `u32`
+(plug+0x34; 0 or 5 to 1200, not traced, likely a delay in ms), `u16` power
+needed (plug+0xde, 0 in every record); then the slot words. Most records
+start in state 0; 17 station spawners start spent (3), their agents
+already out.
+
+**States.** Spawners and splitters (class 13, the halves of Vantir
+stations) share them:
+
+| State | Frames (slot 17, `0x50a5c0`) | |
+|---|---|---|
+| 0 | the first | waiting |
+| 2 | all, once | activated (`0x50a720`: only from 0) |
+| 3 | the last | spent (slot 29, `0x50a620`) |
+
+**Opening** (`GSpawnGizmoPlug_v28`, `GSplitterPlug_v28`): while in state 2
+and powered, each frame step tests two frames of the template:
+
+- the Begin Activate frame (tag 7, gizmo+0xb8, `GSpawnGizmo_v34`; frame 0
+  if none): slot 30 calls `FUN_004bdaf0`, so every gizmo attached to it
+  (the level's attachments list) is activated. Station tops start their
+  bases this way (71 Vantir stations, 18 Provost stations) and one Dual
+  Hanger the next;
+- the End Activate frame (tag 8, gizmo+0xc0, `GSpawnGizmo_v4`; the last
+  frame if none): each slot's agent gets GIActivatable slot 1, and the
+  slot is emptied.
+
+**What the agents do.** Slot 1 depends on the agent's class:
+
+| Classes | Slot 1 | |
+|---|---|---|
+| Vantir (3), Khapra (10), Bowel Horse (12) | `0x507f30`, `0x508280` | role 2, policy 9 (VantirAwake) |
+| Vantir boss (4), Herps (13, 14), Overlord (39) | `0x507ff0`, `0x4bbc70`, `0x5082f0` | policies 10, 0x15, 0xb |
+| Scint boss (8), Boxer (37) | `0x4fcac0`, `0x508060` | the mind's slot 12 |
+| Turret (18), Cim drone (40) | `0x5084e0`, `0x507ec0` | action 0 (Idle) |
+| NPCs (20-28), Gubiests (15, 16) | `0x40e510` | nothing |
+
+All but the last skip an agent that is dead (`FUN_004e4d70`). VantirAwake
+(`GVantirAwakePolicy_v1`) has two steps: action 8 (Awake), which plays the
+agent's state 7 animation (Awake, Spawn) through once, then action 0x11
+(BlindMove) to the point 2 cells ahead along its facing
+(`GVantirAwakePolicy_v2`).
+
+**Before.** `GBowelHorsePlug_v61` activates the agent's own spawner when
+its current action is 9 (Stasis), so a held agent waits in Stasis.
+`GStasisAction` plays state 7 too, but its tick (slot 2, `0x4041a0`) sets
+the agent's animation start (agent+0x58) to now every frame, so the
+picture stays on the animation's first frame (likely; where Stasis starts
+is not found).
+
+**Rebuild.** `world::Spawners`: agents of the classes that wake (not NPCs
+or Gubiests) whose spawner is not spent are held; a held agent is drawn on
+the first frame of its state 7 animation (nothing if it has none: drones
+wait unseen) and cannot be attacked. Spawners and splitters open on
+activation (event triggers' gizmo lists, `ActivateGizmo`); at Begin
+Activate the attached gizmos are activated, at End Activate the agents are
+let out, and Awake agents play their state 7 animation once. Not yet: the
+BlindMove step and enemy minds taking over afterwards (the enemy AI work),
+and a held agent waking when hit. On Om's Outer Sanctum (level 33) the
+cutscene opens both pods and the twins rise out of them.
+
+## Portals
+
+A portal (class 16, `GPortalPlug`) is the doorway between two levels. Its
+record's 14 bytes of class data (`GPortalPlug_v22`) are seven words:
+
+| Offset | Plug field | Meaning |
+|---|---|---|
+| 0 | state | 0 in every shipped record |
+| 2 | +0xf4 | the level (`level.mgr` id) it leads to |
+| 4 | +0xf6 | the entry point it puts the player on there |
+| 6 | +0xf8 | the entry point in this level that arrives through it |
+| 8 | +0xde | power needed |
+| 10 | +0x104 | the inner trigger: a gizmo trigger inside the portal |
+| 12 | +0x106 | the outer trigger: a gizmo trigger in front of it |
+
+In 45 of the 49 shipped portals inner = 2·own − 1 and outer = 2·own − 2;
+the engine reads the words, not the rule.
+
+**Gizmo triggers.** A level's gizmo triggers (`docs/formats/level.md`) are
+circles that call their gizmo when the player walks in
+(`GGizmoTrigger_v3`: the trigger goes to state 2 and calls the gizmo's
+GIActivatable slot 1 with (−1, trigger id)). `GGizmoTrigger_v4` re-arms it
+(state 3) once the gizmo is idle (state 0), and `FUN_0051afa0` arms it
+again (state 0) once the player is outside the circle.
+
+**Walking through** (`GPortalPlug_v1`, the trigger id in the call's y; the
+portal's phase at +0x100):
+
+- Outer trigger, phase 2 (walking out): phase 0.
+- Outer trigger otherwise: phase 1, game state 8 (no orders), and a script
+  built in code: `Sound(278, NoWait)`, `Wait(1400)`,
+  `MoveTo(inner trigger's point, 0, NoWait)`.
+- Inner trigger, phase 1: game state 1, phase 0, then `GGame+0x132` =
+  level, `+0x136` = entry, and `FUN_004a1d20` loads that level.
+- Inner trigger otherwise (the player arrives standing in it): phase 2,
+  game state 8, and the script `Sound(278, NoWait)`,
+  `MoveTo(the portal's use point, 0, Wait)`, `Warp(0)`; `Warp(0)`
+  (`FUN_004a49e0`) gives play back (game state 1).
+
+The rebuild plays these scripts with its script runner and keeps the
+player's money, carried items, hit points and energy across the change.
+
+**Rebuild choice.** A scripted move on the player walks the found path,
+then the rest in a straight line if the path stops short. At the player's
+clearance limit (2) the path into Om's Outer Sanctum's portal ends a cell
+before the inner trigger; the original's walk reaches it (the scene would
+never end otherwise), by a route not traced.
+
 ## Evidence
 
 | Claim | Label | Evidence |
@@ -340,14 +469,25 @@ plays its activation once and goes back to idle.
 | Power flow | proven / likely | `0x4d4ab0`, `GBreakerPlug_v0`, `_v1`, `_v30`, `_v31`, `0x4d4ef0` (proven); that the chunk gives each source its level when the level starts (likely, `GChunk_v3` stores them) |
 | Use point | proven | `FUN_004b3690`, `GFakeGizmoPlug_v22`, `GActivateAction` |
 | Console activation, door toggle, chest opening | proven | `GConsolePlug_v0`, `_v1`, `FUN_004bdaf0`, `GBridgePlug_v1`, `_v29`, `FUN_004a01e0`, `GBarrelPlug_v1`, `_v29`; Vantir Storage's console 149 opens door 151 and its doorway becomes walkable (test) |
+| Spawner slots hold placed agents (agent word = spawner + slot << 12) | proven | `GEnemyPlug_v71`, `FUN_0044b6b0`; every tagged agent names a spawner of its level (test) |
+| Slot word = the slot's agent.mgr id; spawn point = slot pixel placed like a use point | proven by survey | all 244 bound agents (test) |
+| Spawner states, attach and release frames | proven | `0x50a5c0`, `0x50a720`, `GSpawnGizmoPlug_v28`, `_v29`, `_v30`, `GSpawnGizmo_v4`, `_v34`, `GSplitterPlug_v28` |
+| Agent wake per class, VantirAwake steps | proven | the classes' GIActivatable slot 1, `GVantirAwakePolicy_v1`, `_v2`, the action ids (slot 3) and states (slot 4) |
+| Held agents stand on the Awake animation's first frame | likely | `GStasisAction` slots 2 and 4, `GBowelHorsePlug_v61`; the start of Stasis is not traced |
 | Mask cell fields | proven | `FUN_004b5ca0`, `FUN_004475f0`, `FUN_00447740` (`docs/movement.md`) |
 | 3D shape layout | proven | `FUN_004b3310`; every template parses to the last byte |
 | Shape placement and projection | proven | `FUN_004b25e0` (texture coordinates from the projection), the stored coordinates of 343 of 344 small templates (affine fit), Vantir Storage's door frames lying exactly inside or outside its shape |
+| Portal record words | proven | `GPortalPlug_v22`; every shipped portal leads to an existing level and entry, and both its triggers are gizmo triggers on it (test) |
+| Gizmo trigger states | proven | `GGizmoTrigger_v3`, `_v4`, `FUN_0051afa0` |
+| Walking through a portal | proven | `GPortalPlug_v1`, `FUN_004a1d20`, `FUN_004a49e0`; Om's Outer Sanctum's portal takes the player to Lower Decks entry 2 and back out (run) |
 | Drawn with a depth buffer, only the shape's triangles | likely | `FUN_004b2d20` and the Direct3D quads of `FUN_004e2eb0`; the depth state itself is not traced |
 
 ## Open questions
 
-- The states of the other classes (Pillar, Splitter, Spawn, Portal,
+- A portal's state 2 (frames from tag 7 to the last but one) can also
+  change level (`GPortalPlug_v29`, `FUN_004a1a20`); no shipped record starts
+  there.
+- The states of the other classes (Pillar, Portal,
   Umbilical, ChargingStn, Container, KeyConsole, Flicker, Animated), and
   using breakers, key consoles and lifts.
 - What a chest drops (`FUN_004d8dd0`).

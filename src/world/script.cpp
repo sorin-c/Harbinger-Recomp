@@ -32,6 +32,28 @@ std::vector<const chk::EventTrigger*> TriggerWatch::step(double x0, double y0, d
     return out;
 }
 
+GizmoTriggerWatch::GizmoTriggerWatch(const chk::Level& level)
+    : level_(level), states_(level.gizmoTriggers.size(), Armed) {}
+
+std::vector<const chk::GizmoTrigger*> GizmoTriggerWatch::step(double x0, double y0, double x1, double y1,
+                                                              const std::function<bool(uint16_t)>& idle) {
+    std::vector<const chk::GizmoTrigger*> out;
+    for (size_t i = 0; i < states_.size(); ++i) {
+        const chk::GizmoTrigger& t = level_.gizmoTriggers[i];
+        if (states_[i] == Fired && idle(t.gizmo)) states_[i] = Rearming;
+        if (states_[i] == Fired) continue;
+        const bool in = entersCircle(x0, y0, x1, y1, t.x, t.y, t.radius);
+        if (states_[i] == Rearming) {
+            if (!in) states_[i] = Armed;
+            continue;
+        }
+        if (!in) continue;
+        states_[i] = Fired;
+        out.push_back(&t);
+    }
+    return out;
+}
+
 void ScriptRunner::start(std::shared_ptr<const gsc::Script> script) {
     // FUN_004fd890 / FUN_004fdca0: from the first command, every phase 0.
     script_ = std::move(script);

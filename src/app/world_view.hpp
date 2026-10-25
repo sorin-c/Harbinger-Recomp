@@ -24,6 +24,7 @@
 #include "world/level.hpp"
 #include "world/loot.hpp"
 #include "world/player.hpp"
+#include "world/spawners.hpp"
 #include "world/walkmap.hpp"
 
 namespace harbinger::app {
@@ -55,6 +56,19 @@ public:
     bool clickBubble(float x, float y) { return cutscene_->click(x, y); }
     bool closeBubble() { return cutscene_->dismiss(); }
     const Cutscene& cutscene() const { return *cutscene_; }
+    // Set once the player has walked into a portal: the level and entry
+    // point to load next.
+    const std::optional<Cutscene::LevelChange>& levelChange() const { return cutscene_->levelChange(); }
+    // What the player takes from level to level: the inventory (with the
+    // catalogue it looks items up in), hit points and ranged energy.
+    struct Carried {
+        std::unique_ptr<world::ItemCatalog> catalog;
+        std::unique_ptr<world::Inventory> inventory;
+        double hitPoints = 0, energy = 0;
+    };
+    // Hands it over; this view is not used after.
+    Carried takeCarried();
+    void carry(Carried c);
 
     // Direct control from a stick or keys: walk towards screen direction
     // (dx, dy) (any length; 0, 0 stops).
@@ -106,6 +120,7 @@ public:
     // Where on the screen the view centres (the HUD moves it while the
     // inventory covers the right part).
     void setViewCentre(double x) { centreX_ = x; }
+    const world::Spawners& spawners() const { return *spawners_; }
     const world::Bolts& bolts() const { return *bolts_; }
 
 private:
@@ -140,6 +155,7 @@ private:
     std::unique_ptr<world::Foes> foes_;
     std::unique_ptr<Cutscene> cutscene_;
     std::unique_ptr<world::Loot> loot_;
+    std::unique_ptr<world::Spawners> spawners_;
     std::unique_ptr<world::Bolts> bolts_;
     SoundSystem* sound_ = nullptr;
     uint32_t pendingPickup_ = 0;  // a ground item the player is walking to (Loot::GroundItem::id)
@@ -172,6 +188,8 @@ private:
         int left = 0, top = 0;
     };
     Sprite agentSprite(const chk::AgentRecord* a) const;  // nullptr: the player
+    // An agent's picture: as its spawner shows it, else as the foes do.
+    world::Level::Pose agentPose(const chk::AgentRecord& a) const;
     // +1 if gizmo object `o` is in front of a sprite standing at map depth
     // `depth` where they overlap, -1 if behind, 0 if they do not overlap.
     int compare(const Object& o, const Sprite& s, double depth) const;

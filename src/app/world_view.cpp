@@ -42,7 +42,14 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     rng_.seed(uint32_t(SDL_GetTicksNS()));
     foes_ = std::make_unique<world::Foes>(assets.vfs(), assets.ini(), *level_, *walk_, rng_);
     cutscene_ = std::make_unique<Cutscene>(assets, ren, character, *level_, screenW, screenH);
+    cutscene_->setPlayer({[this](double x, double y) { player_->walkStraightOn(x, y); },
+                          [this] {
+                              player_->steer(0, 0);
+                              player_->walkTo(player_->x(), player_->y());
+                          },
+                          [this] { return !player_->path().empty(); }});
     loot_ = std::make_unique<world::Loot>(assets.vfs(), assets.ini(), character, *level_, *walk_, rng_);
+    spawners_ = std::make_unique<world::Spawners>(assets.vfs(), *level_);
     bolts_ = std::make_unique<world::Bolts>(assets.vfs(), assets.ini(), *walk_, rng_);
     if (const auto* w = player_->rangedWeapon()) player_->setBoltSpeed(bolts_->speedOf(*w));
     for (size_t i = 0; i < foes_->all().size(); ++i)
@@ -84,6 +91,19 @@ WorldView::~WorldView() {
     for (auto& [key, t] : objectTextures_) SDL_DestroyTexture(t.tex);
 }
 
+WorldView::Carried WorldView::takeCarried() {
+    return {std::move(catalog_), std::move(inventory_), player_->hitPoints(), player_->energy()};
+}
+
+void WorldView::carry(Carried c) {
+    catalog_ = std::move(c.catalog);
+    inventory_ = std::move(c.inventory);
+    player_->equip(inventory_->equippedIds());
+    if (const auto* w = player_->rangedWeapon()) player_->setBoltSpeed(bolts_->speedOf(*w));
+    equipRev_ = inventory_->equipmentRevision();
+    player_->carry(c.hitPoints, c.energy);
+}
+
 bool WorldView::useHealthPack() {
     if (cinematic() || player_->dead() || player_->hitPoints() >= player_->maxHitPoints()) return false;
     if (!inventory_->takeHealthPack()) return false;
@@ -123,7 +143,7 @@ int WorldView::foeAt(float x, float y) const {
     double bestD = 1e9;
     for (size_t i = 0; i < foes_->all().size(); ++i) {
         const auto& f = foes_->all()[i];
-        if (f.dead) continue;
+        if (f.dead || f.held) continue;
         const auto p = world::toScreen(f.x, f.y);
         const double dx = sx - p.x, dy = sy - p.y;
         if (std::fabs(dx) > 28 || dy < -80 || dy > 16) continue;
@@ -317,6 +337,14 @@ void WorldView::update(uint64_t nowMs) {
     // Gizmos first: a door that has just opened can be walked through.
     for (const chk::GizmoRecord* g : level_->update(elapsedMs_)) walk_->repaint(*level_, *g);
     loot_->update(elapsedMs_);
+    for (const chk::AgentRecord* a : spawners_->update(elapsedMs_))
+        if (std::getenv("HARBINGER_SCRIPT_LOG"))
+            std::fprintf(stderr, "%llu ms: agent %u leaves its spawner\n", (unsigned long long)elapsedMs_,
+                         unsigned(a->instance));
+    // A foe is out of play while its spawner holds it and while it plays
+    // its Awake animation after.
+    for (size_t i = 0; i < foes_->all().size(); ++i)
+        foes_->hold(int(i), spawners_->pose(*foes_->all()[i].record, elapsedMs_).has_value());
     if (const auto* f = foes_->find(player_->target())) {
         // A walking foe's velocity and the end of its walk, for leading it.
         double vx = 0, vy = 0;
@@ -355,7 +383,7 @@ void WorldView::update(uint64_t nowMs) {
                 for (size_t i = 0; i < foes_->all().size(); ++i) {
                     const auto& f = foes_->all()[i];
                     defenders.push_back(foes_->defender(int(i)));
-                    if (f.dead) continue;
+                    if (f.dead || f.held) continue;
                     out.push_back({int(i), f.x, f.y, level_->agentTemplate(*f.record).d20, &defenders.back()});
                 }
             } else if (!player_->dead()) {
@@ -429,7 +457,7 @@ void WorldView::update(uint64_t nowMs) {
     // The level's event triggers, and the script one of them started.
     cutscene_->update(elapsedMs_, x0, y0, player_->x(), player_->y(),
                       [&](const chk::GizmoRecord& o) { return occupied(o); });
-    if (cinematic() && !wasCinematic_) {
+    if (cinematic() && !wasCinematic_ && !cutscene_->portalMode()) {
         // Rebuild choice: the player stops where it stands for the cutscene.
         pendingUse_ = nullptr;
         player_->steer(0, 0);
@@ -503,8 +531,13 @@ void WorldView::drawGizmo(const chk::GizmoRecord& g) const {
     }
 }
 
+world::Level::Pose WorldView::agentPose(const chk::AgentRecord& a) const {
+    if (auto pose = spawners_->pose(a, elapsedMs_)) return *pose;
+    return foes_->pose(a, elapsedMs_);
+}
+
 void WorldView::drawAgent(const chk::AgentRecord& a) const {
-    const auto pose = foes_->pose(a, elapsedMs_);
+    const auto pose = agentPose(a);
     if (!pose.image) return;
     const auto at = foes_->position(a);
     const auto p = world::toScreen(at.x, at.y);
@@ -594,7 +627,7 @@ WorldView::Sprite WorldView::agentSprite(const chk::AgentRecord* a) const {
     };
     if (a) {
         const auto at = foes_->position(*a);
-        return place(foes_->pose(*a, elapsedMs_), world::toScreen(at.x, at.y));
+        return place(agentPose(*a), world::toScreen(at.x, at.y));
     }
     return place(player_->pose(elapsedMs_), world::toScreen(player_->x(), player_->y()));
 }
