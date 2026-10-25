@@ -20,6 +20,7 @@
 #include "world/level.hpp"
 #include "world/loot.hpp"
 #include "world/player.hpp"
+#include "world/spawners.hpp"
 #include "world/walkmap.hpp"
 
 namespace harbinger::app {
@@ -77,6 +78,7 @@ public:
     const world::Player& player() const { return *player_; }
     const world::Foes& foes() const { return *foes_; }
     const world::Loot& loot() const { return *loot_; }
+    const world::Spawners& spawners() const { return *spawners_; }
     // What the player has picked up (item.mgr ids; money adds to money()).
     // A plain list until the inventory is rebuilt.
     const std::vector<uint16_t>& carried() const { return carried_; }
@@ -110,6 +112,7 @@ private:
     std::unique_ptr<world::Foes> foes_;
     std::unique_ptr<Cutscene> cutscene_;
     std::unique_ptr<world::Loot> loot_;
+    std::unique_ptr<world::Spawners> spawners_;
     uint32_t pendingPickup_ = 0;  // a ground item the player is walking to (Loot::GroundItem::id)
     std::vector<uint16_t> carried_;
     uint32_t money_ = 0;
@@ -138,6 +141,8 @@ private:
         int left = 0, top = 0;
     };
     Sprite agentSprite(const chk::AgentRecord* a) const;  // nullptr: the player
+    // An agent's picture: as its spawner shows it, else as the foes do.
+    world::Level::Pose agentPose(const chk::AgentRecord& a) const;
     // +1 if gizmo object `o` is in front of a sprite standing at map depth
     // `depth` where they overlap, -1 if behind, 0 if they do not overlap.
     int compare(const Object& o, const Sprite& s, double depth) const;

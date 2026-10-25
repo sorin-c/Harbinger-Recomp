@@ -212,7 +212,7 @@ trigger scripts use: cinematic bars (the player takes no orders), camera
 moves, thought bubbles with their voice lines (closed with a click, Space,
 E or the pad's A), screen shakes, sounds, waits, gizmo activation and
 highlights. Agent commands (MoveTo, TurnToward) are skipped: they move
-agents that spawners create, and spawners are not rebuilt yet. On Refuse
+agents that spawners let out, and agents do not walk yet. On Refuse
 Disposal (level 11), walking up to the portal plays the whole scene.
 Evidence: `docs/formats/script.md`, "Running a script".
 
@@ -224,13 +224,25 @@ item, one every half second, on the floor beside the chest. A click on an
 item, or E, Space or the pad's A, walks there and picks it up; money adds
 to a counter shown at the top left. Evidence: `docs/formats/loot.md`.
 
+## Milestone 17: spawners (done)
+
+Pods, Vantir stations and nests hold their agents until a trigger or a
+script opens them. Held agents wait on the first frame of their Awake
+animation (or unseen) and cannot be attacked; a spawner plays its frames,
+starts the gizmos attached to it at its Begin Activate frame, and lets its
+agents out at its End Activate frame, where they play their Awake
+animation. On Om's Outer Sanctum (level 33) the cutscene opens two pods
+and Khapra and Croton rise out of them. Evidence: `docs/formats/gizmo.md`,
+"Spawners".
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
    (`GCtrlButton_v10`).
 2. Display gamma, Bink video (later or skipped).
 3. The other classes' states (breakers, key consoles, lifts); the inventory.
-4. Spawners (and the scripts' agent commands with them). The room graph.
+4. The scripts' agent commands (MoveTo, TurnToward) and the woken agents'
+   first steps, on the enemies' minds. The room graph.
 5. Enemy AI (thinkers, their attacks), the player's ranged attack, hit
    points and death, experience.
 6. The in-game loop, HUD and lighting.

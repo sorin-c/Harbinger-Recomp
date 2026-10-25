@@ -31,6 +31,7 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     foes_ = std::make_unique<world::Foes>(assets.vfs(), *level_, rng_);
     cutscene_ = std::make_unique<Cutscene>(assets, ren, character, *level_, screenW, screenH);
     loot_ = std::make_unique<world::Loot>(assets.vfs(), assets.ini(), character, *level_, *walk_, rng_);
+    spawners_ = std::make_unique<world::Spawners>(assets.vfs(), *level_);
     const auto p = world::toScreen(player_->x(), player_->y());
     camX_ = p.x, camY_ = p.y;
 
@@ -98,7 +99,7 @@ bool WorldView::attackAt(float x, float y) {
     double bestD = 1e9;
     for (size_t i = 0; i < foes_->all().size(); ++i) {
         const auto& f = foes_->all()[i];
-        if (f.dead) continue;
+        if (f.dead || spawners_->held(*f.record)) continue;
         const auto p = world::toScreen(f.record->x, f.record->y);
         const double dx = sx - p.x, dy = sy - p.y;
         if (std::fabs(dx) > 28 || dy < -80 || dy > 16) continue;
@@ -117,6 +118,7 @@ bool WorldView::attackNearest() {
     const int id = foes_->nearest(player_->x(), player_->y(), 4.0, player_->facing());
     if (id < 0) return false;
     const auto& f = foes_->all()[size_t(id)];
+    if (spawners_->held(*f.record)) return false;  // still inside its spawner
     pendingUse_ = nullptr, pendingPickup_ = 0;
     player_->attack(id, f.record->x, f.record->y);
     return true;
@@ -258,6 +260,10 @@ void WorldView::update(uint64_t nowMs) {
     // Gizmos first: a door that has just opened can be walked through.
     for (const chk::GizmoRecord* g : level_->update(elapsedMs_)) walk_->repaint(*level_, *g);
     loot_->update(elapsedMs_);
+    for (const chk::AgentRecord* a : spawners_->update(elapsedMs_))
+        if (std::getenv("HARBINGER_SCRIPT_LOG"))
+            std::fprintf(stderr, "%llu ms: agent %u leaves its spawner\n", (unsigned long long)elapsedMs_,
+                         unsigned(a->instance));
     if (const auto* f = foes_->find(player_->target())) player_->trackTarget(f->record->x, f->record->y, !f->dead);
     const double x0 = player_->x(), y0 = player_->y();
     if (const auto blow = player_->update(elapsedMs_)) {
@@ -363,8 +369,13 @@ void WorldView::drawGizmo(const chk::GizmoRecord& g) const {
     }
 }
 
+world::Level::Pose WorldView::agentPose(const chk::AgentRecord& a) const {
+    if (auto pose = spawners_->pose(a, elapsedMs_)) return *pose;
+    return foes_->pose(a, elapsedMs_);
+}
+
 void WorldView::drawAgent(const chk::AgentRecord& a) const {
-    const auto pose = foes_->pose(a, elapsedMs_);
+    const auto pose = agentPose(a);
     if (!pose.image) return;
     const auto p = world::toScreen(a.x, a.y);
     drawImage(pose.key, pose.image, p.x - pose.anchorX, p.y - pose.anchorY);
@@ -407,7 +418,7 @@ WorldView::Sprite WorldView::agentSprite(const chk::AgentRecord* a) const {
     auto place = [](const auto& pose, world::ScreenPoint p) {
         return Sprite{pose.image, int(std::floor(p.x - pose.anchorX)), int(std::floor(p.y - pose.anchorY))};
     };
-    if (a) return place(foes_->pose(*a, elapsedMs_), world::toScreen(a->x, a->y));
+    if (a) return place(agentPose(*a), world::toScreen(a->x, a->y));
     return place(player_->pose(elapsedMs_), world::toScreen(player_->x(), player_->y()));
 }
 
