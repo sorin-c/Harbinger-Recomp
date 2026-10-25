@@ -26,6 +26,7 @@
 #include "world/gizmo_state.hpp"
 #include "world/level.hpp"
 #include "world/script.hpp"
+#include "world/spawners.hpp"
 #include "world/loot.hpp"
 #include "formats/gig.hpp"
 #include "formats/itm.hpp"
@@ -314,6 +315,18 @@ static void testGizmoStates() {
         const GizmoPlay opens = world::playFor(chest, ch);
         CHECK(opens.mode == GizmoPlay::Once && opens.first == 2 && opens.last == 4);
         CHECK(world::finish(chest, ch) && ch.state == 3 && !world::activate(chest, ch));
+
+        // A spawner opens once: 0 holds the first frame, 2 plays them all,
+        // 3 holds the last; the record's state word is its first.
+        const giz::Template spawner = tagged(giz::Spawn, {0, 7, 0});
+        world::GizmoState sp = world::startingState(spawner, record(4, {0, 0, 0, 0, 0, 0, 0, 0, 0x45, 0}), 0);
+        CHECK(sp.state == 0 && world::playFor(spawner, sp).mode == GizmoPlay::Hold && world::playFor(spawner, sp).first == 0);
+        CHECK(world::activate(spawner, sp) && sp.state == 2 && !world::activate(spawner, sp));
+        const GizmoPlay pops = world::playFor(spawner, sp);
+        CHECK(pops.mode == GizmoPlay::Once && pops.first == 0 && pops.last == 2);
+        CHECK(world::finish(spawner, sp) && sp.state == 3 && world::playFor(spawner, sp).first == 2);
+        CHECK(!world::usable(spawner));  // triggers and scripts open spawners, players do not
+        CHECK(world::startingState(spawner, record(4, {3, 0, 0, 0, 0, 0, 0, 0, 0, 0}), 0).state == 3);
     }
 
     // Power: a source feeds a breaker, which passes it on only while on.
@@ -562,6 +575,53 @@ static void testRealData(const char* dir) {
             }
         }
         CHECK(chests > 1000 && withGroup > 900);
+    }
+
+    // Spawners: every agent tagged with a spawner names a spawner of the
+    // level, stands on its slot's spawn point, and is the agent.mgr id the
+    // slot's word gives.
+    {
+        size_t bound = 0, exact = 0;
+        for (const auto& [id, path] : mgr::parse(*vfs.read(ini.require("Paths", "Levels"))).entries) {
+            world::Level lv(vfs, ini, id);
+            for (const auto& a : lv.map().agents) {
+                const auto b = world::spawnBinding(a);
+                if (!b) continue;
+                ++bound;
+                const chk::GizmoRecord* g = lv.gizmoByInstance(b->spawner);
+                CHECK(g && lv.gizmoTemplate(*g).cls == giz::Spawn);
+                if (!g) continue;
+                const auto at = world::spawnPoint(lv, *g, b->slot);
+                // (Torvus, in Tinker (L) on levels 1 and 13, stands 0.13 cells off.)
+                const double off = std::hypot(at.x - a.x, at.y - a.y);
+                CHECK(off < 0.2);
+                if (off < 0.01) ++exact;
+                const size_t word = 8 + 2 * size_t(b->slot);
+                CHECK(g->extra.size() >= word + 2 && (g->extra[word] | g->extra[word + 1] << 8) == a.agent);
+            }
+        }
+        CHECK(bound == 244 && exact == 242);
+
+        // Om's Outer Sanctum: the twins wait in their pods until the
+        // cutscene opens them; each comes out at its pod's last frame.
+        world::Level om(vfs, ini, 33);
+        world::Spawners spawners(vfs, om);
+        const chk::AgentRecord* khapra = nullptr;
+        for (const auto& a : om.map().agents)
+            if (a.instance == 125) khapra = &a;
+        CHECK(khapra && spawners.held(*khapra) && spawners.pose(*khapra, 0));
+        om.update(100);
+        CHECK(spawners.update(100).empty());
+        const auto* pod = om.gizmoByInstance(201);
+        CHECK(pod && om.useGizmo(*pod, 1000, [](const chk::GizmoRecord&) { return false; }));
+        om.update(1000);
+        CHECK(spawners.update(1000).empty() && khapra && spawners.held(*khapra));
+        om.update(1300);
+        const auto out = spawners.update(1300);
+        CHECK(out.size() == 1 && out[0] == khapra && !spawners.held(*khapra));
+        CHECK(om.gizmoState(*pod).state == 3);
+        // It plays its Spawn animation (40 frames) and then is shown as usual.
+        CHECK(khapra && spawners.pose(*khapra, 1400) && !spawners.pose(*khapra, 1300 + 40 * 100));
     }
 
     // Refuse Disposal: walking up to the portal sets off trigger 4, whose

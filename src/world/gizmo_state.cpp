@@ -139,6 +139,13 @@ GizmoState startingState(const giz::Template& t, const chk::GizmoRecord& g, int 
         // GIncubatorPlug_v22: u16 power needed (plug+0xc6).
         st.needed = int16_t(u16At(d, 0));
         break;
+    case giz::Splitter:
+    case giz::Spawn:
+        // GSplitterPlug_v22: u16 state (plug+0x7c), u32 (plug+0x34), u16
+        // power needed (plug+0xde); GSpawnGizmoPlug_v22 then a word per slot.
+        st.state = u16At(d, 0);
+        st.needed = int16_t(u16At(d, 6));
+        break;
     default:
         break;
     }
@@ -235,6 +242,14 @@ GizmoPlay playFor(const giz::Template& t, const GizmoState& st) {
         p.maxPauseMs = u32At(t.classData, 4);
         return p;
     }
+    case giz::Splitter:
+    case giz::Spawn:
+        // GSplitterPlug_v17 / GSpawnGizmoPlug_v17: 0 shows the first
+        // frame, 2 (activated) plays them all, the rest (3, spent) show the
+        // last.
+        if (state == 0) return hold(0);
+        if (state == 2) return range(GizmoPlay::Once, 0, last);
+        return hold(last);
     default:
         return hold(0);
     }
@@ -267,6 +282,15 @@ bool activate(const giz::Template& t, GizmoState& st) {
         // GBarrelPlug_v1: from state 0 (or 4) to 2, the opening; its end
         // (GBarrelPlug_v29) sets 3 and drops the contents (FUN_004d8dd0).
         if (st.state != 0 && st.state != 4) return false;
+        st.state = 2;
+        return true;
+    case giz::Splitter:
+    case giz::Spawn:
+        // GSplitterPlug / GSpawnGizmoPlug slot 1 (0x50a720): once, from
+        // state 0 to 2. Its frames then play while it has the power it
+        // needs (GSpawnGizmoPlug_v28); every shipped one needs none, so the
+        // rebuild does not check.
+        if (st.state != 0) return false;
         st.state = 2;
         return true;
     default:
@@ -302,6 +326,8 @@ bool finish(const giz::Template& t, GizmoState& st) {
     case giz::Chest:
     case giz::Barrel:
     case giz::TrashPile:
+    case giz::Splitter:
+    case giz::Spawn:  // GSplitterPlug_v29 / GSpawnGizmoPlug_v29
         if (st.state != 2) return false;
         st.state = 3;
         return true;
