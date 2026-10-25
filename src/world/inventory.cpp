@@ -241,6 +241,13 @@ bool Inventory::stowHeld() {
 bool Inventory::takeHealthPack() {
     if (!packs_) return false;
     --packs_;
+    // FUN_004cd090: a pack carried in the grid moves onto the counter.
+    for (auto it = grid_.begin(); it != grid_.end(); ++it)
+        if (const ItemInfo* i = info(it->item.id); i && i->healthPack) {
+            grid_.erase(it);
+            ++packs_;
+            break;
+        }
     return true;
 }
 

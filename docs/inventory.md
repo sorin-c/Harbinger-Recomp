@@ -134,12 +134,28 @@ Keyboard and mouse:
 - Q uses a health pack.
 - The secondary mouse button does the quick move.
 
+## Health packs and vitals
+
+The bars show the player's hit points and the ranged weapon's energy
+(`Player::hitPoints()`, `energy()`).
+
+A health pack is used by Q, the health button or the D-pad's up. It works
+only while the player is hurt and alive. It takes one off the counter, and a
+pack carried in the grid then moves onto the counter (FUN_004cd090: **likely**).
+
+How much a pack heals is not traced. The use goes through the item's own
+vtable (FUN_004d5a50), and the item files hold only a category word. The
+rebuild heals half the maximum: **guessed**.
+
+`Player::equip()` sets the armour, the melee and ranged weapons and the
+sprite layers from the equipped items, so swapping gear in the inventory
+changes all of them. A new ranged weapon keeps the energy there was, up to
+its own maximum (**guessed**). A first ranged weapon starts full.
+
 ## Not yet
 
-- The heal from a health pack (FUN_00420f80 hands it to the player's plug).
-  The counter goes down, but hit points come with the enemy fight-back work.
-- Real hit point and energy values: the bars show full.
 - The weapon mod panel, stats panel, map and quest log.
 - Dropping items on the floor.
 - Injector colours.
+- Energy lines in weapon descriptions.
 - Loading original saves.

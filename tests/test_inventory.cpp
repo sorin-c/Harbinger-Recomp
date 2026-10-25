@@ -135,6 +135,8 @@ void testAdd() {
     // Five more packs fill the counter to ten; the eleventh is carried.
     for (int i = 0; i < 5; ++i) CHECK(inv.add({6, {}}) == Inventory::Added::HealthPack);
     CHECK(inv.healthPacks() == 10 && inv.add({6, {}}) == Inventory::Added::Grid);
+    // Using one moves the carried pack onto the counter (FUN_004cd090).
+    CHECK(inv.takeHealthPack() && inv.healthPacks() == 10 && inv.grid().size() == 1);
     CHECK(inv.takeHealthPack() && inv.healthPacks() == 9);
     // Armour and weapons cannot be taken off, only swapped.
     CHECK(inv.clickSlot(0) == Inventory::Click::Nothing && inv.clickSlot(5) == Inventory::Click::Nothing);

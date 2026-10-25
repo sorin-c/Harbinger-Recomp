@@ -1,13 +1,14 @@
 // The in-game view, as far as it is rebuilt: a level's floor, walls, gizmos
 // and characters, drawn and animated from the original files, and the
 // player's character walking on it with the camera following, and fighting
-// the level's enemies hand to hand.
+// the level's enemies hand to hand and at range.
 #pragma once
 
 #include <SDL3/SDL.h>
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -15,6 +16,7 @@
 #include "app/assets.hpp"
 #include "app/cutscene.hpp"
 #include "app/sound.hpp"
+#include "world/bolts.hpp"
 #include "world/combat.hpp"
 #include "world/foes.hpp"
 #include "world/inventory.hpp"
@@ -29,17 +31,22 @@ namespace harbinger::app {
 class WorldView {
 public:
     // Loads level `id`, stands the player's character on its entry point
-    // `entry` (0, "Default", for a new game) and centres the camera on it.
-    // `inventory` is the character's inventory screen layout
-    // (Hud::inventoryLayout); the starting items are added to it.
+    // `entry` (0, "Default", for a new game), or at map point `at` (a testing
+    // aid), and centres the camera on it. `inventory` is the character's
+    // inventory screen layout (Hud::inventoryLayout); the starting items are
+    // added to it.
     WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world::Character character, int screenW,
-              int screenH, world::Inventory::Layout inventory, uint16_t entry = 0);
+              int screenH, world::Inventory::Layout inventory, uint16_t entry = 0,
+              std::optional<world::WalkMap::Point> at = {});
     ~WorldView();
     WorldView(const WorldView&) = delete;
     WorldView& operator=(const WorldView&) = delete;
 
     // Where the level's trigger scripts play their sounds and voice lines.
-    void setSound(SoundSystem* sound) { cutscene_->setSound(sound); }
+    void setSound(SoundSystem* sound) {
+        sound_ = sound;
+        cutscene_->setSound(sound);
+    }
     // A trigger script's cinematic mode: the player takes no orders, and
     // steer, walkTo, attack and use do nothing.
     bool cinematic() const { return cutscene_->cinematic(); }
@@ -61,6 +68,11 @@ public:
     // The pad's attack button: hit the nearest enemy within a few cells,
     // preferring those ahead. False if there is none.
     bool attackNearest();
+    // The same with the ranged weapon (right click, the pad's Y / Triangle
+    // or the left trigger, G): shoot the enemy under the pointer, or the
+    // nearest within Player::kShootRange.
+    bool shootAt(float x, float y);
+    bool shootNearest();
     // Using gizmos (consoles, chests) and picking up items: walk up to the
     // item or usable gizmo under view pixel (x, y) and take or use it on
     // arrival; false if there is none there.
@@ -77,6 +89,10 @@ public:
     void update(uint64_t nowMs);
     void draw() const;
 
+    // The player died a while ago (a rebuild choice: 3 s, time for the
+    // death animation): the game is over, any button starts the level again.
+    bool gameOver() const { return player_->dead() && elapsedMs_ >= player_->diedAt() + 3000; }
+
     const world::Level& level() const { return *level_; }
     const world::Player& player() const { return *player_; }
     const world::Foes& foes() const { return *foes_; }
@@ -90,6 +106,7 @@ public:
     // Where on the screen the view centres (the HUD moves it while the
     // inventory covers the right part).
     void setViewCentre(double x) { centreX_ = x; }
+    const world::Bolts& bolts() const { return *bolts_; }
 
 private:
     const Texture* tile(const chk::Layer& layer) const;
@@ -98,6 +115,10 @@ private:
     void drawAgent(const chk::AgentRecord& a) const;
     void drawPlayer() const;
     void drawTargetBar() const;
+    void drawHealth() const;
+    void drawBolts() const;
+    int foeAt(float x, float y) const;
+    void playSound(uint16_t id);
     void drawGroundItems() const;
     // Where a ground item's picture sits on the map screen, and the part of
     // its image to draw; nullptr if it has no picture.
@@ -119,6 +140,8 @@ private:
     std::unique_ptr<world::Foes> foes_;
     std::unique_ptr<Cutscene> cutscene_;
     std::unique_ptr<world::Loot> loot_;
+    std::unique_ptr<world::Bolts> bolts_;
+    SoundSystem* sound_ = nullptr;
     uint32_t pendingPickup_ = 0;  // a ground item the player is walking to (Loot::GroundItem::id)
     std::unique_ptr<world::ItemCatalog> catalog_;
     std::unique_ptr<world::Inventory> inventory_;

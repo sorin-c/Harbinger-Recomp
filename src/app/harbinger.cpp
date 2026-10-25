@@ -4,9 +4,9 @@
 // music and UI sounds. Play opens the first level with the chosen character
 // standing on its entry point, ready to walk.
 //
-//   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id] [--entry id]
+//   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y]
 //             [--character human|gladiator|culibine] [--no-audio] [--settings config.cfg] [--run-ms ms]
-//             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--use]
+//             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use]
 //                                   [--inventory] [--pad udlrax]]
 //
 // Mouse, keyboard (up/down to move, left/right for sliders, Enter, Esc = back)
@@ -15,7 +15,9 @@
 // Diablo II Resurrected on a controller), and clicking or holding the mouse
 // button walks it to the pointer, as in the original. The camera follows.
 // Clicking an enemy goes and hits it (the original's GAttackAction); F, the
-// pad's X / Square or the right trigger hit the nearest enemy ahead.
+// pad's X / Square or the right trigger hit the nearest enemy ahead. The
+// other mouse button on an enemy shoots it with the ranged weapon; G, the
+// pad's Y / Triangle or the left trigger shoot the nearest one.
 //
 // The HUD's CHAR button, I, C or Tab, or the pad's View / Back button open
 // the inventory. On the pad (as in Diablo III on a console) the D-pad or
@@ -58,11 +60,13 @@ struct Options {
     uint16_t entry = 0;  // the level's entry point (0 = "Default"; a testing aid)
     bool audio = true;
     bool attack = false;  // screenshot mode: the attack button at 0 ms
+    bool shoot = false;   // screenshot mode: the shoot button at 0 ms
     bool use = false;     // screenshot mode: the use button at 0 ms and every 1.5 s
     bool inventory = false;  // screenshot mode: the inventory open
     std::string pad;         // screenshot mode: pad presses at 0 ms (u d l r = D-pad, a = A, x = X)
     uint64_t timeMs = 0, runMs = 0;
     std::optional<SDL_FPoint> mouse, click, stick;  // screenshot mode: pointer, a click at 0 ms, a held stick
+    std::optional<SDL_FPoint> at;  // the player's start, map cells (a testing aid)
     world::Character character = world::Character::Human;
 };
 
@@ -112,6 +116,7 @@ public:
         }
         level_ = opt.level;
         entry_ = opt.entry;
+        if (opt.at) at_ = world::WalkMap::Point{opt.at->x, opt.at->y};
         character_ = opt.character;
         if (opt.screen == "new") openNew();
         else if (opt.screen == "options") openOptions();
@@ -224,6 +229,9 @@ public:
     void attackWorld() {
         if (world_) world_->attackNearest();
     }
+    void shootWorld() {
+        if (world_) world_->shootNearest();
+    }
     void useWorld() {
         if (world_ && !world_->closeBubble()) world_->useNearest();
     }
@@ -247,7 +255,7 @@ private:
     void startGame() {
         const int w = highRes_ ? 1024 : kScreenW, h = highRes_ ? 768 : kScreenH;
         world_ = std::make_unique<WorldView>(assets_, ren_, level_, character_, w, h,
-                                             Hud::inventoryLayout(assets_, character_), entry_);
+                                             Hud::inventoryLayout(assets_, character_), entry_, at_);
         world_->setSound(sound_.get());
         hud_ = std::make_unique<Hud>(assets_, character_, w, h, [this](int slot, uint16_t id, bool restart) {
             if (!sound_) return;
@@ -271,6 +279,13 @@ private:
     }
 
     void handleWorld(const SDL_Event& e) {
+        if (world_->gameOver() && (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+                                   (e.type == SDL_EVENT_KEY_DOWN && e.key.key != SDLK_ESCAPE && !e.key.repeat))) {
+            // The rebuild's game over: the level starts again (saving and
+            // loading are not rebuilt).
+            mouseHeld_ = false;
+            return startGame();
+        }
         switch (e.type) {
             case SDL_EVENT_QUIT: running_ = false; break;
             case SDL_EVENT_GAMEPAD_ADDED: SDL_OpenGamepad(e.gdevice.which); break;
@@ -282,9 +297,11 @@ private:
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
                 mouse_ = {e.button.x, e.button.y};
                 showCursor_ = true;
-                // The other button over an inventory item equips it or takes it off (rebuild).
+                // The other button: over an inventory item, equip it or take it
+                // off (rebuild); over the HUD, nothing; elsewhere, shoot the
+                // enemy under the pointer.
                 if (e.button.button == (settings_.swapMouse ? SDL_BUTTON_LEFT : SDL_BUTTON_RIGHT)) {
-                    hud_->pointerAlt(mouse_.x, mouse_.y);
+                    if (!hud_->pointerAlt(mouse_.x, mouse_.y)) world_->shootAt(mouse_.x, mouse_.y);
                     break;
                 }
                 // Swap Mouse Buttons makes the right button the one that walks.
@@ -320,6 +337,8 @@ private:
                     world_->useHealthPack();
                 } else if (e.key.key == SDLK_F && !e.key.repeat) {
                     world_->attackNearest();
+                } else if (e.key.key == SDLK_G && !e.key.repeat) {
+                    world_->shootNearest();
                 } else if (e.key.key == SDLK_E || e.key.key == SDLK_SPACE) {
                     // Close a thought bubble, or use the nearest console or chest.
                     if (!world_->closeBubble()) world_->useNearest();
@@ -349,6 +368,8 @@ private:
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) endGame();
                 // Attack (rebuild controls, D3-style): X / Square, or the right trigger.
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_WEST) world_->attackNearest();
+                // Shoot (rebuild controls): Y / Triangle, or the left trigger.
+                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_NORTH) world_->shootNearest();
                 // Use (rebuild controls): A / Cross, the nearest console or chest.
                 // It also closes a thought bubble first.
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH && !world_->closeBubble()) world_->useNearest();
@@ -364,6 +385,11 @@ private:
                     const bool pulled = e.gaxis.value > 16000;
                     if (pulled && !trigger_) world_->attackNearest();
                     trigger_ = pulled;
+                }
+                if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER) {
+                    const bool pulled = e.gaxis.value > 16000;
+                    if (pulled && !leftTrigger_) world_->shootNearest();
+                    leftTrigger_ = pulled;
                 }
                 break;
             default: break;
@@ -397,8 +423,8 @@ private:
             if (a == Hud::Action::UseHealthPack) world_->useHealthPack();  // the map and quest log are not rebuilt yet
         world_->setViewCentre(hud_->viewCentreX());
         world_->update(nowMs);
-        // Hit points and energy are not modelled yet: the bars show full.
-        hud_->update(nowMs, Hud::Vitals{});
+        const world::Player& p = world_->player();
+        hud_->update(nowMs, Hud::Vitals{p.hitPoints(), p.maxHitPoints(), p.energy(), p.maxEnergy()});
     }
 
     void playMusic(const std::string* path) {
@@ -626,10 +652,11 @@ private:
     std::unique_ptr<Hud> hud_;
     std::optional<std::string> introMusic_;
     uint16_t level_ = 1, entry_ = 0;
+    std::optional<world::WalkMap::Point> at_;
     int gameW_ = kScreenW, gameH_ = kScreenH;
     SDL_FPoint stick_{0, 0};
     world::Character character_ = world::Character::Human;
-    bool mouseHeld_ = false, steering_ = false, trigger_ = false;
+    bool mouseHeld_ = false, steering_ = false, trigger_ = false, leftTrigger_ = false;
     uint64_t lastRetarget_ = 0;
     static constexpr float kStickDeadZone = 0.25f;
     static constexpr uint64_t kRetargetMs = 100;  // rebuild choice
@@ -647,6 +674,10 @@ Options parseArgs(int argc, char** argv) {
         }
         if (a == "--attack") {
             o.attack = true;
+            continue;
+        }
+        if (a == "--shoot") {
+            o.shoot = true;
             continue;
         }
         if (a == "--use") {
@@ -673,6 +704,10 @@ Options parseArgs(int argc, char** argv) {
             else if (v == "gladiator") o.character = world::Character::Gladiator;
             else if (v == "culibine") o.character = world::Character::Culibine;
             else throw std::runtime_error("--character expects human, gladiator or culibine");
+        } else if (a == "--at") {
+            const auto comma = v.find(',');
+            if (comma == std::string::npos) throw std::runtime_error("--at expects x,y");
+            o.at = SDL_FPoint{std::stof(v.substr(0, comma)), std::stof(v.substr(comma + 1))};
         } else if (a == "--click" || a == "--stick") {
             const auto comma = v.find(',');
             if (comma == std::string::npos) throw std::runtime_error(a + " expects x,y");
@@ -693,9 +728,9 @@ Options parseArgs(int argc, char** argv) {
             }
     }
     if (o.data.empty()) throw std::runtime_error("Harbinger.ini not found. Put harbinger.exe in the Harbinger folder, or run:\n"
-                                                 "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--no-audio] "
+                                                 "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y] [--no-audio] "
                                                  "[--character human|gladiator|culibine] [--settings config.cfg] "
-                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--use] "
+                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use] "
                                                  "[--inventory] [--pad udlrax]]");
     return o;
 }
@@ -737,6 +772,7 @@ int main(int argc, char** argv) {
                     game.update(t);
                     if (t == 0 && opt.click) game.clickWorld(*opt.click);
                     if (t == 0 && opt.attack) game.attackWorld();
+                    if (t == 0 && opt.shoot) game.shootWorld();
                     if (t % 1500 == 0 && opt.use) game.useWorld();
                 }
                 game.draw();

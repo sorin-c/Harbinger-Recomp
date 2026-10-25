@@ -58,7 +58,12 @@ repeat count:           GAgentAnimCtr (vtable 0x54a05c)
 u16, u16                agent+0x46, +0x48
 version > 1.2:  u16 lists, each u32 m and m x u16 (FUN_00406c30)
 version > 1.4:  u8 k, k x (u16 damage type, u16 percent): resistances, template+0x204 (docs/combat.md)
-version > 1.8:  10 bytes, 11 above 1.86 (FUN_00407170)
+version > 1.8:  FUN_00407170 (docs/enemies.md):
+  4 bytes               template+0xa..+0xd, flags
+  u16 faction           template+0x21c
+  u16                   template+0x220
+  u16 thinker           template+0x58
+  u8 (above 1.86)       template+0xe
 ```
 
 ## `.anm` layout

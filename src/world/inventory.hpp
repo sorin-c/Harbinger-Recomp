@@ -118,7 +118,8 @@ public:
     uint32_t money() const { return money_; }
     uint16_t healthPacks() const { return packs_; }
     uint16_t maxHealthPacks() const { return layout_.maxHealthPacks; }
-    // Takes one pack off the counter; false if there is none.
+    // Takes one pack off the counter, which a pack carried in the grid
+    // then refills; false if there is none.
     bool takeHealthPack();
 
     // Changes whenever the equipment changes (the sprite and weapon follow it).
