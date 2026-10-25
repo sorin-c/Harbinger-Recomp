@@ -96,8 +96,13 @@ public:
     // False for gizmos the base variant drops (chk::Level::keeps), and for
     // gizmos whose first frame is an editor placeholder: an
     // umbilical shell's first image is only the outline of its footprint, and
-    // the original shows nothing there until the shell closes.
+    // the original shows nothing there until the shell closes (state 2).
     bool gizmoVisible(const chk::GizmoRecord& g) const;
+    // Puts a gizmo in `state` at `nowMs` and plays it from there (the
+    // umbilicals drive their pads and shells this way, world/umbilical.hpp).
+    void setGizmoState(const chk::GizmoRecord& g, uint16_t state, uint64_t nowMs);
+    // Whether a gizmo is ever drawn (gizmoVisible can change with its state).
+    bool gizmoDrawable(const chk::GizmoRecord& g) const;
     // A gizmo's state now and how it plays in it (doors open or shut,
     // consoles idling or without power; world/gizmo_state.hpp). The level
     // starts each gizmo in the state its record gives.

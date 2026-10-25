@@ -25,6 +25,7 @@
 #include "world/loot.hpp"
 #include "world/player.hpp"
 #include "world/spawners.hpp"
+#include "world/umbilical.hpp"
 #include "world/walkmap.hpp"
 
 namespace harbinger::app {
@@ -51,20 +52,41 @@ public:
     // A trigger script's cinematic mode: the player takes no orders, and
     // steer, walkTo, attack and use do nothing.
     bool cinematic() const { return cutscene_->cinematic(); }
+    // The player takes no orders: a cinematic, an umbilical trip under way
+    // or its list open, or just arrived by umbilical.
+    bool locked() const { return cinematic() || frozen_ || menu_ || travel_ || umbilicals_->busy(); }
     // Closes a script's thought bubble: a click on it at view pixel (x, y),
     // or the close button (pad or key). False if nothing was closed.
     bool clickBubble(float x, float y) { return cutscene_->click(x, y); }
     bool closeBubble() { return cutscene_->dismiss(); }
     const Cutscene& cutscene() const { return *cutscene_; }
-    // Set once the player has walked into a portal: the level and entry
-    // point to load next.
-    const std::optional<Cutscene::LevelChange>& levelChange() const { return cutscene_->levelChange(); }
+    // Set once the player has walked into a portal, picked an umbilical
+    // destination, or a script or dialogue has called SetLevel: the level
+    // and entry point to load next.
+    std::optional<Cutscene::LevelChange> levelChange() const;
+    // Call on the new view after a trip by umbilical (LevelChange::umbilical).
+    void arriveByUmbilical();
+
+    // Umbilicals (docs/umbilicals.md). The list of places, while the
+    // shell has closed round the player and the game waits for a pick
+    // (the Level Selection interface, level.itf); empty otherwise.
+    const std::vector<world::UmbilicalCodes::Code>* travelMenu() const { return menu_ ? &*menu_ : nullptr; }
+    // A line of the list picked (its index), or -1 to cancel.
+    void chooseTravel(int index);
+    // The player's codes, and the actions dialogue fires: Unlock Umbilical
+    // (true if the code is new: "Player received umbilical code."), Clear
+    // Umbilicals (codes().clear()) and Set Level.
+    world::UmbilicalCodes& codes() { return *codes_; }
+    const world::EntryLookup& entries() const { return entries_; }
+    bool unlockCode(uint16_t level, uint16_t entry, bool gold);
+    void setLevel(uint16_t level);
     // What the player takes from level to level: the inventory (with the
     // catalogue it looks items up in), hit points and ranged energy.
     struct Carried {
         std::unique_ptr<world::ItemCatalog> catalog;
         std::unique_ptr<world::Inventory> inventory;
         double hitPoints = 0, energy = 0;
+        std::unique_ptr<world::UmbilicalCodes> codes;
     };
     // Hands it over; this view is not used after.
     Carried takeCarried();
@@ -145,10 +167,12 @@ private:
     const chk::GizmoRecord* gizmoAt(float x, float y) const;
     void approach(const chk::GizmoRecord& g);
     bool occupied(const chk::GizmoRecord& g) const;
+    void updateUmbilicals();
 
     Assets& assets_;
     SDL_Renderer* ren_;
     std::unique_ptr<world::Level> level_;
+    uint16_t levelId_;
     std::unique_ptr<world::WalkMap> walk_;
     std::unique_ptr<world::Player> player_;
     world::Rng rng_;
@@ -158,6 +182,13 @@ private:
     std::unique_ptr<world::Spawners> spawners_;
     std::vector<bool> wasHeld_;  // per foe, last frame
     std::unique_ptr<world::Bolts> bolts_;
+    world::EntryLookup entries_;
+    std::unique_ptr<world::UmbilicalCodes> codes_;
+    std::unique_ptr<world::Umbilicals> umbilicals_;
+    std::optional<std::vector<world::UmbilicalCodes::Code>> menu_;
+    std::optional<Cutscene::LevelChange> travel_;
+    bool frozen_ = false;          // arrived by umbilical: no control until the shell opens
+    bool poweredChecked_ = false;
     SoundSystem* sound_ = nullptr;
     uint32_t pendingPickup_ = 0;  // a ground item the player is walking to (Loot::GroundItem::id)
     std::unique_ptr<world::ItemCatalog> catalog_;

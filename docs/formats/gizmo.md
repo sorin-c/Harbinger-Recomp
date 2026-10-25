@@ -203,7 +203,8 @@ reaches the time.
 
 An Umbilical Shell's first frame is only an outline of its footprint (editor
 art); the original shows nothing there at rest, so the rebuild hides the
-class.
+shell until it closes (state 2). Umbilical pads and shells, their states and
+a trip between levels: `docs/umbilicals.md`.
 
 ## States
 
@@ -491,8 +492,7 @@ never end otherwise), by a route not traced.
 - A portal's state 2 (frames from tag 7 to the last but one) can also
   change level (`GPortalPlug_v29`, `FUN_004a1a20`); no shipped record starts
   there.
-- The states of the other classes (Pillar, Portal,
-  Umbilical, ChargingStn, Container, KeyConsole, Flicker, Animated), and
+- The states of the other classes (Pillar, Portal, ChargingStn, Container, KeyConsole, Flicker, Animated), and
   using breakers, key consoles and lifts.
 - What a chest drops (`FUN_004d8dd0`).
 - Whether the first pause of a random-pause gizmo starts at once.

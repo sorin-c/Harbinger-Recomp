@@ -14,8 +14,11 @@ player), `src/app/harbinger.cpp` (input). Tests: `tests/test_movement.cpp`.
 A new game enters level 1 at entry point 0, "Default": `FUN_004a05d0` sets
 the entry id at game+0x136 to 0 and `FUN_00498250` looks it up in the
 chunk's entry list (chunk+0x118), puts the player on its (x, y) and copies
-the low byte of the entry's facing word into plug+0x3a and +0x3c. Torvus
-Junction's Default entry is (20.06, 24.94), facing 19.
+the entry's facing into plug+0x3a and +0x3c. The entry's word is a direction
+0..15 that `FUN_0044bfb0` turns into a facing byte through the table at
+`0x54fa58` (`world::entryFacing`, `docs/umbilicals.md`). Torvus Junction's
+Default entry is (20.06, 24.94) with the word 19: bit 4 is a mark
+(`FUN_0048b2c0`), so direction 3, facing 37.
 
 The player's template is `[Human|Gladiator|Culibine] Agent` in
 Harbinger.ini (`dude.agt`, `gladiator.agt`, `culibine.agt`, class 0,

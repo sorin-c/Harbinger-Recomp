@@ -23,6 +23,10 @@
 
 namespace harbinger::app {
 
+// Where a panel's background goes on a screenW x screenH game screen, from
+// its 800x600 place and its interface kind (FUN_004c4af0).
+SDL_FPoint panelPosition(uint16_t kind, int x, int y, int screenW, int screenH);
+
 class Hud {
 public:
     // What the HUD shows of the player, as fractions of the maximum.

@@ -48,6 +48,8 @@ std::string itfPath(world::Character c, const char* name) {
 // or 1066 wide): right panels stay on the right edge, centred panels stay
 // centred. The y moves belong to the height (768 or 600), which widescreen
 // keeps.
+}  // namespace
+
 SDL_FPoint panelPosition(uint16_t kind, int x, int y, int screenW, int screenH) {
     const int dx = screenW - 800, dy = screenH - 600;
     switch (kind) {
@@ -60,6 +62,8 @@ SDL_FPoint panelPosition(uint16_t kind, int x, int y, int screenW, int screenH) 
         default: return {float(x), float(y)};
     }
 }
+
+namespace {
 
 // Grid cells are 26 pixels apart and 25 wide (GCtrlInventoryGrid_v3).
 constexpr int kCell = 26, kCellArt = 25;

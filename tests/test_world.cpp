@@ -28,6 +28,8 @@
 #include "world/portal.hpp"
 #include "world/script.hpp"
 #include "world/spawners.hpp"
+#include "world/umbilical.hpp"
+#include "world/motion.hpp"
 #include "world/loot.hpp"
 #include "formats/gig.hpp"
 #include "formats/itm.hpp"
@@ -466,8 +468,9 @@ static void testRealData(const char* dir) {
     std::map<std::pair<int, uint16_t>, giz::Template> loaded;
     std::map<uint16_t, agt::Template> agentTemplates;
     const auto agentIndex = mgr::parse(*vfs.read(ini.require("Paths", "Agents")));
-    size_t gizmos = 0, agents = 0, triggers = 0, scripted = 0;
+    size_t gizmos = 0, agents = 0, triggers = 0, scripted = 0, pads = 0;
     std::set<uint16_t> scriptIds;
+    std::vector<world::UmbilicalLink> fixedPads;
     for (const auto& p : vfs.list("res/"))
         if (endsWith(p, ".chk")) {
             try {
@@ -492,6 +495,24 @@ static void testRealData(const char* dir) {
                 triggers += lv.eventTriggers.size() + lv.gizmoTriggers.size();
                 for (const auto& t : lv.eventTriggers)
                     if (t.script) ++scripted, scriptIds.insert(t.script);
+                // Every umbilical pad has one shell attached and stands on
+                // an entry point of its own that is not marked closed.
+                for (const auto& g : lv.gizmos) {
+                    const auto& t = loaded.at({int(lv.act), g.gizmo});
+                    const auto link = world::umbilicalLink(t, g);
+                    if (!link) continue;
+                    ++pads;
+                    size_t shells = 0;
+                    for (const auto& [id, list] : lv.attachments)
+                        if (id == g.instance)
+                            for (uint16_t other : list)
+                                for (const auto& o : lv.gizmos)
+                                    if (o.instance == other && loaded.at({int(lv.act), o.gizmo}).cls == giz::UmbilicalShell) ++shells;
+                    CHECK(shells == 1);
+                    const auto own = std::find_if(lv.entries.begin(), lv.entries.end(), [&](const chk::EntryPoint& e) { return e.id == link->own; });
+                    CHECK(own != lv.entries.end() && !own->closed);
+                    if (link->fixed()) fixedPads.push_back(*link);
+                }
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "%s: %s\n", p.c_str(), e.what());
                 ++failures;
@@ -499,6 +520,13 @@ static void testRealData(const char* dir) {
         }
     CHECK(gizmos > 10000 && agents > 5000);
     CHECK(triggers > 500 && scripted > 30);
+    // 110 pads in the level files, seven with a fixed destination, each of
+    // which exists.
+    CHECK(pads == 110 && fixedPads.size() == 7);
+    {
+        const auto lookup = world::levelEntries(vfs, ini);
+        for (const auto& l : fixedPads) CHECK(lookup(l.level, l.entry));
+    }
 
     // Every cutscene script parses, and every script an event trigger names
     // exists in each character's script manager.
@@ -960,6 +988,66 @@ static void testPortals() {
     CHECK(world::portalStep(*link, phase, 7) == S::None && phase == 0);
 }
 
+static void testUmbilicals() {
+    using world::UmbilicalCodes;
+    // GUmbilicalPlug_v22's words.
+    giz::Template pad = tagged(giz::Umbilical, {0, 0, 0, 7, 0, 0});
+    const auto link = world::umbilicalLink(pad, record(196, {0, 0, 20, 0, 2, 0, 1, 0, 1, 0}));
+    CHECK(link && link->level == 20 && link->entry == 2 && link->own == 1 && link->needed == 1 && link->fixed());
+    CHECK(!world::umbilicalLink(pad, record(1, {0, 0, 0, 0, 0, 0, 3, 0, 0, 0}))->fixed());
+    CHECK(!world::umbilicalLink(tagged(giz::Chest, {0}), record(1, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0})));
+
+    // The pad idles over frames 1..act-1, charges act..n-2, and goes dark
+    // (its last frame) without power; the shell shows nothing until it closes.
+    world::GizmoState ps = world::startingState(pad, record(1, {0, 0, 0, 0, 0, 0, 1, 0, 1, 0}), 1);
+    CHECK(ps.state == 0 && ps.needed == 1);
+    const auto idle = world::playFor(pad, ps);
+    CHECK(idle.mode == world::GizmoPlay::Loop && idle.first == 1 && idle.last == 2);
+    ps.state = 2;
+    const auto charge = world::playFor(pad, ps);
+    CHECK(charge.mode == world::GizmoPlay::Once && charge.first == 3 && charge.last == 4);
+    ps.state = 0, ps.power = 0;
+    CHECK(world::playFor(pad, ps).mode == world::GizmoPlay::Hold && world::playFor(pad, ps).first == 5);
+    const giz::Template shell = tagged(giz::UmbilicalShell, {0, 0, 7, 0, 0});
+    world::GizmoState ss;
+    CHECK(world::playFor(shell, ss).mode == world::GizmoPlay::Hold && world::playFor(shell, ss).first == 0);
+    ss.state = 2;
+    CHECK(world::playFor(shell, ss).first == 2 && world::playFor(shell, ss).last == 3);
+
+    // Codes: level 5 has entries 1 ("North") and 2 ("Sealed", marked closed).
+    const world::EntryLookup lookup = [](uint16_t level, uint16_t entry) -> std::optional<world::EntryInfo> {
+        if (level == 5 && entry == 1) return world::EntryInfo{"North", false};
+        if (level == 5 && entry == 2) return world::EntryInfo{"Sealed", true};
+        if (level == 3 && entry == 1) return world::EntryInfo{"Gate", false};
+        if (level == 3 && entry == 4) return world::EntryInfo{"Here", false};
+        return std::nullopt;
+    };
+    UmbilicalCodes codes;
+    CHECK(!codes.any());
+    CHECK(codes.unlock(5, 1, false, lookup) && codes.any());
+    CHECK(codes.all().at(5 * 16 + 1).flags == (UmbilicalCodes::Held | UmbilicalCodes::Open | UmbilicalCodes::Plain));
+    CHECK(!codes.unlock(5, 1, true, lookup) && codes.all().at(81).gold());  // known: gold again, not new
+    CHECK(codes.unlock(5, 2, true, lookup) && !(codes.all().at(82).flags & UmbilicalCodes::Open));
+    CHECK(codes.unlock(9, 1, false, lookup) && !codes.all().count(9 * 16 + 1));  // no such place
+    codes.unlock(3, 1, false, lookup);
+    codes.markHere(3, 4, lookup);
+    // Held and open, not here, gold first then key order; the closed one is left out.
+    auto list = codes.destinations(3, 4);
+    CHECK(list.size() == 2 && list[0].name == "North" && list[1].name == "Gate");
+    CHECK(UmbilicalCodes::listText(list) == "*North\nGate\n");
+    codes.setOpen(5, 2, true, lookup);
+    CHECK(codes.destinations(3, 4).size() == 3);
+    codes.setOpen(5, 1, false, lookup);
+    list = codes.destinations(3, 1);
+    CHECK(list.size() == 2 && list[0].name == "Sealed" && list[1].name == "Here");
+    codes.clear();
+    CHECK(!codes.any() && codes.all().empty());
+
+    // Entry directions index the table at 0x54fa58; 16 and above give 0.
+    CHECK(world::entryFacing(0) == 0 && world::entryFacing(4) == 48 && world::entryFacing(15) == 237);
+    CHECK(world::entryFacing(16) == 0);
+}
+
 int main() {
     testBrush();
     testLevel();
@@ -970,6 +1058,7 @@ int main() {
     testScriptRunning();
     testLoot();
     testPortals();
+    testUmbilicals();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
         testRealData(dir);
     else

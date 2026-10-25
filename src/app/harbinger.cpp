@@ -8,7 +8,7 @@
 //             [--character human|gladiator|culibine] [--no-audio] [--settings config.cfg] [--run-ms ms]
 //             [--aspect 4:3|16:9] [--size WxH]
 //             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use]
-//                                   [--inventory] [--pad udlrax]]
+//                                   [--inventory] [--pad udlrax] [--travel line]] [--codes level:entry,...]
 //
 // Mouse, keyboard (up/down to move, left/right for sliders, Enter, Esc = back)
 // and gamepad (D-pad/stick, A, B = back) all drive the menus. In the level the
@@ -45,6 +45,7 @@
 #include "app/hud.hpp"
 #include "app/screen.hpp"
 #include "app/sound.hpp"
+#include "app/level_select.hpp"
 #include "app/world_view.hpp"
 #include "engine/display.hpp"
 #include "engine/settings.hpp"
@@ -76,6 +77,10 @@ struct Options {
     std::optional<SDL_FPoint> mouse, click, stick;  // screenshot mode: pointer, a click at 0 ms, a held stick
     std::optional<SDL_FPoint> at;  // the player's start, map cells (a testing aid)
     world::Character character = world::Character::Human;
+    // Umbilical codes to start with, "level:entry,..." (a testing aid until
+    // dialogue hands them out).
+    std::vector<std::pair<uint16_t, uint16_t>> codes;
+    std::optional<int> travel;  // screenshot mode: the umbilical list line to pick when it opens (-1 = Cancel)
 };
 
 std::optional<std::vector<uint8_t>> readFile(const std::string& path) {
@@ -131,6 +136,8 @@ public:
         }
         level_ = opt.level;
         entry_ = opt.entry;
+        startCodes_ = opt.codes;
+        travelPick_ = opt.travel;
         if (opt.at) at_ = world::WalkMap::Point{opt.at->x, opt.at->y};
         character_ = opt.character;
         if (opt.screen == "new") openNew();
@@ -224,6 +231,7 @@ public:
         if (world_) {
             world_->draw();
             hud_->draw(ren_);
+            select_->draw(ren_);
         } else {
             screen_->draw(ren_);
         }
@@ -279,6 +287,8 @@ private:
             if (const audio::Pcm* pcm = assets_.sound(id)) sound_->play(slot, *pcm, restart);
         });
         hud_->attach(&world_->inventory(), &world_->catalog());
+        select_ = std::make_unique<LevelSelect>(assets_, w, h);
+        for (const auto& [l, e] : startCodes_) world_->unlockCode(l, e, false);
         SDL_SetRenderLogicalPresentation(ren_, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
         gameW_ = w, gameH_ = h;
         mouse_ = {w / 2.0f, h / 2.0f};
@@ -287,12 +297,59 @@ private:
         if (sound_) playMusic(assets_.soundPath(world_->level().map().music));
     }
     void endGame() {
+        select_.reset();
         hud_.reset();
         world_.reset();
         if (sound_) playMusic(introMusic_ ? &*introMusic_ : nullptr);
         SDL_SetRenderLogicalPresentation(ren_, kScreenW, kScreenH, SDL_LOGICAL_PRESENTATION_LETTERBOX);
         mouse_ = {kScreenW / 2.0f, kScreenH / 2.0f};
         open(kStartupItf);
+    }
+
+    // The umbilical list takes all input while it is open: the mouse, the
+    // arrows and Enter / Space, Escape; on the pad the D-pad or stick, A,
+    // B (rebuild).
+    void handleSelect(const SDL_Event& e) {
+        switch (e.type) {
+            case SDL_EVENT_QUIT: running_ = false; break;
+            case SDL_EVENT_MOUSE_MOTION:
+                mouse_ = {e.motion.x, e.motion.y};
+                showCursor_ = true;
+                select_->pointerMove(mouse_.x, mouse_.y);
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (e.button.button != (settings_.swapMouse ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT)) break;
+                mouse_ = {e.button.x, e.button.y};
+                showCursor_ = true;
+                if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) select_->pointerDown(mouse_.x, mouse_.y);
+                else select_->pointerUp(mouse_.x, mouse_.y);
+                break;
+            case SDL_EVENT_KEY_DOWN:
+                if (e.key.key == SDLK_UP || e.key.key == SDLK_W) select_->moveFocus(-1);
+                else if (e.key.key == SDLK_DOWN || e.key.key == SDLK_S) select_->moveFocus(1);
+                else if (e.key.key == SDLK_RETURN || e.key.key == SDLK_SPACE || e.key.key == SDLK_E) select_->pick();
+                else if (e.key.key == SDLK_ESCAPE) select_->cancel();
+                break;
+            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                showCursor_ = false;
+                switch (e.gbutton.button) {
+                    case SDL_GAMEPAD_BUTTON_DPAD_UP: select_->moveFocus(-1); break;
+                    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: select_->moveFocus(1); break;
+                    case SDL_GAMEPAD_BUTTON_SOUTH: select_->pick(); break;
+                    case SDL_GAMEPAD_BUTTON_EAST: select_->cancel(); break;
+                    default: break;
+                }
+                break;
+            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+                if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
+                    const int dir = e.gaxis.value > 16000 ? 1 : e.gaxis.value < -16000 ? -1 : 0;
+                    if (dir && !stickY_) select_->moveFocus(dir);
+                    stickY_ = dir != 0;
+                }
+                break;
+            default: break;
+        }
     }
 
     void handleWorld(const SDL_Event& e) {
@@ -303,6 +360,7 @@ private:
             mouseHeld_ = false;
             return startGame();
         }
+        if (select_->isOpen()) return handleSelect(e);
         switch (e.type) {
             case SDL_EVENT_QUIT: running_ = false; break;
             case SDL_EVENT_GAMEPAD_ADDED: SDL_OpenGamepad(e.gdevice.which); break;
@@ -440,13 +498,37 @@ private:
             if (a == Hud::Action::UseHealthPack) world_->useHealthPack();  // the map and quest log are not rebuilt yet
         world_->setViewCentre(hud_->viewCentreX());
         world_->update(nowMs);
+        // The umbilical's list: open it when the shell has closed, hand the
+        // pick back.
+        if (const auto* menu = world_->travelMenu()) {
+            if (!select_->isOpen()) {
+                select_->open(world::UmbilicalCodes::listText(*menu));
+                if (travelPick_) select_->moveFocus(1);
+            }
+            if (travelPick_) {
+                // Screenshot mode: pick the asked line (or cancel) at once.
+                const int pick = *travelPick_;
+                travelPick_.reset();
+                world_->chooseTravel(pick);
+                select_->close();
+            } else if (const auto choice = select_->takeChoice()) {
+                world_->chooseTravel(*choice);
+                select_->close();
+            }
+        }
         if (const auto change = world_->levelChange()) {
-            // A portal: the next level, with the player on its entry point
-            // (FUN_004a1d20 sets the load going), carrying what it has.
+            // A portal, an umbilical or SetLevel: the next level, with the
+            // player on its entry point (FUN_004a1d20 sets the load going),
+            // carrying what it has. SetLevel names no entry point
+            // (0xffff); the rebuild uses the Default one.
             auto carried = world_->takeCarried();
-            level_ = change->level, entry_ = change->entry;
+            level_ = change->level;
+            entry_ = change->entry == Cutscene::kNoEntry ? 0 : change->entry;
+            at_.reset();
+            startCodes_.clear();
             startGame();
             world_->carry(std::move(carried));
+            if (change->umbilical) world_->arriveByUmbilical();
             hud_->attach(&world_->inventory(), &world_->catalog());
             return;
         }
@@ -774,6 +856,9 @@ private:
     SDL_FPoint mouse_{kScreenW / 2.0f, kScreenH / 2.0f};
     std::unique_ptr<WorldView> world_;
     std::unique_ptr<Hud> hud_;
+    std::unique_ptr<LevelSelect> select_;
+    std::vector<std::pair<uint16_t, uint16_t>> startCodes_;
+    std::optional<int> travelPick_;
     std::optional<std::string> introMusic_;
     uint16_t level_ = 1, entry_ = 0;
     std::optional<world::WalkMap::Point> at_;
@@ -823,6 +908,19 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--time") o.timeMs = std::stoull(v);
         else if (a == "--run-ms") o.runMs = std::stoull(v);
         else if (a == "--pad") o.pad = v;
+        else if (a == "--travel") o.travel = std::stoi(v);
+        else if (a == "--codes") {
+            // level:entry pairs, comma separated.
+            size_t at = 0;
+            while (at < v.size()) {
+                const size_t end = std::min(v.find(',', at), v.size());
+                const std::string one = v.substr(at, end - at);
+                const auto colon = one.find(':');
+                if (colon == std::string::npos) throw std::runtime_error("--codes expects level:entry,...");
+                o.codes.emplace_back(uint16_t(std::stoul(one.substr(0, colon))), uint16_t(std::stoul(one.substr(colon + 1))));
+                at = end + 1;
+            }
+        }
         else if (a == "--aspect") {
             if (v != "4:3" && v != "16:9") throw std::runtime_error("--aspect expects 4:3 or 16:9");
             o.aspect = v == "16:9" ? Aspect::Wide : Aspect::Classic;
@@ -863,7 +961,7 @@ Options parseArgs(int argc, char** argv) {
                                                  "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y] [--no-audio] "
                                                  "[--character human|gladiator|culibine] [--settings config.cfg] [--aspect 4:3|16:9] [--size WxH] "
                                                  "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use] "
-                                                 "[--inventory] [--pad udlrax]]");
+                                                 "[--inventory] [--pad udlrax] [--travel line]] [--codes level:entry,...]");
     return o;
 }
 

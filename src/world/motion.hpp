@@ -17,6 +17,13 @@ uint8_t facingTowards(double dx, double dy);
 double facingSin(uint8_t facing);
 double facingCos(uint8_t facing);
 
+// FUN_0044bfb0: the facing an entry point's direction (0..15) gives the
+// agent placed on it, from the table at 0x54fa58. The table has 16
+// entries; the larger directions the Default entry points carry (32 after
+// their bit 4 is cleared) give 0 (the u16 read past the table there is
+// 256, and the caller keeps the low byte).
+uint8_t entryFacing(uint16_t direction);
+
 // An agent's walking speed in map cells per millisecond. FUN_00406100 turns
 // the move animation's parameter into template+0x30 = param / (90.51 * 10),
 // and GAgentPlug_v80 advances by template+0x30 * 0.01 per millisecond. 90.51
