@@ -21,13 +21,30 @@ struct Damage {
     uint16_t extra = 0;  // the third word (FUN_005202b0 keeps it with the level)
 };
 
+// What a ranged weapon (kinds 1-3) adds after its damage list: 28 bytes
+// read by GRangedWeapon_v7 (0x521520).
+struct Ranged {
+    uint16_t effect = 0;      // weapon+0x30: the bolt's emitter (effects.mgr id)
+    bool lob = false;         // the effect word's top bit (+0x7a): the bolt flies in an arc
+    uint16_t sound = 0;       // +0x38: sound.mgr id of the shot
+    // +0x44..+0x50: the light each bolt carries, colour / 255 and radius
+    // / 100 cells.
+    int16_t light[3] = {};
+    int16_t lightSize = 0;
+    int16_t maxEnergy = 0;    // +0x60 (and the starting energy, +0x58)
+    int16_t cost = 0;         // +0x68: energy per shot
+    double recharge = 0;      // +0x70: energy regained per second (FUN_00521e00)
+    int16_t pierce = 0;       // +0x78: how much defence a bolt goes through before it stops
+    uint16_t impactSound = 0; // +0x40: sound.mgr id played where a bolt hits (FUN_00521920)
+};
+
 struct Weapon {
     double version = 0;
     uint16_t kind = 0;      // 0 melee, 1-3 ranged, 4 armour
     uint8_t hitBonus = 0;   // weapon+0x2c, added to the attack roll (from version 1.1)
     uint8_t bonus2d = 0;    // weapon+0x2d
     std::vector<Damage> damage;
-    std::vector<uint8_t> rest;  // the ranged kinds' 26 or 28 more bytes, undecoded
+    std::optional<Ranged> ranged;  // kinds 1-3
 
     const Damage* find(uint16_t type) const {
         for (const auto& d : damage)

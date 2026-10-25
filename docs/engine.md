@@ -224,6 +224,35 @@ item, one every half second, on the floor beside the chest. A click on an
 item, or E, Space or the pad's A, walks there and picks it up; money adds
 to a counter shown at the top left. Evidence: `docs/formats/loot.md`.
 
+## Milestone 17: enemies fight back (done)
+
+Enemies think every quarter second as the original's minds do. They notice
+the player within 9 cells when it is visible enough (running and fighting
+make it more visible) and nothing tall is in the way, walk up and swing;
+their blows roll against the player's defence and armour. Biters flee when
+hurt, enemies wander when restless and go to where they last saw the player.
+At 0 hit points the player dies; a press starts the game again. Evidence:
+`docs/enemies.md`.
+
+## Milestone 18: shooting (done)
+
+The player fires the ranged weapon: the other mouse button on an enemy (or
+G, the pad's Y / Triangle or the left trigger) walks into range and plays
+the shoot animation, which aims (leading a walking target) and fires a
+bolt from the rifle's muzzle every 0.4 s. Bolts are the weapon's particle
+emitter (`.emt`, now read): they fly at its speed, stop at walls and hit
+the first hostile agent in their way with the original's ranged roll. Each
+shot costs energy, which comes back over time. Evidence: `docs/combat.md`
+("Ranged attacks"), `docs/formats/emitter.md`.
+
+## Milestone 19: enemies fire (done)
+
+Infantry and Walkers carry their ranged weapon (template stat 3), come to
+half their shoot animation's range and fire the weapon's bolts at the
+player, leading it when it walks, while their energy lasts. Bolts are drawn
+added to the picture under them, as the original's particle pass does.
+Evidence: `docs/enemies.md` ("Firing").
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
@@ -231,6 +260,6 @@ to a counter shown at the top left. Evidence: `docs/formats/loot.md`.
 2. Display gamma, Bink video (later or skipped).
 3. The other classes' states (breakers, key consoles, lifts); the inventory.
 4. Spawners (and the scripts' agent commands with them). The room graph.
-5. Enemy AI (thinkers, their attacks), the player's ranged attack, hit
-   points and death, experience.
+5. Experience; the other particle descriptions; the long range and flanking
+   policies.
 6. The in-game loop, HUD and lighting.

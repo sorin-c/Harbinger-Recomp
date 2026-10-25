@@ -4,13 +4,16 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <queue>
 #include <string>
+
+#include "world/motion.hpp"
 
 namespace harbinger::app {
 
 WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world::Character character, int screenW,
-                     int screenH, uint16_t entry)
+                     int screenH, uint16_t entry, std::optional<world::WalkMap::Point> at)
     : assets_(assets), ren_(ren), level_(std::make_unique<world::Level>(assets.vfs(), assets.ini(), levelId)),
       screenW_(screenW), screenH_(screenH) {
     const auto& m = level_->map();
@@ -23,14 +26,19 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
             start = e;
             break;
         }
+    if (at) start.x = at->x, start.y = at->y;
     walk_ = std::make_unique<world::WalkMap>(*level_);
     player_ = std::make_unique<world::Player>(assets.vfs(), assets.ini(), character, *walk_, start);
     // The original seeds its generator once (FUN_004f9030); the rebuild seeds
     // from the clock so fights differ from game to game.
     rng_.seed(uint32_t(SDL_GetTicksNS()));
-    foes_ = std::make_unique<world::Foes>(assets.vfs(), *level_, rng_);
+    foes_ = std::make_unique<world::Foes>(assets.vfs(), assets.ini(), *level_, *walk_, rng_);
     cutscene_ = std::make_unique<Cutscene>(assets, ren, character, *level_, screenW, screenH);
     loot_ = std::make_unique<world::Loot>(assets.vfs(), assets.ini(), character, *level_, *walk_, rng_);
+    bolts_ = std::make_unique<world::Bolts>(assets.vfs(), assets.ini(), *walk_, rng_);
+    if (const auto* w = player_->rangedWeapon()) player_->setBoltSpeed(bolts_->speedOf(*w));
+    for (size_t i = 0; i < foes_->all().size(); ++i)
+        if (const auto& r = foes_->all()[i].ranged) foes_->setBoltSpeed(int(i), bolts_->speedOf(*r));
     const auto p = world::toScreen(player_->x(), player_->y());
     camX_ = p.x, camY_ = p.y;
 
@@ -88,8 +96,7 @@ void WorldView::walkTo(float x, float y) {
     player_->walkTo(p.x, p.y);
 }
 
-bool WorldView::attackAt(float x, float y) {
-    if (cinematic()) return false;
+int WorldView::foeAt(float x, float y) const {
     // An enemy's picture stands up from its feet: take the click as on it
     // when it falls in a box around the feet's screen point (a rebuild
     // choice, roughly a body's size).
@@ -99,17 +106,49 @@ bool WorldView::attackAt(float x, float y) {
     for (size_t i = 0; i < foes_->all().size(); ++i) {
         const auto& f = foes_->all()[i];
         if (f.dead) continue;
-        const auto p = world::toScreen(f.record->x, f.record->y);
+        const auto p = world::toScreen(f.x, f.y);
         const double dx = sx - p.x, dy = sy - p.y;
         if (std::fabs(dx) > 28 || dy < -80 || dy > 16) continue;
         const double d = std::fabs(dx) + std::fabs(dy + 32);
         if (d < bestD) bestD = d, best = int(i);
     }
+    return best;
+}
+
+bool WorldView::attackAt(float x, float y) {
+    if (cinematic()) return false;
+    const int best = foeAt(x, y);
     if (best < 0) return false;
     const auto& f = foes_->all()[size_t(best)];
     pendingUse_ = nullptr, pendingPickup_ = 0;
-    player_->attack(best, f.record->x, f.record->y);
+    player_->attack(best, f.x, f.y);
     return true;
+}
+
+bool WorldView::shootAt(float x, float y) {
+    if (cinematic()) return false;
+    const int best = foeAt(x, y);
+    if (best < 0) return false;
+    const auto& f = foes_->all()[size_t(best)];
+    pendingUse_ = nullptr, pendingPickup_ = 0;
+    player_->shoot(best, f.x, f.y);
+    return true;
+}
+
+bool WorldView::shootNearest() {
+    if (cinematic()) return false;
+    const int id = foes_->nearest(player_->x(), player_->y(), world::Player::kShootRange, player_->facing());
+    if (id < 0) return false;
+    const auto& f = foes_->all()[size_t(id)];
+    pendingUse_ = nullptr, pendingPickup_ = 0;
+    player_->shoot(id, f.x, f.y);
+    return true;
+}
+
+void WorldView::playSound(uint16_t id) {
+    if (!sound_ || !sound_->enabled() || id == 0) return;
+    // One voice per sound id (a rebuild choice), apart from the scripts'.
+    if (const audio::Pcm* pcm = assets_.sound(id)) sound_->play(0x30000 + id, *pcm);
 }
 
 bool WorldView::attackNearest() {
@@ -118,7 +157,7 @@ bool WorldView::attackNearest() {
     if (id < 0) return false;
     const auto& f = foes_->all()[size_t(id)];
     pendingUse_ = nullptr, pendingPickup_ = 0;
-    player_->attack(id, f.record->x, f.record->y);
+    player_->attack(id, f.x, f.y);
     return true;
 }
 
@@ -247,8 +286,10 @@ bool WorldView::occupied(const chk::GizmoRecord& g) const {
         return false;
     };
     if (covers(player_->x(), player_->y())) return true;
-    for (const auto& a : level_->map().agents)
-        if (level_->agentVisible(a) && covers(a.x, a.y)) return true;
+    for (const auto& a : level_->map().agents) {
+        const auto at = foes_->position(a);
+        if (level_->agentVisible(a) && covers(at.x, at.y)) return true;
+    }
     return false;
 }
 
@@ -258,15 +299,90 @@ void WorldView::update(uint64_t nowMs) {
     // Gizmos first: a door that has just opened can be walked through.
     for (const chk::GizmoRecord* g : level_->update(elapsedMs_)) walk_->repaint(*level_, *g);
     loot_->update(elapsedMs_);
-    if (const auto* f = foes_->find(player_->target())) player_->trackTarget(f->record->x, f->record->y, !f->dead);
+    if (const auto* f = foes_->find(player_->target())) {
+        // A walking foe's velocity and the end of its walk, for leading it.
+        double vx = 0, vy = 0;
+        std::optional<world::WalkMap::Point> dest;
+        if (f->state == agt::Move && !f->path.empty()) {
+            vx = world::facingCos(f->facing) * f->speed, vy = world::facingSin(f->facing) * f->speed;
+            dest = f->path.back();
+        }
+        player_->trackTarget(f->x, f->y, !f->dead, vx, vy, dest);
+    }
     const double x0 = player_->x(), y0 = player_->y();
+    const bool log = std::getenv("HARBINGER_COMBAT_LOG") != nullptr;
     if (const auto blow = player_->update(elapsedMs_)) {
         const auto hit = foes_->blow(blow->target, player_->x(), player_->y(), blow->x, blow->y,
                                      player_->meleeRating(), player_->weapon(), elapsedMs_);
-        if (hit && std::getenv("HARBINGER_COMBAT_LOG"))
+        if (hit && log)
             std::fprintf(stderr, "blow on %d: roll %d %s, %d damage, %d left\n", blow->target, hit->roll,
                          hit->hit ? (hit->critical ? "critical" : "hit") : "miss", hit->damage,
                          foes_->find(blow->target)->hitPoints);
+    }
+    if (const auto shot = player_->takeShot()) {
+        if (bolts_->fire(world::Bolts::kPlayer, shot->x, shot->y, shot->z, shot->heading, *player_->rangedWeapon(),
+                         player_->rangedRating(), elapsedMs_))
+            playSound(player_->rangedWeapon()->ranged->sound);
+    }
+    // Bolts in flight: the player's land on live foes, the foes' on the
+    // player.
+    {
+        std::vector<world::Defender> defenders;
+        const world::Defender& playerDefender = player_->defender();
+        const auto impacts = bolts_->update(elapsedMs_, [&](int shooter) {
+            std::vector<world::Bolts::Body> out;
+            if (shooter == world::Bolts::kPlayer) {
+                defenders.clear();
+                defenders.reserve(foes_->all().size());
+                for (size_t i = 0; i < foes_->all().size(); ++i) {
+                    const auto& f = foes_->all()[i];
+                    defenders.push_back(foes_->defender(int(i)));
+                    if (f.dead) continue;
+                    out.push_back({int(i), f.x, f.y, level_->agentTemplate(*f.record).d20, &defenders.back()});
+                }
+            } else if (!player_->dead()) {
+                out.push_back({world::Bolts::kPlayer, player_->x(), player_->y(), player_->radius(), &playerDefender});
+            }
+            return out;
+        });
+        for (const auto& im : impacts) {
+            playSound(im.sound);
+            if (im.target == world::Bolts::kPlayer) {
+                if (im.strike.hit) player_->takeDamage(im.strike.damage, elapsedMs_);
+            } else {
+                foes_->hurt(im.target, im.strike, elapsedMs_);
+            }
+            if (log)
+                std::fprintf(stderr, "bolt from %d on %d: roll %d %s, %d damage\n", im.shooter, im.target,
+                             im.strike.roll, im.strike.hit ? "hit" : "miss", im.strike.damage);
+        }
+    }
+    // The enemies think and move; their blows land on the player. They do
+    // not act during a script's cinematic (a rebuild choice).
+    if (!cinematic()) {
+        world::Quarry q;
+        q.x = player_->x(), q.y = player_->y();
+        q.radius = player_->radius();
+        q.visibility = player_->visibility();
+        q.alive = !player_->dead();
+        q.defender = &player_->defender();
+        if (player_->state() == agt::Move) {
+            const double step = player_->speed();
+            q.vx = world::facingCos(player_->facing()) * step, q.vy = world::facingSin(player_->facing()) * step;
+            if (!player_->path().empty()) q.dest = player_->path().back();
+        }
+        for (const auto& h : foes_->update(elapsedMs_, q)) {
+            if (h.strike.hit) player_->takeDamage(h.strike.damage, elapsedMs_);
+            if (log)
+                std::fprintf(stderr, "enemy %d blow: roll %d %s, %d damage, player %.0f left\n", h.foe, h.strike.roll,
+                             h.strike.hit ? "hit" : "miss", h.strike.damage, player_->hitPoints());
+        }
+        for (const auto& s : foes_->takeShots()) {
+            const auto& f = foes_->all()[size_t(s.foe)];
+            if (bolts_->fire(s.foe, s.x, s.y, s.z, s.heading, *f.ranged, f.rating, elapsedMs_))
+                playSound(f.ranged->ranged->sound);
+            if (log) std::fprintf(stderr, "enemy %d shoots, energy %.0f\n", s.foe, f.energy);
+        }
     }
     if (pendingUse_ && player_->path().empty()) {
         const auto p = level_->gizmoUsePoint(*pendingUse_);
@@ -366,7 +482,8 @@ void WorldView::drawGizmo(const chk::GizmoRecord& g) const {
 void WorldView::drawAgent(const chk::AgentRecord& a) const {
     const auto pose = foes_->pose(a, elapsedMs_);
     if (!pose.image) return;
-    const auto p = world::toScreen(a.x, a.y);
+    const auto at = foes_->position(a);
+    const auto p = world::toScreen(at.x, at.y);
     drawImage(pose.key, pose.image, p.x - pose.anchorX, p.y - pose.anchorY);
 }
 
@@ -393,7 +510,7 @@ void WorldView::drawTargetBar() const {
     // for the HUD's enemy bar, GCtrlEnemyHealthBar).
     const auto* f = foes_->find(player_->target());
     if (!f || f->dead || f->maxHitPoints <= 0) return;
-    const auto p = world::toScreen(f->record->x, f->record->y);
+    const auto p = world::toScreen(f->x, f->y);
     const float left = float(std::floor(p.x - camX_ + screenW_ / 2.0)) - 20, top = float(std::floor(p.y - camY_ + screenH_ / 2.0)) - 96;
     const SDL_FRect back{left - 1, top - 1, 42, 6};
     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
@@ -403,11 +520,79 @@ void WorldView::drawTargetBar() const {
     SDL_RenderFillRect(ren_, &bar);
 }
 
+void WorldView::drawBolts() const {
+    constexpr double kPi = 3.14159265358979323846;
+    // Each bolt is its billboard's picture (GBillboardDesc), the frame
+    // running with time, turned to its direction of flight on screen and
+    // lifted by its height. Drawn over the map (a rebuild choice; the
+    // original draws particles with the depth buffer). The size is the
+    // description's first double (likely) and the frame time 100 ms times
+    // its +0x20 (guessed). They are added to what is under them: the
+    // particle pass (FUN_0049d180) switches to blending source alpha onto
+    // one (FUN_00476900: D3D render states 0x13 = 5, 0x14 = 2) for batches
+    // whose flag +0xe is set (likely: which descriptors set it is not
+    // traced; the bolts' images have black backgrounds that need it).
+    for (const auto& t : bolts_->all()) {
+        if (!t.look || !t.look->billboard) continue;
+        const emt::Billboard& b = *t.look->billboard;
+        const Texture& tex = assets_.itemTexture(b.image);
+        if (!tex.tex) continue;
+        const int fw = b.frameW > 0 ? b.frameW : tex.w, fh = b.frameH > 0 ? b.frameH : tex.h;
+        const int perRow = std::max(1, tex.w / fw);
+        const int frames = std::max(1, std::min<int>(b.columns * b.rows, perRow * std::max(1, tex.h / fh)));
+        const double frameMs = 100.0 * (b.frameTime > 0 ? b.frameTime : 1.0);
+        const int k = int(double(elapsedMs_ - std::min(elapsedMs_, t.born)) / frameMs) % frames;
+        const SDL_FRect src{float(k % perRow * fw), float(k / perRow * fh), float(fw), float(fh)};
+        const double scale = b.sizes[0] > 0 ? b.sizes[0] : 1.0;
+        const auto p = world::toScreen(t.x, t.y);
+        const float cx = float(p.x - camX_ + screenW_ / 2.0), cy = float(p.y - camY_ + screenH_ / 2.0 - t.z * 64.0);
+        const float w = float(fw * scale), h = float(fh * scale);
+        const SDL_FRect at{cx - w / 2, cy - h / 2, w, h};
+        const double angle = std::atan2((t.vx + t.vy) * 32.0, (t.vx - t.vy) * 64.0) * 180.0 / kPi;
+        SDL_SetTextureBlendMode(tex.tex, SDL_BLENDMODE_ADD);
+        SDL_RenderTextureRotated(ren_, tex.tex, &src, &at, angle, nullptr, SDL_FLIP_NONE);
+        SDL_SetTextureBlendMode(tex.tex, SDL_BLENDMODE_BLEND);
+    }
+}
+
+void WorldView::drawHealth() const {
+    // The player's hit points, bottom left (a rebuild stand-in for the
+    // HUD's health bar until the HUD is rebuilt).
+    const float left = 16, top = float(screenH_) - 28, width = 160;
+    const SDL_FRect back{left - 2, top - 2, width + 4, 14};
+    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
+    SDL_RenderFillRect(ren_, &back);
+    const double frac = player_->maxHitPoints() > 0 ? player_->hitPoints() / player_->maxHitPoints() : 0;
+    const SDL_FRect bar{left, top, width * float(frac), 10};
+    SDL_SetRenderDrawColor(ren_, 200, 24, 24, 255);
+    SDL_RenderFillRect(ren_, &bar);
+    SDL_SetRenderDrawColor(ren_, 255, 255, 255, 255);
+    const std::string text = std::to_string(int(std::ceil(player_->hitPoints()))) + " / " +
+                             std::to_string(int(player_->maxHitPoints()));
+    SDL_RenderDebugText(ren_, left + width + 10, top + 1, text.c_str());
+    // The ranged weapon's energy under it (a stand-in as well).
+    if (player_->maxEnergy() > 0) {
+        const SDL_FRect eback{left - 2, top + 14, width + 4, 8};
+        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
+        SDL_RenderFillRect(ren_, &eback);
+        const SDL_FRect ebar{left, top + 16, width * float(player_->energy() / player_->maxEnergy()), 4};
+        SDL_SetRenderDrawColor(ren_, 40, 200, 120, 255);
+        SDL_RenderFillRect(ren_, &ebar);
+    }
+    if (gameOver()) {
+        const char* msg = "You have died. Press a button or click to try again.";
+        SDL_RenderDebugText(ren_, float(screenW_) / 2 - 8.0f * float(std::strlen(msg)) / 2, float(screenH_) / 2, msg);
+    }
+}
+
 WorldView::Sprite WorldView::agentSprite(const chk::AgentRecord* a) const {
     auto place = [](const auto& pose, world::ScreenPoint p) {
         return Sprite{pose.image, int(std::floor(p.x - pose.anchorX)), int(std::floor(p.y - pose.anchorY))};
     };
-    if (a) return place(foes_->pose(*a, elapsedMs_), world::toScreen(a->x, a->y));
+    if (a) {
+        const auto at = foes_->position(*a);
+        return place(foes_->pose(*a, elapsedMs_), world::toScreen(at.x, at.y));
+    }
     return place(player_->pose(elapsedMs_), world::toScreen(player_->x(), player_->y()));
 }
 
@@ -462,12 +647,21 @@ void WorldView::draw() const {
             else if (c < 0) edge(gi, node);
         }
     };
+    // Agents move, so their depth (map x + y of the feet) is taken now.
+    std::vector<double> depth(n + 1);
+    for (size_t i = 0; i < n; ++i) {
+        depth[i] = objects_[i].depth;
+        if (objects_[i].agent) {
+            const auto at = foes_->position(*objects_[i].agent);
+            depth[i] = at.x + at.y;
+        }
+    }
+    depth[n] = player_->x() + player_->y();
     for (size_t i = 0; i < n; ++i)
-        if (objects_[i].agent) placeAgent(i, objects_[i].agent, objects_[i].depth);
-    const double playerDepth = player_->x() + player_->y();
-    placeAgent(n, nullptr, playerDepth);
+        if (objects_[i].agent) placeAgent(i, objects_[i].agent, depth[i]);
+    placeAgent(n, nullptr, depth[n]);
 
-    auto depthOf = [&](size_t i) { return i == n ? playerDepth : objects_[i].depth; };
+    auto depthOf = [&](size_t i) { return depth[i]; };
     auto later = [&](size_t a, size_t b) { return depthOf(a) > depthOf(b); };
     std::priority_queue<size_t, std::vector<size_t>, decltype(later)> ready(later);
     for (size_t i = 0; i <= n; ++i)
@@ -505,7 +699,9 @@ void WorldView::draw() const {
         else drawAgent(*objects_[i].agent);
     }
     wallsUpTo(1e9);
+    drawBolts();
     drawTargetBar();
+    drawHealth();
     cutscene_->draw();
 }
 

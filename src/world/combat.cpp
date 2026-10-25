@@ -15,7 +15,7 @@ constexpr DamageRange kEffectLevels[20] = {{1, 1}, {1, 1}, {1, 1}, {1, 1}, {1, 3
                                            {2, 5}, {2, 6}, {3, 8}, {3, 10}, {5, 10}, {5, 12}, {5, 13},
                                            {6, 14}, {6, 15}, {7, 16}, {7, 17}, {8, 20}, {10, 30}};
 
-int resistance(const agt::Template& t, uint16_t type) {
+int resistance(const Defender& t, uint16_t type) {
     for (const auto& [ty, pct] : t.resistances)
         if (ty == type) return pct;
     return 0;
@@ -37,16 +37,28 @@ int rollHitPoints(const agt::Template& t, Rng& rng) {
     return total;
 }
 
-Strike strike(int rating, const wpn::Weapon& weapon, const agt::Template& target, Rng& rng,
-              const std::vector<uint16_t>& types) {
+Defender defenderOf(const agt::Template& t) {
+    Defender d;
+    d.defence = t.word10;
+    d.resistances = t.resistances;
+    return d;
+}
+
+Strike strike(int rating, const wpn::Weapon& weapon, const Defender& target, Rng& rng,
+              const std::vector<uint16_t>& types, bool ranged) {
     Strike s;
     s.roll = int(rng.next() % 50 + 1);
-    const int total = rating + s.roll + weapon.hitBonus;
+    const int total = rating + s.roll + (ranged ? weapon.bonus2d : weapon.hitBonus);
     s.critical = s.roll >= 49;
-    if (!s.critical && total < target.word10) return s;
+    if (!s.critical && total < target.defence) return s;
     bool dealt = false;
-    for (const auto& d : weapon.damage) {
-        if (d.type >= 5) continue;  // 5-8 are effects, 9 and 10 are not damage
+    // The roll goes through the types in order, 5-8 being effects and 9 and
+    // 10 not damage.
+    for (uint16_t type = 0; type < 5; ++type) {
+        if (target.player && total < target.armour[type] + s.roll) continue;
+        const wpn::Damage* found = weapon.find(type);
+        if (!found) continue;
+        const wpn::Damage& d = *found;
         if (!types.empty() && std::find(types.begin(), types.end(), d.type) == types.end()) continue;
         const DamageRange r = damageRange(d.type, d.level);
         if (r.max == 0) continue;
@@ -61,7 +73,7 @@ Strike strike(int rating, const wpn::Weapon& weapon, const agt::Template& target
     if (!dealt) return s;
     s.hit = true;
     s.damage = std::max(s.damage, 1);
-    if (s.critical) s.damage *= 2;
+    if (s.critical && !target.player) s.damage *= 2;
     return s;
 }
 
