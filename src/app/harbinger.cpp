@@ -4,9 +4,9 @@
 // music and UI sounds. Play opens the first level with the chosen character
 // standing on its entry point, ready to walk.
 //
-//   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id] [--entry id]
+//   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y]
 //             [--character human|gladiator|culibine] [--no-audio] [--settings config.cfg] [--run-ms ms]
-//             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--use]]
+//             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use]]
 //
 // Mouse, keyboard (up/down to move, left/right for sliders, Enter, Esc = back)
 // and gamepad (D-pad/stick, A, B = back) all drive the menus. In the level the
@@ -14,7 +14,9 @@
 // Diablo II Resurrected on a controller), and clicking or holding the mouse
 // button walks it to the pointer, as in the original. The camera follows.
 // Clicking an enemy goes and hits it (the original's GAttackAction); F, the
-// pad's X / Square or the right trigger hit the nearest enemy ahead.
+// pad's X / Square or the right trigger hit the nearest enemy ahead. The
+// other mouse button on an enemy shoots it with the ranged weapon; G, the
+// pad's Y / Triangle or the left trigger shoot the nearest one.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -50,9 +52,11 @@ struct Options {
     uint16_t entry = 0;  // the level's entry point (0 = "Default"; a testing aid)
     bool audio = true;
     bool attack = false;  // screenshot mode: the attack button at 0 ms
+    bool shoot = false;   // screenshot mode: the shoot button at 0 ms
     bool use = false;     // screenshot mode: the use button at 0 ms and every 1.5 s
     uint64_t timeMs = 0, runMs = 0;
     std::optional<SDL_FPoint> mouse, click, stick;  // screenshot mode: pointer, a click at 0 ms, a held stick
+    std::optional<SDL_FPoint> at;  // the player's start, map cells (a testing aid)
     world::Character character = world::Character::Human;
 };
 
@@ -102,6 +106,7 @@ public:
         }
         level_ = opt.level;
         entry_ = opt.entry;
+        if (opt.at) at_ = world::WalkMap::Point{opt.at->x, opt.at->y};
         character_ = opt.character;
         if (opt.screen == "new") openNew();
         else if (opt.screen == "options") openOptions();
@@ -193,7 +198,7 @@ public:
         if (world_) {
             world_->draw();
             SDL_SetRenderDrawColor(ren_, 160, 255, 160, 255);
-            const std::string title = world_->level().map().name + "  (walking, melee, trigger scripts and loot: no HUD or enemy AI yet)";
+            const std::string title = world_->level().map().name + "  (walking, melee, enemies fighting back, trigger scripts and loot: no HUD yet)";
             SDL_RenderDebugText(ren_, 8, 8, title.c_str());
             const std::string carried = "Uan: " + std::to_string(world_->money()) + "   items picked up: " +
                                         std::to_string(world_->carried().size());
@@ -218,6 +223,9 @@ public:
     void attackWorld() {
         if (world_) world_->attackNearest();
     }
+    void shootWorld() {
+        if (world_) world_->shootNearest();
+    }
     void useWorld() {
         if (world_ && !world_->closeBubble()) world_->useNearest();
     }
@@ -228,7 +236,7 @@ private:
     // (Harbinger.ini [Video] HiRes; the front end is always 800x600).
     void startGame() {
         const int w = highRes_ ? 1024 : kScreenW, h = highRes_ ? 768 : kScreenH;
-        world_ = std::make_unique<WorldView>(assets_, ren_, level_, character_, w, h, entry_);
+        world_ = std::make_unique<WorldView>(assets_, ren_, level_, character_, w, h, entry_, at_);
         world_->setSound(sound_.get());
         SDL_SetRenderLogicalPresentation(ren_, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
         gameW_ = w, gameH_ = h;
@@ -246,6 +254,13 @@ private:
     }
 
     void handleWorld(const SDL_Event& e) {
+        if (world_->gameOver() && (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+                                   (e.type == SDL_EVENT_KEY_DOWN && e.key.key != SDLK_ESCAPE && !e.key.repeat))) {
+            // The rebuild's game over: the level starts again (saving and
+            // loading are not rebuilt).
+            mouseHeld_ = false;
+            return startGame();
+        }
         switch (e.type) {
             case SDL_EVENT_QUIT: running_ = false; break;
             case SDL_EVENT_GAMEPAD_ADDED: SDL_OpenGamepad(e.gdevice.which); break;
@@ -265,6 +280,10 @@ private:
                     mouseHeld_ = !world_->attackAt(mouse_.x, mouse_.y) && !world_->useAt(mouse_.x, mouse_.y);
                     if (mouseHeld_) world_->walkTo(mouse_.x, mouse_.y);
                     lastRetarget_ = now_;
+                } else if (e.button.button == (settings_.swapMouse ? SDL_BUTTON_LEFT : SDL_BUTTON_RIGHT)) {
+                    // The other button: shoot the enemy under the pointer.
+                    mouse_ = {e.button.x, e.button.y};
+                    world_->shootAt(mouse_.x, mouse_.y);
                 }
                 break;
             case SDL_EVENT_MOUSE_BUTTON_UP:
@@ -279,6 +298,8 @@ private:
                     endGame();
                 } else if (e.key.key == SDLK_F && !e.key.repeat) {
                     world_->attackNearest();
+                } else if (e.key.key == SDLK_G && !e.key.repeat) {
+                    world_->shootNearest();
                 } else if (e.key.key == SDLK_E || e.key.key == SDLK_SPACE) {
                     // Close a thought bubble, or use the nearest console or chest.
                     if (!world_->closeBubble()) world_->useNearest();
@@ -288,6 +309,8 @@ private:
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) endGame();
                 // Attack (rebuild controls, D3-style): X / Square, or the right trigger.
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_WEST) world_->attackNearest();
+                // Shoot (rebuild controls): Y / Triangle, or the left trigger.
+                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_NORTH) world_->shootNearest();
                 // Use (rebuild controls): A / Cross, the nearest console or chest.
                 // It also closes a thought bubble first.
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH && !world_->closeBubble()) world_->useNearest();
@@ -301,6 +324,11 @@ private:
                     const bool pulled = e.gaxis.value > 16000;
                     if (pulled && !trigger_) world_->attackNearest();
                     trigger_ = pulled;
+                }
+                if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER) {
+                    const bool pulled = e.gaxis.value > 16000;
+                    if (pulled && !leftTrigger_) world_->shootNearest();
+                    leftTrigger_ = pulled;
                 }
                 break;
             default: break;
@@ -334,9 +362,10 @@ private:
             // (FUN_004a1d20 sets the load going).
             const uint32_t money = world_->money();
             auto carried = world_->carried();
+            const double hitPoints = world_->player().hitPoints(), energy = world_->player().energy();
             level_ = change->level, entry_ = change->entry;
             startGame();
-            world_->carry(money, std::move(carried));
+            world_->carry(money, std::move(carried), hitPoints, energy);
         }
     }
 
@@ -564,10 +593,11 @@ private:
     std::unique_ptr<WorldView> world_;
     std::optional<std::string> introMusic_;
     uint16_t level_ = 1, entry_ = 0;
+    std::optional<world::WalkMap::Point> at_;
     int gameW_ = kScreenW, gameH_ = kScreenH;
     SDL_FPoint stick_{0, 0};
     world::Character character_ = world::Character::Human;
-    bool mouseHeld_ = false, steering_ = false, trigger_ = false;
+    bool mouseHeld_ = false, steering_ = false, trigger_ = false, leftTrigger_ = false;
     uint64_t lastRetarget_ = 0;
     static constexpr float kStickDeadZone = 0.25f;
     static constexpr uint64_t kRetargetMs = 100;  // rebuild choice
@@ -585,6 +615,10 @@ Options parseArgs(int argc, char** argv) {
         }
         if (a == "--attack") {
             o.attack = true;
+            continue;
+        }
+        if (a == "--shoot") {
+            o.shoot = true;
             continue;
         }
         if (a == "--use") {
@@ -606,6 +640,10 @@ Options parseArgs(int argc, char** argv) {
             else if (v == "gladiator") o.character = world::Character::Gladiator;
             else if (v == "culibine") o.character = world::Character::Culibine;
             else throw std::runtime_error("--character expects human, gladiator or culibine");
+        } else if (a == "--at") {
+            const auto comma = v.find(',');
+            if (comma == std::string::npos) throw std::runtime_error("--at expects x,y");
+            o.at = SDL_FPoint{std::stof(v.substr(0, comma)), std::stof(v.substr(comma + 1))};
         } else if (a == "--click" || a == "--stick") {
             const auto comma = v.find(',');
             if (comma == std::string::npos) throw std::runtime_error(a + " expects x,y");
@@ -626,9 +664,9 @@ Options parseArgs(int argc, char** argv) {
             }
     }
     if (o.data.empty()) throw std::runtime_error("Harbinger.ini not found. Put harbinger.exe in the Harbinger folder, or run:\n"
-                                                 "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--no-audio] "
+                                                 "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y] [--no-audio] "
                                                  "[--character human|gladiator|culibine] [--settings config.cfg] "
-                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--use]]");
+                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use]]");
     return o;
 }
 
@@ -664,6 +702,7 @@ int main(int argc, char** argv) {
                     game.update(t);
                     if (t == 0 && opt.click) game.clickWorld(*opt.click);
                     if (t == 0 && opt.attack) game.attackWorld();
+                    if (t == 0 && opt.shoot) game.shootWorld();
                     if (t % 1500 == 0 && opt.use) game.useWorld();
                 }
                 game.draw();

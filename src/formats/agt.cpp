@@ -75,7 +75,15 @@ Template parse(const std::vector<uint8_t>& data) {
             t.resistances.emplace_back(type, r.u16());
         }
     }
-    if (t.version > 1.8) r.skip(t.version > 1.86 ? 11 : 10);  // FUN_00407170
+    if (t.version > 1.8) {
+        // FUN_00407170: four flag bytes, then the faction, a word and the
+        // thinker, and from 1.86 one more byte.
+        for (uint8_t& f : t.flags) f = r.u8();
+        t.faction = r.u16();
+        t.word220 = r.u16();
+        t.thinker = r.u16();
+        if (t.version > 1.86) t.byteE = r.u8();
+    }
     t.rest.assign(data.begin() + long(rest), data.begin() + long(r.pos()));
     r.expectEnd();
     return t;
