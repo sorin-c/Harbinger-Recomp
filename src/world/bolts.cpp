@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 #include "world/motion.hpp"
 
@@ -118,8 +119,8 @@ bool Bolts::fire(int shooter, double x, double y, double z, uint8_t heading, con
         // is turned to the emitter's heading (FUN_004e9150). The bolt keeps
         // its height: the weapons' bolts leave level (polar 64) and do not
         // accelerate.
-        const double turn = (heading + az) * M_PI / 128.0;
-        const double flat = std::sin(polar * M_PI / 128.0) * speed;
+        const double turn = (heading + az) * std::numbers::pi / 128.0;
+        const double flat = std::sin(polar * std::numbers::pi / 128.0) * speed;
         t.vx = std::cos(turn) * flat;
         t.vy = std::sin(turn) * flat;
         t.heading = facingTowards(t.vx, t.vy);

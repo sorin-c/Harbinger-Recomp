@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <numbers>
 #include <queue>
 #include <string>
 
@@ -547,7 +548,7 @@ void WorldView::drawBolts() const {
         const float cx = float(p.x - camX_ + screenW_ / 2.0), cy = float(p.y - camY_ + screenH_ / 2.0 - t.z * 64.0);
         const float w = float(fw * scale), h = float(fh * scale);
         const SDL_FRect at{cx - w / 2, cy - h / 2, w, h};
-        const double angle = std::atan2((t.vx + t.vy) * 32.0, (t.vx - t.vy) * 64.0) * 180.0 / M_PI;
+        const double angle = std::atan2((t.vx + t.vy) * 32.0, (t.vx - t.vy) * 64.0) * 180.0 / std::numbers::pi;
         SDL_SetTextureBlendMode(tex.tex, SDL_BLENDMODE_ADD);
         SDL_RenderTextureRotated(ren_, tex.tex, &src, &at, angle, nullptr, SDL_FLIP_NONE);
         SDL_SetTextureBlendMode(tex.tex, SDL_BLENDMODE_BLEND);
