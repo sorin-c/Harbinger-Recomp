@@ -69,6 +69,9 @@ add_library(harbinger_core
   src/world/script.cpp
   src/world/loot.cpp
   src/world/inventory.cpp
+  src/world/inventory_layout.cpp
+  src/world/item_catalog.cpp
+  src/world/item_text.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
 target_include_directories(harbinger_core SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/_deps/dr_libs)
@@ -100,7 +103,7 @@ if(HARBINGER_BUILD_APPS)
   endif()
 
   add_executable(harbinger src/app/harbinger.cpp src/app/assets.cpp src/app/screen.cpp src/app/sound.cpp
-    src/app/world_view.cpp src/app/cutscene.cpp)
+    src/app/world_view.cpp src/app/cutscene.cpp src/app/hud.cpp)
   target_link_libraries(harbinger PRIVATE harbinger_core SDL3::SDL3)
   target_compile_options(harbinger PRIVATE ${HARBINGER_WARNINGS})
   if(WIN32)

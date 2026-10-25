@@ -12,9 +12,12 @@
 
 #include "engine/ini.hpp"
 #include "engine/vfs.hpp"
+#include "formats/itf.hpp"
 #include "formats/itm.hpp"
 #include "formats/mgr.hpp"
 #include "world/inventory.hpp"
+#include "world/inventory_layout.hpp"
+#include "world/item_catalog.hpp"
 #include "world/player.hpp"
 
 using namespace harbinger;
@@ -191,6 +194,40 @@ void testRealData(const char* dir) {
     CHECK(inv.equipped(5) && inv.equipped(5)->id == 333);
     CHECK(inv.equipped(6) && inv.equipped(6)->id == 74);
     CHECK(inv.grid().empty() && inv.money() == 0 && inv.healthPacks() == 5);
+
+    // The description popups, as the original shows them for the chip and
+    // the rifle with the chip in its socket.
+    const Ini ini = Ini::fromBytes(*vfs.read("Harbinger.ini"));
+    world::ItemCatalog cat(vfs, ini);
+    const std::string chip = cat.description({74, {}});
+    std::printf("chip: %s\nrifle: %s\n", chip.c_str(), cat.description({333, {74}}).c_str());
+    CHECK(chip == "EMP mod chip (+1)\nWeapon");
+    const std::string rifle = cat.description({333, {74}});
+    CHECK(rifle.find("Slots: 1") != std::string::npos);
+    CHECK(rifle.find("Plasma: Lvl. 5") != std::string::npos);
+    CHECK(rifle.find("&   EMP: Lvl. 6") != std::string::npos);
+    CHECK(cat.info(333) && cat.info(333)->w == 6);
+
+    // Each character's layout from its inventory screen, and its starting
+    // items all equipped, none left in the grid.
+    using world::Character;
+    for (Character c : {Character::Human, Character::Gladiator, Character::Culibine}) {
+        const auto screen = itf::parse(*vfs.read("res\\common\\interface\\" + world::interfaceDir(c) + "\\inventory.itf"));
+        const Inventory::Layout l = world::inventoryLayout(screen, c);
+        Inventory ci(l, cat.lookup());
+        std::string slots;
+        for (const auto& s : l.slots) slots += std::to_string(s.kind) + (s.parent >= 0 ? "s " : " ");
+        std::printf("%s: %dx%d, slots %s\n", world::interfaceDir(c).c_str(), l.gridW, l.gridH, slots.c_str());
+        for (uint16_t id : world::Player::startingItems(c)) {
+            const auto added = ci.add({id, {}});
+            std::printf("  item %u -> %d\n", id, int(added));
+            CHECK(added == Inventory::Added::Equipped || added == Inventory::Added::Socketed);
+        }
+        CHECK(ci.grid().empty());
+    }
+    const auto human = world::inventoryLayout(
+        itf::parse(*vfs.read("res\\common\\interface\\human\\inventory.itf")), Character::Human);
+    CHECK(human.slots.size() == 20 && human.slots[0].kind == 1 && human.slots[1].parent == 0 && human.slots[7].kind == 0x16);
 }
 
 }  // namespace
