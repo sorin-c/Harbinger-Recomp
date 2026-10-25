@@ -75,6 +75,7 @@ All seven can run in parallel with each other and with M1.
 | 3b | **Automap**: `GCtrlMap`, Tab, explored cells | M | none | |
 | 3c | **Key configuration**: `keyconfig.itf`, KeyField, button tooltips (`GCtrlButton_v10`) | S | none | |
 | 3d | **Controller pass**: one consistent D2R/D3-style scheme across every screen from M1-M3 (dialogue, trade, stash, map, quest log, stats, mods, rigging), button glyphs, auto-target for ranged attacks, gadget buttons, on-screen hints | M | each screen as it lands | Each screen thread does its own nav; this pass makes them consistent |
+| 3f | **Widescreen**: the game view at any aspect (16:9, 16:10, 21:9) with the height kept at 768 and the width grown, so more of the level shows at the sides; HUD panels anchored to the screen edges (generalising the 800 -> 1024 move in `FUN_004c4af0`); the inventory and other full-screen panels centred; the front end and videos pillarboxed at 4:3; window sizes and fullscreen at the desktop's aspect in Options. Checks: camera limits at level edges, script camera positions and thought bubbles (given in 800x600 coordinates), and that enemies seen at the screen edge behave fairly (their sight is 9 cells) | M | none | Can start any time; screens added later just follow the anchoring rules. 4:3 stays available |
 | 3e | **Video and ending**: Bink 1 playback for the logos, intro and ending (FFmpeg's decoder, or skip with a still), credits | M | none | The only part needing an outside library |
 
 ### M4. Playthrough and fidelity
@@ -102,7 +103,7 @@ the end of M1 and M2.
 ```
 now ──► M1 story systems ─────────────────┐
    ├──► M2 combat completeness ────────────┤
-   ├──► M3 shell (3b, 3c, 3e any time) ────┼──► M4 playthroughs ──► M5 release, mobile
+   ├──► M3 shell (3b, 3c, 3e, 3f any time) ┼──► M4 playthroughs ──► M5 release, mobile
    └──► 5b Linux packaging (small, any time)
 ```
 
