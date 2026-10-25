@@ -1,6 +1,8 @@
 // The level's enemies: their hit points, the blows that land on them and
 // their death, and their minds: noticing the player, walking up to it and
-// hitting or shooting it, wandering, fleeing.
+// hitting or shooting it, side-stepping when out of energy, switching
+// weapons, keeping near their own kind, wandering, patrolling between rooms,
+// fleeing.
 // Notes and evidence: docs/combat.md, docs/enemies.md
 #pragma once
 
@@ -16,6 +18,7 @@
 #include "world/actor.hpp"
 #include "world/combat.hpp"
 #include "world/level.hpp"
+#include "world/rooms.hpp"
 #include "world/sprite_cache.hpp"
 #include "world/walkmap.hpp"
 
@@ -42,18 +45,29 @@ public:
     // melee weapon (stat 4), its ranged weapon (stat 3) and a fresh mind.
     Foes(Vfs& vfs, const Ini& ini, Level& level, const WalkMap& walk, Rng& rng);
 
-    // What an enemy is doing (its mind's current action, GIAIPolicy steps).
-    enum class Action { Idle, Move, Attack };
+    // What an enemy is doing (its mind's current action, GIAIPolicy steps;
+    // GIAction ids in brackets). Move, Turn and Idle also have blind forms
+    // (0x11, 0x13, 0x12), marked by Mind::blind.
+    enum class Action { Idle /*0*/, Move /*1*/, Attack /*3*/, Turn /*4*/, Meditate /*0xe*/, Stasis /*9*/ };
     // The plan the actions come from (GIAIPolicy ids in brackets).
-    enum class Policy { None, Move /*0*/, Attack /*4*/, Flee /*0xd*/, Wander /*0xe*/ };
+    enum class Policy {
+        None, Move /*0*/, Attack /*4*/, Flee /*0xd*/, Wander /*0xe*/, LongRange /*0x10*/,
+        HardFlee /*0x11*/, Flank /*0x13*/, Wait /*0x14*/, Awake /*9: its BlindMove step*/
+    };
 
     // GRoleMind (vtable 0x5462f0 area) and the thinker's state.
     struct Mind {
         uint16_t thinker = 0;      // template+0x58
         uint8_t emotion[3] = {};   // mind+0x54..+0x56 (GInstinctCtr): 0 courage, 1 restlessness, 2 the
                                    // visibility an agent must exceed to be seen
-        int role = 0;              // mind+0x5c[+0x68]: 0 guarding, 2 not guarding, 15 meditating
-        int combat = 0;            // mind+0x74: 1 just engaged, 3 fleeing
+        // mind+0x5c[+0x68]: the record's first role word (0 guarding, 1 in
+        // stasis, 15 meditating, others not guarding); engaging turns 0 and
+        // 15 into 2, waking from a spawner sets 2.
+        int role = 0;
+        // mind+0x74, the combat state: 1 attacking, 2 attacking from afar,
+        // 3 fleeing, 4 fleeing hard, 5 and 6 cornered, 7 flanking next,
+        // 8 waiting next, 0 none (FUN_004fa9a0, GRoleMind_v13, _v15).
+        int combat = 0;
         bool engaged = false;      // mind+0x78 holds the target last fought
         bool provoked = false;     // hit by the player (GRoleMind_v8): fights back at the next think
         Policy policy = Policy::None;
@@ -62,6 +76,7 @@ public:
         bool scripted = false;
         int step = 0;              // the policy's action index (mind+0x3c)
         Action action = Action::Idle;
+        bool blind = false;        // the action's slot 12: the mind does not look for targets
         double goalX = 0, goalY = 0;  // mind+0x10..+0x1c: where a move goes
         uint64_t lastThink = 0;    // mind+0x40
     };
@@ -95,6 +110,13 @@ public:
         // The weapon holder's mode (holder+0x10, FUN_0041d4e0): ranged when
         // there is a ranged weapon (and, in the rebuild, a shoot animation).
         bool shoots = false;
+        bool canShoot = false, canMelee = false;  // a ranged weapon and shoot animation; a melee weapon and swing
+        // FUN_00423160: when the holder last switched (or was last refused
+        // a random switch), plug+100.
+        uint64_t switchedAt = 0;
+        // plug+0x4b: a bolt hit a wall (GAgentPlug_v19); out of reach while
+        // set, cleared when the agent walks.
+        bool fireBlocked = false;
         // FUN_00486b90: the shoot animation's parameter / 90.51, squared, is
         // the range squared (plug+0x228); the attack policy's reach is a
         // quarter of it (+0x220, slot 111: 0.25), the long range policy's
@@ -178,9 +200,6 @@ public:
     // more than 249 ms since the last time).
     static constexpr double kSight = 9.0, kSightMeditating = 5.0;
     static constexpr uint64_t kThinkMs = 250;
-    // The height the line of fire is checked at before an enemy shoots (a
-    // rebuild stand-in for its muzzle's, as Player::kMuzzleGuess).
-    static constexpr double kMuzzleGuess = 0.6;
 
 private:
     const agt::Template& tmpl(const Foe& f) const { return level_.agentTemplate(*f.record); }
@@ -190,25 +209,33 @@ private:
     bool inReach(const Foe& f, const Quarry& q) const;
     // The thinker: true if it started a new plan.
     bool decide(Foe& f, const Quarry& q, uint64_t nowMs);
-    bool engage(Foe& f, const Quarry& q, bool mayFlee, uint64_t nowMs);
+    bool engage(Foe& f, const Quarry& q, bool trooper, uint64_t nowMs);
     void rest(Foe& f, const Quarry& q, uint64_t nowMs);
     bool startPolicy(Foe& f, Policy p, const Quarry& q, uint64_t nowMs, double gx = 0, double gy = 0);
+    bool fightAs(Foe& f, const Quarry& q, bool mayFlee, uint64_t nowMs);
+    bool hostileTo(const Foe& f, uint16_t faction) const;
+    bool occupied(const Foe& f, double x, double y, const Quarry& q) const;
+    std::optional<std::pair<double, double>> flock(const Foe& f) const;
+    bool switchWeapon(Foe& f, const Quarry& q, uint64_t nowMs);
+    bool flankPoint(Foe& f, const Quarry& q);
+    void endPolicy(Foe& f, uint64_t nowMs);
     void prepareStep(Foe& f, const Quarry& q, uint64_t nowMs);
     void nextStep(Foe& f, const Quarry& q, uint64_t nowMs);
     void tickPolicy(Foe& f, const Quarry& q, uint64_t nowMs);
-    void moveTo(Foe& f, double x, double y, uint64_t nowMs);
+    bool moveTo(Foe& f, double x, double y, uint64_t nowMs);
     void startSwing(Foe& f, const Quarry& q, uint64_t nowMs);
     bool canFire(const Foe& f) const;
     void fire(int id, Foe& f, const Swing::Result& r);
     void think(Foe& f, const Quarry& q, uint64_t nowMs);
     std::optional<Hit> act(int id, Foe& f, const Quarry& q, uint64_t nowMs);
-    std::optional<uint8_t> pickHeading(const Foe& f, uint8_t heading, double dist);
-    bool fleePoint(Foe& f, const Quarry& q);
+    std::optional<uint8_t> pickHeading(const Foe& f, uint8_t heading, double dist, const Quarry& q, int straight = 0);
+    bool fleePoint(Foe& f, const Quarry& q, bool hard);
 
     Level& level_;
     const WalkMap& walk_;
     Rng& rng_;
     mutable SpriteCache sprites_;
+    Rooms rooms_;
     std::vector<Foe> foes_;
     std::vector<Shot> shots_;
 };

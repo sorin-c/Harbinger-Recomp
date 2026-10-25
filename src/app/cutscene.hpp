@@ -49,6 +49,11 @@ public:
     };
     void setAgents(AgentControl control) { agents_ = std::move(control); }
 
+    // Gizmo triggers on gizmos the cutscene does not run itself (the
+    // umbilical pads): the hook gets the gizmo and the trigger's id.
+    using GizmoHook = std::function<void(const chk::GizmoRecord&, uint16_t trigger, uint64_t nowMs)>;
+    void setGizmoHook(GizmoHook hook) { gizmoHook_ = std::move(hook); }
+
     using Occupied = std::function<bool(const chk::GizmoRecord&)>;
     // Once a frame, after the player has moved from (x0, y0) to (x1, y1):
     // fires the triggers that move sets off and runs the current script.
@@ -58,11 +63,14 @@ public:
     // (game state 8): the player takes no orders.
     bool cinematic() const { return mode_ != Mode::Off || portalMode_; }
     bool portalMode() const { return portalMode_; }
-    // Set once the player has walked into a portal: the level and entry
-    // point to load (GGame+0x132, +0x136, then FUN_004a1d20).
+    // Set once the player has walked into a portal, or a script's SetLevel
+    // has run: the level and entry point to load (GGame+0x132, +0x136,
+    // then FUN_004a1d20). SetLevel names no entry point (kNoEntry).
     struct LevelChange {
         uint16_t level = 0, entry = 0;
+        bool umbilical = false;  // picked from an umbilical's list
     };
+    static constexpr uint16_t kNoEntry = 0xffff;
     const std::optional<LevelChange>& levelChange() const { return levelChange_; }
     bool running() const { return runner_.running(); }
     // Where the camera looks, in map cells, while a script holds it; empty
@@ -121,6 +129,7 @@ private:
     world::TriggerWatch triggers_;
     world::GizmoTriggerWatch gizmoTriggers_;
     PlayerControl player_;
+    GizmoHook gizmoHook_;
     AgentControl agents_;
     std::map<uint16_t, uint8_t> portalPhases_;  // portal instance -> plug+0x100
     bool portalMode_ = false;                   // GGame+0x43c = 8

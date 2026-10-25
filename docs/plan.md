@@ -57,7 +57,7 @@ state-ownership design agreed first (a short doc), then grows with the others.
 
 | # | Work | Size | Depends on | Notes |
 |---|---|---|---|---|
-| 2a | **Remaining AI**: LongRange, Flank and Wait policies, squads (plug+0x218), flocking, trooper rest `FUN_00423e40`, `GRoleMind_v13` combat states, fire-blocked flag, weapon mode switching | L | none | |
+| 2a | **Remaining AI**: LongRange, Flank and Wait policies, squads (plug+0x218), flocking, trooper rest `FUN_00423e40`, `GRoleMind_v13` combat states, fire-blocked flag, weapon mode switching | L | none | Done (docs/enemies.md). "Squads" were the spawner links. Left: troopers opening doors (policy 0x16), alerting friends |
 | 2b | **Bosses, turrets and mines**: `GVantirBossPlug`, `GScintBossPlug`, `GCimBossPlug`, `GBossThinker` and their awake policies; `GTurretPlug`, `GTurretMinePlug` | L | 2a helps | Every boss must be beatable for the game to be completable |
 | 2c | **Gadgets and firing modes**: Human mines, Gladiator camera (with camera/body toggle), Culibine amps (`GAmplifierItem`, radial mods 7-0), ranged mods 1-4, the Ctrl rigging menu | L | none | Controller: rigging menu as a radial or bumper cycle |
 | 2d | **Upgrade chips and the weapon mod panel**: `GModChipItem`, `GCtrlWeaponModBtn`, `weaponmodleft.itf`, stat changes on weapons, energy lines in tooltips, injector colours | M | the inventory | |

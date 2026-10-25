@@ -93,6 +93,8 @@ public:
     // the step is read with choiceStep(). Returns its control index.
     size_t addChoice(int x, int y, int width, uint16_t font, uint32_t action);
     int choiceStep(size_t control) const { return widgets_.at(control).step; }
+    // The control the keyboard or pad focus is on, if any.
+    std::optional<size_t> focused() const { return focus_; }
 
     void update(uint64_t nowMs);
     void draw(SDL_Renderer* ren) const;

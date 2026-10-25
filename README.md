@@ -33,9 +33,11 @@ What exists so far:
 - `harbinger-viewer`, an SDL3 sprite browser (keyboard or gamepad)
 - Gameplay in main so far: walking (mouse, keyboard or gamepad), gear and
   melee and ranged combat, player health and death, enemy AI with melee and
-  ranged attacks, spawners, portals between levels, scripted cutscenes and
-  enemy moves, gizmo use (doors, consoles), chest loot, experience and levels with the
-  stats panel, and the HUD and inventory screen with full controller navigation
+  ranged attacks, spawners, portals and umbilicals between levels (with
+  umbilical codes and the Level Selection screen), scripted cutscenes and
+  enemy moves, gizmo use (doors, consoles), chest loot, experience and levels
+  with the stats panel, and the HUD and inventory screen with full controller
+  navigation
 
 ```
 harbinger --data "C:/Games/Harbinger"
@@ -47,7 +49,7 @@ then in the current folder, so on Windows you can copy `harbinger.exe` and
 Windows zip (`harbinger-windows`) is attached to every CI run under the
 repository's Actions tab. Your settings are kept in
 `%APPDATA%\harbinger-recomp\harbinger\` (`config.cfg`, and `display.ini` for the
-window size or fullscreen, set in Options or with Alt+Enter); the game folder is only read.
+window size or fullscreen and the 4:3 or 16:9 widescreen view, set in Options or with Alt+Enter); the game folder is only read.
 
 ## Build
 

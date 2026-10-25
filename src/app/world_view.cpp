@@ -16,6 +16,7 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
                      int screenH, world::Inventory::Layout inventory, uint16_t entry,
                      std::optional<world::WalkMap::Point> at)
     : assets_(assets), ren_(ren), level_(std::make_unique<world::Level>(assets.vfs(), assets.ini(), levelId)),
+      levelId_(levelId),
       screenW_(screenW), screenH_(screenH), centreX_(screenW / 2.0), centreY_(screenH / 2.0) {
     const auto& m = level_->map();
     // A new game enters at entry point 0, "Default" (FUN_004a05d0 sets
@@ -53,6 +54,17 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
                               return foes_->order(instance, turn ? O::Turn : O::Move, x, y, elapsedMs_);
                           },
                           [this](uint16_t instance) { return foes_->ordered(instance); }});
+    entries_ = world::levelEntries(assets.vfs(), assets.ini());
+    codes_ = std::make_unique<world::UmbilicalCodes>();
+    umbilicals_ = std::make_unique<world::Umbilicals>(*level_);
+    cutscene_->setGizmoHook([this](const chk::GizmoRecord& g, uint16_t, uint64_t nowMs) {
+        // GUmbilicalPlug_v1 with x = -1, as from a trigger. Rebuild choice:
+        // the player stops on the pad while the shell closes.
+        if (!umbilicals_->trigger(g, codes_->any(), nowMs)) return;
+        pendingUse_ = nullptr, pendingPickup_ = 0;
+        player_->steer(0, 0);
+        player_->walkTo(player_->x(), player_->y());
+    });
     loot_ = std::make_unique<world::Loot>(assets.vfs(), assets.ini(), character, *level_, *walk_, rng_);
     spawners_ = std::make_unique<world::Spawners>(assets.vfs(), *level_);
     bolts_ = std::make_unique<world::Bolts>(assets.vfs(), assets.ini(), *walk_, rng_);
@@ -63,7 +75,7 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     camX_ = p.x, camY_ = p.y;
 
     for (const auto& g : m.gizmos)
-        if (level_->gizmoVisible(g)) {
+        if (level_->gizmoDrawable(g)) {
             Object o{level_->gizmoDepth(g), &g, nullptr};
             o.shape = &level_->gizmoShape(g);
             const auto tl = level_->gizmoTopLeft(g);
@@ -97,7 +109,8 @@ WorldView::~WorldView() {
 }
 
 WorldView::Carried WorldView::takeCarried() {
-    return {std::move(catalog_), std::move(inventory_), player_->hitPoints(), player_->energy(), player_->stats()};
+    return {std::move(catalog_), std::move(inventory_), player_->hitPoints(), player_->energy(), player_->stats(),
+            std::move(codes_)};
 }
 
 void WorldView::carry(Carried c) {
@@ -108,6 +121,74 @@ void WorldView::carry(Carried c) {
     equipRev_ = inventory_->equipmentRevision();
     if (c.stats) player_->carryStats(*c.stats);
     player_->carry(c.hitPoints, c.energy);
+    if (c.codes) codes_ = std::move(c.codes);
+}
+
+std::optional<Cutscene::LevelChange> WorldView::levelChange() const {
+    if (travel_) return travel_;
+    return cutscene_->levelChange();
+}
+
+void WorldView::arriveByUmbilical() {
+    // FUN_004a1bb0 took control away (player slot 53 with 0) and nothing
+    // gives it back on the way: the triggers of the pad the player lands
+    // on close the shell again, and its end, finding the player without
+    // control, hands it back and opens the shell.
+    frozen_ = true;
+}
+
+bool WorldView::unlockCode(uint16_t level, uint16_t entry, bool gold) {
+    return codes_->unlock(level, entry, gold, entries_);
+}
+
+void WorldView::setLevel(uint16_t level) {
+    if (level) travel_ = Cutscene::LevelChange{level, Cutscene::kNoEntry};
+}
+
+void WorldView::chooseTravel(int index) {
+    if (!menu_) return;
+    if (index >= 0 && size_t(index) < menu_->size()) {
+        // FUN_004a1a80 then FUN_004a1d20: GGame+0x132/+0x136 and the load.
+        const auto& c = (*menu_)[size_t(index)];
+        travel_ = Cutscene::LevelChange{c.level, c.entry, true};
+    } else {
+        // Cancel (FUN_004a1d20 with nothing picked): control comes back and
+        // the shell opens.
+        umbilicals_->release(elapsedMs_);
+    }
+    menu_.reset();
+}
+
+void WorldView::updateUmbilicals() {
+    if (!poweredChecked_) {
+        // GPortalPlug_v0 on the pad's GIPowerable: a pad that needs power
+        // and gets it as the level starts opens its own place.
+        poweredChecked_ = true;
+        for (const auto& g : level_->map().gizmos)
+            if (const auto link = world::umbilicalLink(level_->gizmoTemplate(g), g); link && link->needed > 0) {
+                const auto& st = level_->gizmoState(g);
+                if (st.power >= st.needed) codes_->setOpen(levelId_, link->own, true, entries_);
+            }
+    }
+    for (const auto& e : umbilicals_->update(elapsedMs_)) {
+        if (e.kind == world::Umbilicals::Event::Charged) {
+            // FUN_004a1a20: a fixed destination's code, as a gold hint.
+            if (e.link.fixed()) codes_->unlock(e.link.level, e.link.entry, true, entries_);
+            continue;
+        }
+        if (frozen_ || player_->dead()) {
+            frozen_ = false;
+            umbilicals_->release(elapsedMs_);
+            continue;
+        }
+        // FUN_004a1bb0: here is known, and the list of the other places
+        // opens with the game stopped.
+        codes_->markHere(levelId_, e.link.own, entries_);
+        menu_ = codes_->destinations(levelId_, e.link.own);
+        if (std::getenv("HARBINGER_SCRIPT_LOG"))
+            std::fprintf(stderr, "%llu ms: umbilical list opens, %zu places\n", (unsigned long long)elapsedMs_,
+                         menu_->size());
+    }
 }
 
 void WorldView::awardExperience(uint32_t amount, bool announce) {
@@ -136,7 +217,7 @@ void WorldView::awardExperience(uint32_t amount, bool announce) {
 }
 
 bool WorldView::useHealthPack() {
-    if (cinematic() || player_->dead() || player_->hitPoints() >= player_->maxHitPoints()) return false;
+    if (locked() || player_->dead() || player_->hitPoints() >= player_->maxHitPoints()) return false;
     if (!inventory_->takeHealthPack()) return false;
     // How much a pack heals is not traced (the use goes through the item's
     // own vtable, FUN_004d5a50, and the item files hold no amount): half the
@@ -146,7 +227,7 @@ bool WorldView::useHealthPack() {
 }
 
 void WorldView::steer(float dx, float dy) {
-    if (cinematic()) return;
+    if (locked()) return;
     if (dx != 0 || dy != 0) pendingUse_ = nullptr, pendingPickup_ = 0;
     // A screen direction to a map one: invert screen = ((x - y) * 64, (x + y) * 32).
     const double mx = dx / 64.0 + dy / 32.0, my = dy / 32.0 - dx / 64.0;
@@ -159,7 +240,7 @@ world::WalkMap::Point WorldView::mapPoint(float x, float y) const {
 }
 
 void WorldView::walkTo(float x, float y) {
-    if (cinematic()) return;
+    if (locked()) return;
     pendingUse_ = nullptr, pendingPickup_ = 0;
     const auto p = mapPoint(x, y);
     player_->walkTo(p.x, p.y);
@@ -185,7 +266,7 @@ int WorldView::foeAt(float x, float y) const {
 }
 
 bool WorldView::attackAt(float x, float y) {
-    if (cinematic()) return false;
+    if (locked()) return false;
     const int best = foeAt(x, y);
     if (best < 0) return false;
     const auto& f = foes_->all()[size_t(best)];
@@ -195,7 +276,7 @@ bool WorldView::attackAt(float x, float y) {
 }
 
 bool WorldView::shootAt(float x, float y) {
-    if (cinematic()) return false;
+    if (locked()) return false;
     const int best = foeAt(x, y);
     if (best < 0) return false;
     const auto& f = foes_->all()[size_t(best)];
@@ -205,7 +286,7 @@ bool WorldView::shootAt(float x, float y) {
 }
 
 bool WorldView::shootNearest() {
-    if (cinematic()) return false;
+    if (locked()) return false;
     const int id = foes_->nearest(player_->x(), player_->y(), world::Player::kShootRange, player_->facing());
     if (id < 0) return false;
     const auto& f = foes_->all()[size_t(id)];
@@ -221,7 +302,7 @@ void WorldView::playSound(uint16_t id) {
 }
 
 bool WorldView::attackNearest() {
-    if (cinematic()) return false;
+    if (locked()) return false;
     const int id = foes_->nearest(player_->x(), player_->y(), 4.0, player_->facing());
     if (id < 0) return false;
     const auto& f = foes_->all()[size_t(id)];
@@ -310,7 +391,7 @@ const world::Loot::GroundItem* WorldView::itemAt(float x, float y) const {
 }
 
 bool WorldView::useAt(float x, float y) {
-    if (cinematic()) return false;
+    if (locked()) return false;
     if (const auto* item = itemAt(x, y)) {
         approachItem(*item);
         return true;
@@ -322,7 +403,7 @@ bool WorldView::useAt(float x, float y) {
 }
 
 bool WorldView::useNearest() {
-    if (cinematic()) return false;
+    if (locked()) return false;
     if (const auto* item = loot_->nearest(player_->x(), player_->y(), kUseRange, elapsedMs_)) {
         approachItem(*item);
         return true;
@@ -364,6 +445,12 @@ bool WorldView::occupied(const chk::GizmoRecord& g) const {
 
 void WorldView::update(uint64_t nowMs) {
     if (!startMs_) startMs_ = nowMs;
+    if (menu_ || travel_) {
+        // The umbilical list stops the game (FUN_004a1bb0 sets the pause
+        // flag at DAT_005847dc), so its clock does not move.
+        startMs_ = nowMs - elapsedMs_;
+        return;
+    }
     elapsedMs_ = nowMs - startMs_;
     // Gizmos first: a door that has just opened can be walked through.
     for (const chk::GizmoRecord* g : level_->update(elapsedMs_)) walk_->repaint(*level_, *g);
@@ -505,6 +592,7 @@ void WorldView::update(uint64_t nowMs) {
     // The level's event triggers, and the script one of them started.
     cutscene_->update(elapsedMs_, x0, y0, player_->x(), player_->y(),
                       [&](const chk::GizmoRecord& o) { return occupied(o); });
+    updateUmbilicals();
     if (cinematic() && !wasCinematic_ && !cutscene_->portalMode()) {
         // Rebuild choice: the player stops where it stands for the cutscene.
         pendingUse_ = nullptr;
@@ -721,7 +809,8 @@ void WorldView::draw() const {
         for (size_t j : behind_[i]) edge(j, i);
     std::vector<size_t> gizmos;
     for (size_t i = 0; i < n; ++i)
-        if (objects_[i].gizmo && !objects_[i].shape->depth.empty()) gizmos.push_back(i);
+        if (objects_[i].gizmo && !objects_[i].shape->depth.empty() && level_->gizmoVisible(*objects_[i].gizmo))
+            gizmos.push_back(i);
     auto placeAgent = [&](size_t node, const chk::AgentRecord* a, double depth) {
         const Sprite s = agentSprite(a);
         if (!s.image) return;
@@ -779,7 +868,9 @@ void WorldView::draw() const {
     for (size_t i : order_) {
         wallsUpTo(depthOf(i));
         if (i == n) drawPlayer();
-        else if (objects_[i].gizmo) drawGizmo(*objects_[i].gizmo);
+        else if (objects_[i].gizmo) {
+            if (level_->gizmoVisible(*objects_[i].gizmo)) drawGizmo(*objects_[i].gizmo);
+        }
         else drawAgent(*objects_[i].agent);
     }
     wallsUpTo(1e9);

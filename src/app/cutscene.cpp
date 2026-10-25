@@ -98,7 +98,9 @@ void Cutscene::fire(const chk::GizmoTrigger& t, uint64_t nowMs) {
     const chk::GizmoRecord* g = level_.gizmoByInstance(t.gizmo);
     if (!g) return;
     if (const auto link = world::portalLink(level_.gizmoTemplate(*g), *g)) runPortal(*g, *link, t.id, nowMs);
-    else level_.useGizmo(*g, nowMs, *occupied_);
+    else if (level_.gizmoTemplate(*g).cls == giz::Umbilical) {
+        if (gizmoHook_) gizmoHook_(*g, t.id, nowMs);
+    } else level_.useGizmo(*g, nowMs, *occupied_);
 }
 
 void Cutscene::runPortal(const chk::GizmoRecord& g, const world::PortalLink& link, uint16_t trigger, uint64_t nowMs) {
@@ -239,6 +241,12 @@ world::CommandResult Cutscene::run(const gsc::Line& line, bool first, uint64_t n
             // GGame_v0 case 0x11 -> FUN_004a49e0: 0 puts the game back in
             // play (state 1).
             if (line.number(0) == 0) portalMode_ = false;
+            return R::Done;
+        case C::SetLevel:
+            // GGame_v0 case 0x13: GQuestMgr+0x46 = the level; the next
+            // frame FUN_004f6780 hands it to FUN_004a1b30, which loads it
+            // with entry 0xffff (no entry point).
+            if (line.number(0) > 0) levelChange_ = LevelChange{uint16_t(line.number(0)), kNoEntry};
             return R::Done;
         case C::Wait:
             // GGame_v0 case 0xc.
@@ -394,8 +402,10 @@ void Cutscene::showBubble(const std::string& text, int x, int y, int w, int h, u
     }
     // FUN_004c97d0: positions are for 800 x 600; at 1024 x 768 the bubble's
     // centre moves out by 0.28 of itself. The rebuild scales the same way
-    // for any view size.
-    x += int((screenW_ / 800.0 - 1) * (x + w / 2));
+    // within the 4:3 middle of a widescreen view, so a bubble keeps its place
+    // beside the player (who stands in the middle) instead of drifting out.
+    const int classicW = screenH_ * 4 / 3;
+    x += (screenW_ - classicW) / 2 + int((classicW / 800.0 - 1) * (x + w / 2));
     y += int((screenH_ / 600.0 - 1) * (y + h / 2));
 
     if (bubble_.voicing) stopPcm(kVoiceKey);

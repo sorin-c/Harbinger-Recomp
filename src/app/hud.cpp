@@ -50,18 +50,27 @@ std::string itfPath(world::Character c, const char* name) {
 // to the matching edge (applied to the background; every other control is
 // relative to it). The log buttons' y is scaled by 1.28 there, which gives
 // 696 for the Human's; the original draws it at 706 (measured), so 10 more.
-SDL_FPoint panelPosition(uint16_t kind, int x, int y, int screenW) {
-    if (screenW < 1024) return {float(x), float(y)};
+// The x moves are the view's growth past 800 wide (224) or half of it (112:
+// centred), so the rebuild applies the same rule to a widescreen view (1366
+// or 1066 wide): right panels stay on the right edge, centred panels stay
+// centred. The y moves belong to the height (768 or 600), which widescreen
+// keeps.
+}  // namespace
+
+SDL_FPoint panelPosition(uint16_t kind, int x, int y, int screenW, int screenH) {
+    const int dx = screenW - 800, dy = screenH - 600;
     switch (kind) {
-        case 0x00: case 0x10: return {float(x), float(y + 168)};
-        case 0x01: case 0x0A: case 0x12: return {float(x + 224), float(y + 168)};
-        case 0x03: return {float(x + 224), float(y)};
+        case 0x00: case 0x10: return {float(x), float(y + dy)};
+        case 0x01: case 0x0A: case 0x12: return {float(x + dx), float(y + dy)};
+        case 0x03: return {float(x + dx), float(y)};
         case 0x05: case 0x06: case 0x13: case 0x0B: case 0x0D: case 0x0E: case 0x0F:
-        case 0x15: case 0x16: case 0x17: case 0x19: return {float(x + 0x70), float(y + 0x5E)};
-        case 0x1A: return {float(x + 224), float(int(y * 1.28) + 10)};
+        case 0x15: case 0x16: case 0x17: case 0x19: return {float(x + dx / 2), float(y + (dy ? 0x5E : 0))};
+        case 0x1A: return {float(x + dx), screenH >= 768 ? float(int(y * 1.28) + 10) : float(y)};
         default: return {float(x), float(y)};
     }
 }
+
+namespace {
 
 // Grid cells are 26 pixels apart and 25 wide (GCtrlInventoryGrid_v3).
 constexpr int kCell = 26, kCellArt = 25;
@@ -180,7 +189,7 @@ void Hud::load(Panel& p, const std::string& path, bool ownPalette) {
             p.ownBackground = assets_.upload(p.mask.pixels, p.mask.width, p.mask.height);
         }
 
-        const SDL_FPoint at = panelPosition(p.itf.kind, bg->x, bg->y, screenW_);
+        const SDL_FPoint at = panelPosition(p.itf.kind, bg->x, bg->y, screenW_, screenH_);
         p.x = at.x, p.y = at.y;
     }
     int slot = 0;
@@ -249,8 +258,8 @@ double Hud::viewCentreX() const {
 
 double Hud::viewCentreY() const {
     // And on the part below the stats panel while that is open: in the
-    // original the player moves down 135 pixels when it opens, half the
-    // panel's height (270).
+    // original the player moves down 153 pixels when it opens, half the
+    // panel's height (306).
     return statsOpen_ ? (stats_.y + stats_.mask.height + screenH_) / 2.0 : screenH_ / 2.0;
 }
 

@@ -67,12 +67,12 @@ scripts and are labelled.
 | 11 | `Sound` | sound, wait | `0x501710` | play a `sound.mgr` sound (proven: ids such as 195, 241 and 282 resolve there) | 89 |
 | 12 | `Wait` | ms | `0x501120` | pause (likely: values 250 to 1000) | 126 |
 | 13 | `Shake` | n, n, ms, word, word, wait | `0x501310` | shake the screen: amplitude x, y, duration, `Rndm` (likely) | 128 |
-| 14 | `SwapLevels` | | | not used | 0 |
+| 14 | `SwapLevels` | level, level | case 0xe | swap two `level.mgr` paths (proven; not used, not rebuilt) | 0 |
 | 15 | `Die` | | | not used | 0 |
 | 16 | `ThoughtBubble` | text, x, y, n, n, voice (0.1), wait (optional) | `0x4ff980` | a thought bubble at a screen position with a voice line, see below | 720 |
 | 17 | `Warp` | n | `0x4a49e0` | `Warp(0)` gives play back (game state 1); only in the portal scripts built in code (`docs/formats/gizmo.md`, "Portals") | 0 |
 | 18 | `QuitGame` | none | `0x4d5080` | end the game (the endings; likely) | 3 |
-| 19 | `SetLevel` | level | `0x501850` | go to a level (likely) | 3 |
+| 19 | `SetLevel` | level | `0x501850` | go to a level: GQuestMgr+0x46, loaded the next frame (proven, `docs/umbilicals.md`) | 3 |
 | 20 | `Snapshot` | on/off | `0x5024f0` | freeze the screen (guessed) | 6 |
 | 21 | `StrikePose` | agent, word, n, n | `0x4ffc60` | play an animation on an agent, e.g. `MeleeAttack` (likely) | 10 |
 

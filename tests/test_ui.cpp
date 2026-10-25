@@ -210,16 +210,34 @@ static void testSettings() {
 static void testDisplay() {
     const Display d = Display::parse("[Display]\nmode=window\nwidth=1024\nheight=768\n");
     CHECK(!d.fullscreen && d.width == 1024 && d.height == 768 && d.describe() == "1024 x 768 Window");
-    CHECK(Display::parse(d.serialize()) == d);
+    CHECK(d.aspect == Aspect::Classic && d.fullW == 0);  // files from before widescreen
+    CHECK(Display::parse(d.serialize()).sameSize(d));
     CHECK(Display::parse("[Display]\nmode=fullscreen\n").describe() == "Fullscreen");
-    const Display bad = Display::parse("[Display]\nwidth=abc\nheight=5\n");
-    CHECK(bad.width == 800 && bad.height == 600);
-    // 4:3 windows that fit, then fullscreen; 800x600 is always offered.
-    const auto c = displayChoices(1920, 1040);
+    const Display bad = Display::parse("[Display]\nwidth=abc\nheight=5\nfullscreen=12\n");
+    CHECK(bad.width == 800 && bad.height == 600 && bad.fullW == 0);
+    // A custom fullscreen size and the 16:9 aspect survive a round trip.
+    const Display wide = Display::parse("[Display]\nmode=fullscreen\nfullscreen=1600x900\naspect=16:9\n");
+    CHECK(wide.fullscreen && wide.fullW == 1600 && wide.fullH == 900 && wide.aspect == Aspect::Wide);
+    CHECK(wide.describe() == "1600 x 900 Fullscreen");
+    const Display back = Display::parse(wide.serialize());
+    CHECK(back.sameSize(wide) && back.aspect == Aspect::Wide);
+    int w = 0, h = 0;
+    CHECK(parseSize("1280x720", w, h) && w == 1280 && h == 720);
+    CHECK(parseSize(" 1440 x 1080 ", w, h) && w == 1440 && h == 1080);
+    CHECK(!parseSize("1280", w, h) && !parseSize("100x100", w, h) && !parseSize("1280x720x2", w, h));
+    // 4:3 windows that fit, then fullscreen; 800x600 and 1024x768 always.
+    const auto c = displayChoices(Aspect::Classic, 1920, 1040);
     CHECK(c.size() == 4 && c[1].width == 1024 && c[2].width == 1280);  // 1440x1080 is too tall
-    CHECK(c.front().width == 800 && c.back().fullscreen);
-    CHECK(displayChoices(0, 0).size() == 2);
+    CHECK(c.front().width == 800 && c.back().fullscreen && c.back().fullW == 0);
+    CHECK(displayChoices(Aspect::Classic, 0, 0).size() == 3);
     for (const auto& x : c) CHECK(x.fullscreen || (x.width * 3 == x.height * 4 && x.height <= 1040));
+    // 16:9: the wide windows that fit, then the display's modes once each.
+    const auto wc = displayChoices(Aspect::Wide, 1920, 1040, {{1920, 1080}, {1280, 720}, {1920, 1080}});
+    CHECK(wc.size() == 2 + 3 + 1 + 2 && wc[2].width == 1280 && wc[4].width == 1600 && wc[5].fullscreen);
+    CHECK(wc[6].fullW == 1920 && wc[7].fullW == 1280);
+    // The game view: 4:3, or 16:9 at the same height.
+    CHECK(gameViewWidth(768, Aspect::Classic) == 1024 && gameViewWidth(600, Aspect::Classic) == 800);
+    CHECK(gameViewWidth(768, Aspect::Wide) == 1366 && gameViewWidth(600, Aspect::Wide) == 1066);
 }
 
 int main() {

@@ -139,6 +139,12 @@ GizmoState startingState(const giz::Template& t, const chk::GizmoRecord& g, int 
         // GIncubatorPlug_v22: u16 power needed (plug+0xc6).
         st.needed = int16_t(u16At(d, 0));
         break;
+    case giz::Umbilical:
+        // GUmbilicalPlug_v22: u16 state, u16 level, u16 entry, u16 own
+        // entry, u16 power needed (plug+0xde). State 0 in every record.
+        st.state = u16At(d, 0);
+        st.needed = int16_t(u16At(d, 8));
+        break;
     case giz::Splitter:
     case giz::Spawn:
         // GSplitterPlug_v22: u16 state (plug+0x7c), u32 (plug+0x34), u16
@@ -241,6 +247,28 @@ GizmoPlay playFor(const giz::Template& t, const GizmoState& st) {
         p.minPauseMs = u32At(t.classData, 0);
         p.maxPauseMs = u32At(t.classData, 4);
         return p;
+    }
+    case giz::Umbilical: {
+        // The pad's slot 17 (0x51dd90) with the Begin Activate frame the
+        // template keeps (GUmbilical_v4, gizmo+0xbc; 0 if none): state 2,
+        // the charge, plays from it to the last frame but one and holds
+        // there (the slot 29, 0x51dd30, steps back a frame); otherwise the
+        // pad loops frames 1 to the one before it. Frame 0 is the base the
+        // others draw over. Without the power it needs a pad that is not
+        // charging shows its last frame, the dark one (GUmbilicalPlug_v28).
+        const size_t act = firstTag(t, BeginActivate) == npos ? 0 : firstTag(t, BeginActivate);
+        if (state == 2) return range(GizmoPlay::Once, act, n >= 2 ? n - 2 : 0);
+        if (st.power < st.needed) return hold(last);
+        return act <= 1 ? hold(0) : range(GizmoPlay::Loop, 1, act - 1);
+    }
+    case giz::UmbilicalShell: {
+        // GUmbilicalShellPlug_v17: frame 0 (an editor outline, not drawn:
+        // Level::gizmoVisible) unless closing, state 2, which plays from
+        // the Begin Activate frame (GUmbilicalShell_v4, gizmo+0xb8) to the
+        // last but one and holds it (GUmbilicalShellPlug_v29).
+        if (state != 2) return hold(0);
+        const size_t act = firstTag(t, BeginActivate) == npos ? 0 : firstTag(t, BeginActivate);
+        return range(GizmoPlay::Once, act, n >= 2 ? n - 2 : 0);
     }
     case giz::Splitter:
     case giz::Spawn:
