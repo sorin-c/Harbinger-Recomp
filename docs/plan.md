@@ -30,6 +30,13 @@ What the game still lacks falls into three groups:
 3. **Polish and platforms**: playthrough checks against the original under
    Wine, Bink video, Linux packaging, then Android and iOS.
 
+**Decided 2026-10-25 (Sorin): Human first.** Character-specific work (gadgets,
+upgrade chips, skill tree, firing modes) is built for the Human first, and the
+first full playthrough is a Human one. The shared systems (dialogue, quests,
+trade, saving) are built to work for all three from the start, but are only
+tested end to end with the Human until M4b. Gladiator and Culibine follow as
+their own pass (M4b plus their parts of 2c, 2d and 1c).
+
 ## Milestones
 
 ### M1. Story systems (critical path)
