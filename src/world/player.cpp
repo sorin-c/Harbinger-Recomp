@@ -17,12 +17,15 @@ std::vector<uint8_t> readOrThrow(Vfs& vfs, const std::string& path) {
     return std::move(*data);
 }
 
+}  // namespace
+
 // The items each character starts with, added one by one when a game starts
 // (vtable slot 108 of the character's plug: GHumanPlayerPlug_v108 0x4ee6b0,
 // GGladPlayerPlug_v108 0x4badd0, GCulibinePlug_v108 0x470b10), as item.mgr
-// ids. Each is equipped (seen in the original's inventory for the Human:
-// Alpha Advance Armor, the E-16 Rifle and an EMP mod chip in its socket).
-std::vector<uint16_t> startingItems(Character c) {
+// ids. Each goes through the inventory's add (slot 46 -> FUN_004ccd10), which
+// equips it (seen in the original's inventory for the Human: Alpha Advance
+// Armor, the E-16 Rifle and an EMP mod chip in its socket).
+std::vector<uint16_t> Player::startingItems(Character c) {
     switch (c) {
         case Character::Human: return {689, 333, 74};             // armour, rifle, EMP chip
         case Character::Gladiator: return {251, 291, 747, 103};   // blade, gun, torso, EMP chip
@@ -30,8 +33,6 @@ std::vector<uint16_t> startingItems(Character c) {
     }
     return {};
 }
-
-}  // namespace
 
 const char* characterSection(Character c) {
     switch (c) {
@@ -43,41 +44,14 @@ const char* characterSection(Character c) {
 }
 
 Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& walk, const chk::EntryPoint& start)
-    : walk_(walk), sprites_(vfs) {
+    : vfs_(vfs), walk_(walk), sprites_(vfs) {
     const std::string section = characterSection(character);
     template_ = agt::parse(readOrThrow(vfs, ini.require(section, "Agent")));
     animIndex_ = mgr::parse(readOrThrow(vfs, ini.require(section, "Anims")));
     groups_ = animgroup::parse(readOrThrow(vfs, ini.require(section, "AnimGroups")));
-    // Each equipped item hands its animation group to one of three layers
-    // (GEquipCell_v1 -> FUN_004efcf0), drawn over the body in layer order.
-    const auto items = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Items")));
-    const auto weapons = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Weapons")));
-    std::string slots[3];
-    int weaponRank = -1;
-    for (uint16_t id : startingItems(character)) {
-        const std::string* path = items.find(id);
-        if (!path) continue;
-        const auto data = readOrThrow(vfs, *path);
-        const uint16_t cls = data.size() < 2 ? 0 : uint16_t(data[0] | data[1] << 8);
-        if (cls < itm::HumanWeapon || cls > itm::RightGauntlet) continue;  // mod chips: in a socket
-        const itm::Item item = itm::parse(data);
-        // The blows' weapon: the melee one where there is a choice (the
-        // gladiator's blade over its gun, the right gauntlet over the left).
-        // The original's choice (FUN_004213a0) is not traced: guessed.
-        static constexpr uint16_t kRank[] = {0, 3, 0, 0, 1, 4, 0, 1, 2};
-        if (kRank[cls] > weaponRank) {
-            if (const std::string* w = weapons.find(item.socketed->word38)) {
-                weapon_ = wpn::parse(readOrThrow(vfs, *w));
-                weaponRank = kRank[cls];
-            }
-        }
-        const int layer = itm::spriteLayer(item.classId);
-        if (layer < 0) continue;
-        for (const auto& g : groups_.groups)
-            if (g.id == item.socketed->animGroup) slots[layer] = g.name;
-    }
-    for (const auto& name : slots)
-        if (!name.empty()) layers_.push_back(name);
+    items_ = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Items")));
+    weapons_ = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Weapons")));
+    equip(startingItems(character));
     // The move animation's parameter is the walking speed (FUN_00406100).
     for (const auto& a : template_.anims)
         if (a.kind == agt::Move && !speed_) speed_ = walkSpeed(a.param);
@@ -88,6 +62,39 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
     x_ = start.x;
     y_ = start.y;
     facing_ = uint8_t(start.facing & 0xff);
+}
+
+void Player::equip(const std::vector<uint16_t>& ids) {
+    // Each equipped item hands its animation group to one of three layers
+    // (GEquipCell_v1 -> FUN_004efcf0), drawn over the body in layer order.
+    std::string slots[3];
+    int weaponRank = -1;
+    weapon_ = {};
+    for (uint16_t id : ids) {
+        const std::string* path = items_.find(id);
+        if (!path) continue;
+        const auto data = readOrThrow(vfs_, *path);
+        const uint16_t cls = data.size() < 2 ? 0 : uint16_t(data[0] | data[1] << 8);
+        if (cls < itm::HumanWeapon || cls > itm::RightGauntlet) continue;  // mod chips: in a socket
+        const itm::Item item = itm::parse(data);
+        // The blows' weapon: the melee one where there is a choice (the
+        // gladiator's blade over its gun, the right gauntlet over the left).
+        // The original's choice (FUN_004213a0) is not traced: guessed.
+        static constexpr uint16_t kRank[] = {0, 3, 0, 0, 1, 4, 0, 1, 2};
+        if (kRank[cls] > weaponRank) {
+            if (const std::string* w = weapons_.find(item.socketed->word38)) {
+                weapon_ = wpn::parse(readOrThrow(vfs_, *w));
+                weaponRank = kRank[cls];
+            }
+        }
+        const int layer = itm::spriteLayer(item.classId);
+        if (layer < 0) continue;
+        for (const auto& g : groups_.groups)
+            if (g.id == item.socketed->animGroup) slots[layer] = g.name;
+    }
+    layers_.clear();
+    for (const auto& name : slots)
+        if (!name.empty()) layers_.push_back(name);
 }
 
 bool Player::walkTo(double x, double y) {

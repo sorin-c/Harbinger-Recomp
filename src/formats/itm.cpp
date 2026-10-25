@@ -21,6 +21,34 @@ int spriteLayer(uint16_t classId) {
     }
 }
 
+uint16_t equipKind(const Item& item) {
+    switch (item.classId) {
+        case HumanWeapon: return 5;
+        case HumanArmor: return 1;
+        case HumanHelmet: return 3;
+        case GladiatorRanged: return 0xb;
+        case GladiatorMelee: return 0xd;
+        case GladiatorTorso: return 9;
+        case LeftGauntlet: return 0xf;
+        case RightGauntlet: return 0x11;
+        case CameraDrop: return 7;
+        case MineDrop: return 0x16;
+        case OffensiveAmplifier:
+        case DefensiveAmplifier: return 0x13;
+        case Injector:
+            // GInjectorItem_v5
+            if (!item.injector) return 0;
+            return item.injector->type == 0 ? 8 : item.injector->type == 2 ? 0x15 : 0;
+        case ModChip: {
+            // GModChipItem_v5: the target to the kind of the socket it fits.
+            static constexpr uint16_t kSocket[] = {0, 2, 4, 6, 10, 0xc, 0xe, 0x12, 0x12};
+            if (!item.modChip || item.modChip->target > 8) return 0;
+            return kSocket[item.modChip->target];
+        }
+        default: return 0;
+    }
+}
+
 namespace {
 
 Item readHeader(ByteReader& r) {
@@ -79,6 +107,21 @@ Item parse(const std::vector<uint8_t>& data) {
             }
         }
         it.socketed = std::move(s);
+    } else if (it.classId == ModChip) {
+        // GModChipItem_v3: two words, a third from 1.0, a fourth from 1.1.
+        ModChipBody m;
+        m.target = r.u16();
+        m.word38 = r.u16();
+        if (version > 1.0) m.word3a = r.u16();
+        if (version > 1.1) m.word3c = r.u16();
+        it.modChip = m;
+    } else if (it.classId == Injector) {
+        // GInjectorItem_v3: a byte and a word, another word from 1.1.
+        InjectorBody j;
+        j.type = r.u8();
+        j.word3c = r.u16();
+        if (version > 1.1) j.word40 = r.u16();
+        it.injector = j;
     } else {
         r.fail("item class not decoded yet");
     }

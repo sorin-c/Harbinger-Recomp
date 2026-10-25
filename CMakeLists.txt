@@ -68,6 +68,7 @@ add_library(harbinger_core
   src/world/walkmap.cpp
   src/world/script.cpp
   src/world/loot.cpp
+  src/world/inventory.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
 target_include_directories(harbinger_core SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/_deps/dr_libs)
@@ -115,7 +116,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-  foreach(t sqh gim core ui resources audio world movement combat)
+  foreach(t sqh gim core ui resources audio world movement combat inventory)
     add_executable(test_${t} tests/test_${t}.cpp)
     target_link_libraries(test_${t} PRIVATE harbinger_core)
     add_test(NAME ${t} COMMAND test_${t})
