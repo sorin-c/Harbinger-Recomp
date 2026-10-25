@@ -8,7 +8,7 @@
 //             [--character human|gladiator|culibine] [--no-audio] [--settings config.cfg] [--run-ms ms]
 //             [--aspect 4:3|16:9] [--size WxH]
 //             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use]
-//                                   [--inventory] [--pad udlrax] [--travel line]] [--codes level:entry,...]
+//                                   [--inventory] [--pad udlraxyb] [--travel line]] [--codes level:entry,...] [--xp n]
 //
 // Mouse, keyboard (up/down to move, left/right for sliders, Enter, Esc = back)
 // and gamepad (D-pad/stick, A, B = back) all drive the menus. In the level the
@@ -23,8 +23,11 @@
 // The HUD's CHAR button, I, C or Tab, or the pad's View / Back button open
 // the inventory. On the pad (as in Diablo III on a console) the D-pad or
 // the stick move the focus over the slots and grid, A picks up and puts
-// down, X equips or takes off, B closes. Q, a click on the health button or
-// the D-pad's up uses a health pack.
+// down, X equips or takes off, B closes. Y opens the stats panel (the
+// inventory's STATS button), where the D-pad picks a skill, A spends a bonus
+// point on it and B goes back to the inventory. Q, a click on the health
+// button or the D-pad's up uses a health pack. --xp gives the player
+// experience at the start (a testing aid).
 //
 // Options adds two rows to the original's (rebuild): the display size
 // (windows and fullscreen modes; type digits on the row for any other size)
@@ -71,7 +74,8 @@ struct Options {
     bool shoot = false;   // screenshot mode: the shoot button at 0 ms
     bool use = false;     // screenshot mode: the use button at 0 ms and every 1.5 s
     bool inventory = false;  // screenshot mode: the inventory open
-    std::string pad;         // screenshot mode: pad presses at 0 ms (u d l r = D-pad, a = A, x = X)
+    std::string pad;         // screenshot mode: pad presses at 0 ms (u d l r = D-pad, a = A, x = X, y = Y, b = B)
+    uint32_t xp = 0;         // experience given at the start (a testing aid)
     std::optional<Aspect> aspect;            // this run's aspect, over display.ini
     std::optional<std::pair<int, int>> size;  // this run's window (or the capture's) size
     uint64_t timeMs = 0, runMs = 0;
@@ -148,6 +152,7 @@ public:
         else if (opt.screen == "load") openLoad();
         else open(kStartupItf);
         if (opt.screen == "game") startGame();
+        if (world_ && opt.xp) world_->awardExperience(opt.xp, true);
     }
 
     bool running() const { return running_; }
@@ -277,12 +282,21 @@ public:
     }
     void pressPad(char c) {
         if (!hud_) return;
+        if (hud_->statsOpen()) {
+            if (c == 'u') hud_->padStatsMove(-1);
+            if (c == 'd') hud_->padStatsMove(1);
+            if (c == 'a') hud_->padStatsPress();
+            if (c == 'y' || c == 'b') hud_->setStatsOpen(false);
+            return;
+        }
         if (c == 'u') hud_->padMove(0, -1);
         if (c == 'd') hud_->padMove(0, 1);
         if (c == 'l') hud_->padMove(-1, 0);
         if (c == 'r') hud_->padMove(1, 0);
         if (c == 'a') hud_->padPress();
         if (c == 'x') hud_->padQuick();
+        if (c == 'y') hud_->toggleStats();
+        if (c == 'b') hud_->setStatsOpen(false);
     }
 
 private:
@@ -443,6 +457,18 @@ private:
                     hud_->toggleInventory();
                     break;
                 }
+                if (hud_->statsOpen()) {
+                    // The stats panel has the pad while it is open (rebuild).
+                    switch (e.gbutton.button) {
+                        case SDL_GAMEPAD_BUTTON_DPAD_UP: hud_->padStatsMove(-1); break;
+                        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: hud_->padStatsMove(1); break;
+                        case SDL_GAMEPAD_BUTTON_SOUTH: hud_->padStatsPress(); break;
+                        case SDL_GAMEPAD_BUTTON_EAST:
+                        case SDL_GAMEPAD_BUTTON_NORTH: hud_->setStatsOpen(false); break;
+                        default: break;
+                    }
+                    break;
+                }
                 if (hud_->inventoryOpen()) {
                     // The inventory has the pad while it is open (D3 on a console).
                     switch (e.gbutton.button) {
@@ -452,6 +478,7 @@ private:
                         case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: hud_->padMove(1, 0); break;
                         case SDL_GAMEPAD_BUTTON_SOUTH: hud_->padPress(); break;
                         case SDL_GAMEPAD_BUTTON_WEST: hud_->padQuick(); break;
+                        case SDL_GAMEPAD_BUTTON_NORTH: hud_->setStatsOpen(true); break;
                         case SDL_GAMEPAD_BUTTON_EAST: hud_->setInventoryOpen(false); break;
                         default: break;
                     }
@@ -588,9 +615,12 @@ private:
             world_->walkTo(mouse_.x, mouse_.y);
             lastRetarget_ = now_;
         }
-        for (const Hud::Action a : hud_->takeActions())
+        for (const Hud::Action a : hud_->takeActions()) {
             if (a == Hud::Action::UseHealthPack) world_->useHealthPack();  // the map and quest log are not rebuilt yet
-        world_->setViewCentre(hud_->viewCentreX());
+            if (a == Hud::Action::StatsSeen) world_->setLevelSeen();
+        }
+        for (const world::Skill s : hud_->takeSpentPoints()) world_->spendPoint(s);
+        world_->setViewCentre(hud_->viewCentreX(), hud_->viewCentreY());
         world_->update(nowMs);
         // The umbilical's list: open it when the shell has closed, hand the
         // pick back.
@@ -627,7 +657,10 @@ private:
             return;
         }
         const world::Player& p = world_->player();
-        hud_->update(nowMs, Hud::Vitals{p.hitPoints(), p.maxHitPoints(), p.energy(), p.maxEnergy()});
+        Hud::StatsView stats{p.stats()};
+        for (int i = 0; i < world::kSkillCount; ++i) stats.bonus[i] = p.skillBonus(world::Skill(i));
+        stats.name = playerName_;
+        hud_->update(nowMs, Hud::Vitals{p.hitPoints(), p.maxHitPoints(), p.energy(), p.maxEnergy()}, &stats);
     }
 
     void playMusic(const std::string* path) {
@@ -960,6 +993,7 @@ private:
     int gameW_ = kScreenW, gameH_ = kScreenH;
     SDL_FPoint stick_{0, 0};
     world::Character character_ = world::Character::Human;
+    std::string playerName_ = "Player";  // the character screen's name box (not editable yet)
     bool mouseHeld_ = false, steering_ = false, trigger_ = false, leftTrigger_ = false, dialogueStick_ = false;
     uint64_t lastRetarget_ = 0;
     static constexpr float kStickDeadZone = 0.25f;
@@ -1003,6 +1037,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--time") o.timeMs = std::stoull(v);
         else if (a == "--run-ms") o.runMs = std::stoull(v);
         else if (a == "--pad") o.pad = v;
+        else if (a == "--xp") o.xp = uint32_t(std::stoul(v));
         else if (a == "--travel") o.travel = std::stoi(v);
         else if (a == "--codes") {
             // level:entry pairs, comma separated.
@@ -1065,7 +1100,7 @@ Options parseArgs(int argc, char** argv) {
                                                  "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y] [--no-audio] "
                                                  "[--character human|gladiator|culibine] [--settings config.cfg] [--aspect 4:3|16:9] [--size WxH] "
                                                  "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use] "
-                                                 "[--inventory] [--pad udlrax] [--travel line] [--walk x,y;x,y...] [--pick 1234]] [--codes level:entry,...]");
+                                                 "[--inventory] [--pad udlraxyb] [--travel line] [--walk x,y;x,y...] [--pick 1234]] [--codes level:entry,...] [--xp n]");
     return o;
 }
 

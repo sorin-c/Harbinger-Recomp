@@ -99,9 +99,11 @@ render::RgbaImage renderTextBox(const BoxFonts& fonts, const std::vector<gim::Co
 
     const fnt::Font& normal = *fonts.normal;
     if (normal.lineHeight <= 0) return out;
-    // GCtrlStaticTextBox_v3: the origin, then one line per lineHeight.
-    int x = box.padX;
-    if (box.align == 0x10) x = box.padX + width;
+    // GCtrlStaticTextBox_v3: the origin, then one line per lineHeight. The
+    // padding is signed (the stats panel's bonus box has -10 across).
+    const int padX = int16_t(box.padX), padY = int16_t(box.padY);
+    int x = padX;
+    if (box.align == 0x10) x = padX + width;
     if (box.align == 0x20) x = width / 2;
     const int visible = height / normal.lineHeight;
     const auto lines = wrapText(normal, text, width);
@@ -111,7 +113,7 @@ render::RgbaImage renderTextBox(const BoxFonts& fonts, const std::vector<gim::Co
         if (!line.empty() && line[0] == '*') font = fonts.star, line.remove_prefix(1);
         if (!line.empty() && line[0] == '&') font = fonts.alt, line.remove_prefix(1);
         if (n == highlight) font = fonts.alt;
-        drawText(out, *font, palette, line, x, normal.ascent + box.padY + n * normal.lineHeight, box.align);
+        drawText(out, *font, palette, line, x, normal.ascent + padY + n * normal.lineHeight, box.align);
     }
     return out;
 }

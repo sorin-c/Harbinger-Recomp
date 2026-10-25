@@ -35,10 +35,11 @@ What exists so far:
   melee and ranged combat, player health and death, enemy AI with melee and
   ranged attacks, spawners, portals and umbilicals between levels (with
   umbilical codes and the Level Selection screen), scripted cutscenes and
-  enemy moves, gizmo use (doors, consoles), chest loot, the HUD and
-  inventory screen with full controller navigation, and NPCs, dialogue and
-  the quest state behind them (`.dlg`, `.qst`; the conversation screen with
-  mouse, keys or pad, see `docs/dialogue.md`)
+  enemy moves, gizmo use (doors, consoles), chest loot, experience and levels
+  with the stats panel, the HUD and inventory screen with full controller
+  navigation, and NPCs, dialogue and the quest state behind them (`.dlg`,
+  `.qst`; the conversation screen with mouse, keys or pad, see
+  `docs/dialogue.md`)
 
 ```
 harbinger --data "C:/Games/Harbinger"

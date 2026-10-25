@@ -33,7 +33,8 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
                      int screenH, world::Inventory::Layout inventory, uint16_t entry,
                      std::optional<world::WalkMap::Point> at)
     : assets_(assets), ren_(ren), level_(std::make_unique<world::Level>(assets.vfs(), assets.ini(), levelId)),
-      levelId_(levelId), character_(character), screenW_(screenW), screenH_(screenH), centreX_(screenW / 2.0) {
+      levelId_(levelId), character_(character), screenW_(screenW), screenH_(screenH), centreX_(screenW / 2.0),
+      centreY_(screenH / 2.0) {
     const auto& m = level_->map();
     // A new game enters at entry point 0, "Default" (FUN_004a05d0 sets
     // +0x136 = 0; FUN_00498250 looks it up).
@@ -133,8 +134,8 @@ WorldView::~WorldView() {
 }
 
 WorldView::Carried WorldView::takeCarried() {
-    return {std::move(catalog_),    std::move(inventory_), player_->hitPoints(), player_->energy(),
-            std::move(codes_),      std::move(storyFiles_), std::move(story_)};
+    return {std::move(catalog_), std::move(inventory_), player_->hitPoints(), player_->energy(), player_->stats(),
+            std::move(codes_),   std::move(storyFiles_), std::move(story_)};
 }
 
 void WorldView::carry(Carried c) {
@@ -148,6 +149,7 @@ void WorldView::carry(Carried c) {
     player_->equip(inventory_->equippedIds());
     if (const auto* w = player_->rangedWeapon()) player_->setBoltSpeed(bolts_->speedOf(*w));
     equipRev_ = inventory_->equipmentRevision();
+    if (c.stats) player_->carryStats(*c.stats);
     player_->carry(c.hitPoints, c.energy);
     if (c.codes) codes_ = std::move(c.codes);
 }
@@ -216,6 +218,31 @@ void WorldView::updateUmbilicals() {
         if (std::getenv("HARBINGER_SCRIPT_LOG"))
             std::fprintf(stderr, "%llu ms: umbilical list opens, %zu places\n", (unsigned long long)elapsedMs_,
                          menu_->size());
+    }
+}
+
+void WorldView::awardExperience(uint32_t amount, bool announce) {
+    if (amount == 0) return;
+    const uint16_t before = player_->stats().level();
+    const int levels = player_->gainExperience(amount);
+    if (announce) say(world::experienceMessage(amount), 3000);
+    if (std::getenv("HARBINGER_COMBAT_LOG"))
+        std::fprintf(stderr, "%u experience, %u in all, level %u\n", unsigned(amount),
+                     unsigned(player_->stats().experience()), unsigned(player_->stats().level()));
+    // FUN_004f00d0 for each level, then the level-up sound (FUN_004a56c0,
+    // Harbinger.ini [Paths] LevelUpSnd).
+    for (int i = 1; i <= levels; ++i) say(world::levelUpMessage(uint16_t(before + i)), 10000);
+    if (levels > 0 && sound_ && sound_->enabled()) {
+        if (!levelUpSound_) {
+            try {
+                levelUpSound_ = std::make_unique<audio::Pcm>(
+                    audio::decodeWav(assets_.read(assets_.ini().require("Paths", "LevelUpSnd"))));
+            } catch (const std::exception& ex) {
+                SDL_Log("level-up sound: %s", ex.what());
+                levelUpSound_ = std::make_unique<audio::Pcm>();
+            }
+        }
+        if (!levelUpSound_->samples.empty()) sound_->play(0x40000, *levelUpSound_);
     }
 }
 
@@ -319,10 +346,14 @@ void WorldView::runAction(const dlg::Action& a) {
             break;
         case T::ClearUmbilicals: codes_->clear(); break;
         case T::SetLevel: setLevel(a.id); break;
+        case T::GiveExp:
+            // GGiveExpEntityAction_v8: FUN_004a5310 with the message.
+            awardExperience(a.amount, true);
+            break;
         case T::QuestString: say("Quest Log updated."); break;
         case T::DisplayText: say(a.text); break;
         default:
-            // Experience and stats, trade and accounts: not rebuilt yet.
+            // Stat changes, trade and accounts: not rebuilt yet.
             if (std::getenv("HARBINGER_STORY_LOG"))
                 std::fprintf(stderr, "story: action %s not rebuilt\n", dlg::name(a.type));
             break;
@@ -377,7 +408,7 @@ void WorldView::steer(float dx, float dy) {
 }
 
 world::WalkMap::Point WorldView::mapPoint(float x, float y) const {
-    const double sx = x - centreX_ + camX_, sy = y - screenH_ / 2.0 + camY_;
+    const double sx = x - centreX_ + camX_, sy = y - centreY_ + camY_;
     return {(sx / 64.0 + sy / 32.0) / 2.0, (sy / 32.0 - sx / 64.0) / 2.0};
 }
 
@@ -392,7 +423,7 @@ int WorldView::foeAt(float x, float y) const {
     // An enemy's picture stands up from its feet: take the click as on it
     // when it falls in a box around the feet's screen point (a rebuild
     // choice, roughly a body's size).
-    const double sx = x - centreX_ + camX_, sy = y - screenH_ / 2.0 + camY_;
+    const double sx = x - centreX_ + camX_, sy = y - centreY_ + camY_;
     int best = -1;
     double bestD = 1e9;
     for (size_t i = 0; i < foes_->all().size(); ++i) {
@@ -455,7 +486,7 @@ bool WorldView::attackNearest() {
 
 const chk::GizmoRecord* WorldView::gizmoAt(float x, float y) const {
     // The front-most usable gizmo with a drawn pixel under the pointer.
-    const double sx = x - centreX_ + camX_, sy = y - screenH_ / 2.0 + camY_;
+    const double sx = x - centreX_ + camX_, sy = y - centreY_ + camY_;
     for (auto k = order_.rbegin(); k != order_.rend(); ++k) {
         if (*k >= objects_.size()) continue;
         const Object& o = objects_[*k];
@@ -524,7 +555,7 @@ const Texture* WorldView::groundItemPicture(const world::Loot::GroundItem& g, SD
 }
 
 const world::Loot::GroundItem* WorldView::itemAt(float x, float y) const {
-    const double sx = x - centreX_ + camX_, sy = y - screenH_ / 2.0 + camY_;
+    const double sx = x - centreX_ + camX_, sy = y - centreY_ + camY_;
     for (auto it = loot_->ground().rbegin(); it != loot_->ground().rend(); ++it) {
         if (!loot_->landed(*it, elapsedMs_)) continue;
         SDL_FRect src, at;
@@ -726,6 +757,17 @@ void WorldView::update(uint64_t nowMs) {
             if (log) std::fprintf(stderr, "enemy %d shoots, energy %.0f\n", s.foe, f.energy);
         }
     }
+    // Experience for every enemy that has died since the last frame
+    // (GAgentPlug_v61 / FUN_00420a00 give it when the death starts, whoever
+    // struck the blow, without a message).
+    rewarded_.resize(foes_->all().size());
+    for (size_t i = 0; i < foes_->all().size(); ++i) {
+        const auto& f = foes_->all()[i];
+        if (!f.dead || rewarded_[i]) continue;
+        rewarded_[i] = true;
+        const auto& t = level_->agentTemplate(*f.record);
+        awardExperience(world::Stats::killExperience(t.stats.size() > 8 ? t.stats[8] : 0, f.maxHitPoints), false);
+    }
     if (pendingUse_ && player_->path().empty()) {
         const auto p = level_->gizmoUsePoint(*pendingUse_);
         const double d = std::hypot(p.x - player_->x(), p.y - player_->y());
@@ -803,7 +845,7 @@ void WorldView::drawLayer(int x, int y, int layer) const {
     if (!t) return;
     const auto top = world::toScreen(x, y);
     const float left = float(std::floor(top.x - camX_ + centreX_)) - world::kTileW / 2.0f;
-    const float bottom = float(std::floor(top.y - camY_ + screenH_ / 2.0)) + world::kTileH;
+    const float bottom = float(std::floor(top.y - camY_ + centreY_)) + world::kTileH;
     if (left > screenW_ || left + float(t->w) < 0 || bottom < 0 || bottom - float(t->h) > screenH_) return;
     const SDL_FRect dst{left, bottom - float(t->h), float(t->w), float(t->h)};
     SDL_RenderTexture(ren_, t->tex, nullptr, &dst);
@@ -820,7 +862,7 @@ void WorldView::drawImage(const std::string& key, const render::RgbaImage* img, 
     const Texture& t = it->second;
     if (!t.tex) return;
     const float x = float(std::floor(left - camX_ + centreX_));
-    const float y = float(std::floor(top - camY_ + screenH_ / 2.0));
+    const float y = float(std::floor(top - camY_ + centreY_));
     if (x > screenW_ || x + float(t.w) < 0 || y > screenH_ || y + float(t.h) < 0) return;
     const SDL_FRect dst{x, y, float(t.w), float(t.h)};
     SDL_RenderTexture(ren_, t.tex, nullptr, &dst);
@@ -868,7 +910,7 @@ void WorldView::drawGroundItems() const {
         SDL_FRect src, at;
         const Texture* t = groundItemPicture(g, src, at);
         if (!t) continue;
-        at.x = float(std::floor(at.x - camX_ + centreX_)), at.y = float(std::floor(at.y - camY_ + screenH_ / 2.0));
+        at.x = float(std::floor(at.x - camX_ + centreX_)), at.y = float(std::floor(at.y - camY_ + centreY_));
         SDL_RenderTexture(ren_, t->tex, &src, &at);
     }
 }
@@ -879,7 +921,7 @@ void WorldView::drawTargetBar() const {
     const auto* f = foes_->find(player_->target());
     if (!f || f->dead || f->maxHitPoints <= 0) return;
     const auto p = world::toScreen(f->x, f->y);
-    const float left = float(std::floor(p.x - camX_ + centreX_)) - 20, top = float(std::floor(p.y - camY_ + screenH_ / 2.0)) - 96;
+    const float left = float(std::floor(p.x - camX_ + centreX_)) - 20, top = float(std::floor(p.y - camY_ + centreY_)) - 96;
     const SDL_FRect back{left - 1, top - 1, 42, 6};
     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
     SDL_RenderFillRect(ren_, &back);
@@ -913,7 +955,7 @@ void WorldView::drawBolts() const {
         const SDL_FRect src{float(k % perRow * fw), float(k / perRow * fh), float(fw), float(fh)};
         const double scale = b.sizes[0] > 0 ? b.sizes[0] : 1.0;
         const auto p = world::toScreen(t.x, t.y);
-        const float cx = float(p.x - camX_ + centreX_), cy = float(p.y - camY_ + screenH_ / 2.0 - t.z * 64.0);
+        const float cx = float(p.x - camX_ + centreX_), cy = float(p.y - camY_ + centreY_ - t.z * 64.0);
         const float w = float(fw * scale), h = float(fh * scale);
         const SDL_FRect at{cx - w / 2, cy - h / 2, w, h};
         const double angle = std::atan2((t.vx + t.vy) * 32.0, (t.vx - t.vy) * 64.0) * 180.0 / kPi;

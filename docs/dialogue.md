@@ -90,7 +90,7 @@ bubbles) and makes Torvus (instance 3) open dialog 116, then 117.
 
 ## Not rebuilt yet
 
-Experience and stat actions (plan 1c), trade and stash accounts (1d), the
+Stat actions (`GStatModAction`), trade and stash accounts (1d), the
 quest log screen (1b), group monitors, the NPC's own line when it has
 nothing to say, and how the original refuses a gift when the inventory is
 full (the rebuild drops it at the player's feet).

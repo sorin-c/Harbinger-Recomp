@@ -83,12 +83,14 @@ public:
     bool unlockCode(uint16_t level, uint16_t entry, bool gold);
     void setLevel(uint16_t level);
     // What the player takes from level to level: the inventory (with the
-    // catalogue it looks items up in), hit points and ranged energy, and
-    // the story (the quest it is on, what it has done).
+    // catalogue it looks items up in), hit points, ranged energy,
+    // experience, level and skills, and the story (the quest it is on,
+    // what it has done).
     struct Carried {
         std::unique_ptr<world::ItemCatalog> catalog;
         std::unique_ptr<world::Inventory> inventory;
         double hitPoints = 0, energy = 0;
+        std::optional<world::Stats> stats;
         std::unique_ptr<world::UmbilicalCodes> codes;
         std::unique_ptr<world::StoryFiles> storyFiles;
         std::unique_ptr<world::Story> story;
@@ -165,11 +167,19 @@ public:
     // follows the inventory's equipment slots.
     world::Inventory& inventory() { return *inventory_; }
     world::ItemCatalog& catalog() { return *catalog_; }
+    // Experience for the player (FUN_004a5310): kills give it silently;
+    // `announce` adds the "N Experience Awarded." message (GGiveExpEntityAction).
+    // A level-up adds "You've reached level N!" and plays LevelUpSnd.
+    void awardExperience(uint32_t amount, bool announce);
+    // A stats panel plus button: a bonus point into a skill.
+    bool spendPoint(world::Skill s) { return player_->spendPoint(s); }
+    void setLevelSeen() { player_->setLevelSeen(); }
     // Uses a health pack off the counter; false if there is none.
     bool useHealthPack();
     // Where on the screen the view centres (the HUD moves it while the
-    // inventory covers the right part).
-    void setViewCentre(double x) { centreX_ = x; }
+    // inventory covers the right part, and down while the stats panel
+    // covers the top left).
+    void setViewCentre(double x, double y) { centreX_ = x, centreY_ = y; }
     const world::Spawners& spawners() const { return *spawners_; }
     const world::Bolts& bolts() const { return *bolts_; }
 
@@ -216,6 +226,8 @@ private:
     std::unique_ptr<world::Loot> loot_;
     std::unique_ptr<world::Spawners> spawners_;
     std::vector<bool> wasHeld_;  // per foe, last frame
+    std::vector<bool> rewarded_;  // per foe: its experience has been given
+    std::unique_ptr<audio::Pcm> levelUpSound_;
     std::unique_ptr<world::Bolts> bolts_;
     world::EntryLookup entries_;
     std::unique_ptr<world::UmbilicalCodes> codes_;
@@ -239,7 +251,7 @@ private:
     std::deque<Message> messages_;
     mutable std::map<std::string, Texture> messageTextures_;
     int screenW_, screenH_;
-    double centreX_;
+    double centreX_, centreY_;
     double camX_ = 0, camY_ = 0;  // map screen position at the centre of the view
     uint64_t startMs_ = 0, elapsedMs_ = 0;  // animation clock, from the first update
     // GPU copies of tile images, by brush, tile id (centre tiles are cut per id).
