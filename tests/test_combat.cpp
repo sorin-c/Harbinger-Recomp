@@ -308,7 +308,8 @@ static void testEnemyFire(const char* dir) {
     chk::EntryPoint spot;
     for (size_t i = 0; i < foes.all().size() && id < 0; ++i) {
         const auto& f = foes.all()[i];
-        if (!f.shoots || level.agentTemplate(*f.record).name != "Vantir Infantry") continue;
+        // Role 1 rests in stasis (its spawner wakes it).
+        if (!f.shoots || f.mind.role == 1 || level.agentTemplate(*f.record).name != "Vantir Infantry") continue;
         for (int k = 0; k < 16 && id < 0; ++k) {
             const double a = k * 0.392699;
             const double px = f.x + 5 * std::cos(a), py = f.y + 5 * std::sin(a);
@@ -423,6 +424,58 @@ static void testEnemies(const char* dir) {
     CHECK(!foes.all()[size_t(id)].mind.engaged && foes.all()[size_t(id)].mind.policy != world::Foes::Policy::Attack);
 }
 
+// Storage again, the player out of harm's way: a walker shoots until
+// its energy runs out, then side-steps (combat state 7 -> 8, the Flank
+// policy), faces the player and fights again once its energy is back (the
+// infantry's recharge outpaces its fire, so it never runs dry). And
+// every level's rooms: each beacon lies in its own room's rectangle.
+static void testFlank(const char* dir) {
+    Vfs vfs(dir);
+    const Ini ini = Ini::fromBytes(*vfs.read("Harbinger.ini"));
+    world::Level level(vfs, ini, 3);
+    world::WalkMap walk(level);
+    world::Rng rng(11);
+    world::Foes foes(vfs, ini, level, walk, rng);
+    int id = -1;
+    double px = 0, py = 0;
+    for (size_t i = 0; i < foes.all().size() && id < 0; ++i) {
+        const auto& f = foes.all()[i];
+        if (!f.shoots || f.mind.role == 1 || level.agentTemplate(*f.record).name != "Walker M-86U") continue;
+        for (int k = 0; k < 16 && id < 0; ++k) {
+            const double a = k * 0.392699;
+            px = f.x + 3 * std::cos(a), py = f.y + 3 * std::sin(a);
+            if (!walk.passableAt(px, py, 2) || !world::lineOfFire(walk, f.x, f.y, px, py, 0.7)) continue;
+            id = int(i);
+        }
+    }
+    CHECK(id >= 0);
+    if (id < 0) return;
+    const auto& foe = foes.all()[size_t(id)];
+    world::Defender defender;
+    defender.defence = 1000;
+    bool flanked = false, attackedAfter = false;
+    int shots = 0;
+    for (uint64_t t = 10; t < 150000; t += 10) {
+        world::Quarry q;
+        q.x = px, q.y = py, q.radius = 0.3, q.visibility = 128, q.alive = true, q.defender = &defender;
+        foes.update(t, q);
+        for (const auto& s : foes.takeShots()) shots += s.foe == id;
+        if (foe.mind.policy == world::Foes::Policy::Flank) flanked = true;
+        if (flanked && foe.mind.action == world::Foes::Action::Attack) attackedAfter = true;
+    }
+    std::printf("flank: %d shots, side-stepped %s, fought again %s\n", shots, flanked ? "yes" : "no",
+                attackedAfter ? "yes" : "no");
+    CHECK(shots > 6 && flanked && attackedAfter);
+
+    int beacons = 0, inside = 0;
+    for (uint16_t lv : {2, 3, 33, 70}) {
+        world::Level l(vfs, ini, lv);
+        world::Rooms rooms(l.map(), rng);
+        for (const auto& b : l.map().beacons) ++beacons, inside += rooms.at(b.x, b.y) == b.room;
+    }
+    CHECK(beacons > 0 && inside * 100 >= beacons * 98);
+}
+
 static void testScriptedFoes(const char* dir) {
     Vfs vfs(dir);
     const auto ini = Ini::fromBytes(*vfs.read("Harbinger.ini"));
@@ -468,8 +521,13 @@ static void testScriptedFoes(const char* dir) {
         const double x0 = f.x, y0 = f.y;
         const double gx = x0 + world::facingCos(f.facing) * 2, gy = y0 + world::facingSin(f.facing) * 2;
         foes.wake(k, 0);
-        for (uint64_t t = 20; t <= 3000; t += 20) foes.update(t, nobody);
-        CHECK(std::hypot(f.x - gx, f.y - gy) < 0.6);
+        CHECK(f.mind.role == 2 && f.mind.blind);
+        double closest = 1e9;
+        for (uint64_t t = 20; t <= 3000; t += 20) {
+            foes.update(t, nobody);
+            closest = std::min(closest, std::hypot(f.x - gx, f.y - gy));
+        }
+        CHECK(closest < 0.6);
     }
 }
 
@@ -478,7 +536,7 @@ int main() {
     testArithmetic();
     testLineOfFire();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
-        testRealData(dir), testShooting(dir), testEnemyFire(dir), testEnemies(dir), testScriptedFoes(dir);
+        testRealData(dir), testShooting(dir), testEnemyFire(dir), testEnemies(dir), testFlank(dir), testScriptedFoes(dir);
     else
         std::printf("HARBINGER_DATA not set; skipping real-data checks\n");
     if (failures) std::fprintf(stderr, "%d check(s) failed\n", failures);

@@ -66,6 +66,7 @@ add_library(harbinger_core
   src/world/sprite_cache.cpp
   src/world/combat.cpp
   src/world/foes.cpp
+  src/world/rooms.cpp
   src/world/actor.cpp
   src/world/bolts.cpp
   src/world/walkmap.cpp

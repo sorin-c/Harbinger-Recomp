@@ -115,7 +115,9 @@ struct Beacon {
     std::vector<std::pair<uint16_t, uint32_t>> links;  // (beacon, cost)
 };
 
-// A room (FUN_004fad80): an id and two groups of four words, undecoded.
+// A room (FUN_004fad80): an id, four words (room+0x10, not traced), then
+// its rectangle in walk half cells (room+8..+0xe: x0, y0, width, height),
+// which FUN_004fb6e0 stamps with the id (world::Rooms).
 struct Room {
     uint16_t id = 0;
     uint16_t a[4] = {}, b[4] = {};
