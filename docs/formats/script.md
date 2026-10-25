@@ -70,7 +70,7 @@ scripts and are labelled.
 | 14 | `SwapLevels` | | | not used | 0 |
 | 15 | `Die` | | | not used | 0 |
 | 16 | `ThoughtBubble` | text, x, y, n, n, voice (0.1), wait (optional) | `0x4ff980` | a thought bubble at a screen position with a voice line, see below | 720 |
-| 17 | `Warp` | | | not used | 0 |
+| 17 | `Warp` | n | `0x4a49e0` | `Warp(0)` gives play back (game state 1); only in the portal scripts built in code (`docs/formats/gizmo.md`, "Portals") | 0 |
 | 18 | `QuitGame` | none | `0x4d5080` | end the game (the endings; likely) | 3 |
 | 19 | `SetLevel` | level | `0x501850` | go to a level (likely) | 3 |
 | 20 | `Snapshot` | on/off | `0x5024f0` | freeze the screen (guessed) | 6 |
@@ -141,8 +141,10 @@ The handlers are the `GGame_v0` switch at `0x4a4600` (game commands),
 
 The trigger scripts use only these, plus `MoveTo` and `TurnToward` on agents
 that spawners let out (levels 33 and 70). The rebuild opens spawners
-(`docs/formats/gizmo.md`, "Spawners") but skips the agent commands for now,
-and `ActivateGizmo` on a gizmo that does not take the activation is done at
+(`docs/formats/gizmo.md`, "Spawners") but skips the agent commands on them
+for now. Portals build scripts in code with `MoveTo` on the player
+(instance 0) and `Warp`, which the rebuild plays. `ActivateGizmo` on a
+gizmo that does not take the activation is done at
 once.
 
 ### The thought bubble

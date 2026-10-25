@@ -357,6 +357,16 @@ private:
             lastRetarget_ = now_;
         }
         world_->update(nowMs);
+        if (const auto change = world_->levelChange()) {
+            // A portal: the next level, with the player on its entry point
+            // (FUN_004a1d20 sets the load going).
+            const uint32_t money = world_->money();
+            auto carried = world_->carried();
+            const double hitPoints = world_->player().hitPoints(), energy = world_->player().energy();
+            level_ = change->level, entry_ = change->entry;
+            startGame();
+            world_->carry(money, std::move(carried), hitPoints, energy);
+        }
     }
 
     void playMusic(const std::string* path) {

@@ -34,6 +34,12 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     rng_.seed(uint32_t(SDL_GetTicksNS()));
     foes_ = std::make_unique<world::Foes>(assets.vfs(), assets.ini(), *level_, *walk_, rng_);
     cutscene_ = std::make_unique<Cutscene>(assets, ren, character, *level_, screenW, screenH);
+    cutscene_->setPlayer({[this](double x, double y) { player_->walkStraightOn(x, y); },
+                          [this] {
+                              player_->steer(0, 0);
+                              player_->walkTo(player_->x(), player_->y());
+                          },
+                          [this] { return !player_->path().empty(); }});
     loot_ = std::make_unique<world::Loot>(assets.vfs(), assets.ini(), character, *level_, *walk_, rng_);
     spawners_ = std::make_unique<world::Spawners>(assets.vfs(), *level_);
     bolts_ = std::make_unique<world::Bolts>(assets.vfs(), assets.ini(), *walk_, rng_);
@@ -414,7 +420,7 @@ void WorldView::update(uint64_t nowMs) {
     // The level's event triggers, and the script one of them started.
     cutscene_->update(elapsedMs_, x0, y0, player_->x(), player_->y(),
                       [&](const chk::GizmoRecord& o) { return occupied(o); });
-    if (cinematic() && !wasCinematic_) {
+    if (cinematic() && !wasCinematic_ && !cutscene_->portalMode()) {
         // Rebuild choice: the player stops where it stands for the cutscene.
         pendingUse_ = nullptr;
         player_->steer(0, 0);

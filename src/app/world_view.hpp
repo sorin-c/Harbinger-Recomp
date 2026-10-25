@@ -51,6 +51,15 @@ public:
     bool clickBubble(float x, float y) { return cutscene_->click(x, y); }
     bool closeBubble() { return cutscene_->dismiss(); }
     const Cutscene& cutscene() const { return *cutscene_; }
+    // Set once the player has walked into a portal: the level and entry
+    // point to load next.
+    const std::optional<Cutscene::LevelChange>& levelChange() const { return cutscene_->levelChange(); }
+    // What the player carries from level to level (a stand-in until the
+    // inventory is rebuilt).
+    void carry(uint32_t money, std::vector<uint16_t> carried, double hitPoints, double energy) {
+        money_ = money, carried_ = std::move(carried);
+        player_->carry(hitPoints, energy);
+    }
 
     // Direct control from a stick or keys: walk towards screen direction
     // (dx, dy) (any length; 0, 0 stops).
