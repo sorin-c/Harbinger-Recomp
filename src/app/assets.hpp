@@ -51,6 +51,8 @@ public:
 
     const fnt::Font& font(uint16_t id);
     itm::Item item(uint16_t id);
+    // The common header only, for any class (a dialog's portrait).
+    itm::Item itemHeader(uint16_t id);
     std::string itemImagePath(uint16_t id);
     std::string cursorPath(uint16_t id);
     // sound.mgr id -> path, or nullptr.

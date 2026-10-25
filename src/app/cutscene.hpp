@@ -53,6 +53,12 @@ public:
     // umbilical pads): the hook gets the gizmo and the trigger's id.
     using GizmoHook = std::function<void(const chk::GizmoRecord&, uint16_t trigger, uint64_t nowMs)>;
     void setGizmoHook(GizmoHook hook) { gizmoHook_ = std::move(hook); }
+    // Told the id of each event trigger that fires (the story's Trigger
+    // Fired event).
+    void setTriggerFired(std::function<void(uint16_t trigger)> fn) { triggerFired_ = std::move(fn); }
+    // GLaunchScriptEntityAction (FUN_004a45c0): starts script `id` as a
+    // trigger would, replacing any that is running. False if it does not load.
+    bool launch(uint16_t id);
 
     using Occupied = std::function<bool(const chk::GizmoRecord&)>;
     // Once a frame, after the player has moved from (x0, y0) to (x1, y1):
@@ -131,6 +137,7 @@ private:
     PlayerControl player_;
     GizmoHook gizmoHook_;
     AgentControl agents_;
+    std::function<void(uint16_t)> triggerFired_;
     std::map<uint16_t, uint8_t> portalPhases_;  // portal instance -> plug+0x100
     bool portalMode_ = false;                   // GGame+0x43c = 8
     std::optional<LevelChange> levelChange_;

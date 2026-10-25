@@ -87,6 +87,14 @@ void Cutscene::fire(const chk::EventTrigger& t, uint64_t nowMs) {
         if (const chk::GizmoRecord* g = level_.gizmoByInstance(instance)) level_.useGizmo(*g, nowMs, *occupied_);
     if (t.script)
         if (auto s = script(t.script)) runner_.start(std::move(s));
+    if (triggerFired_) triggerFired_(t.id);
+}
+
+bool Cutscene::launch(uint16_t id) {
+    auto s = script(id);
+    if (!s) return false;
+    runner_.start(std::move(s));
+    return true;
 }
 
 void Cutscene::fire(const chk::GizmoTrigger& t, uint64_t nowMs) {

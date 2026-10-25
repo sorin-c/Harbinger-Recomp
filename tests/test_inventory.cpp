@@ -156,6 +156,25 @@ void testAdd() {
     CHECK(k >= 0);
 }
 
+void testStoryAsks() {
+    // What dialogues and quests ask of the inventory: an item in the grid
+    // (FUN_004cf9e0, not the equipment), money given and taken
+    // (FUN_004ee620 takes nothing unless there is enough).
+    const auto m = items();
+    Inventory inv(humanLayout(), [&](uint16_t id) { return m.count(id) ? &m.at(id) : nullptr; });
+    CHECK(inv.add({1, {}}) == Inventory::Added::Equipped);
+    CHECK(!inv.inGrid(1) && !inv.removeFromGrid(1));
+    CHECK(inv.add({8, {}}) == Inventory::Added::Grid && inv.add({8, {}}) == Inventory::Added::Grid);
+    CHECK(inv.inGrid(8) && inv.grid().size() == 2);
+    const auto first = inv.grid().front();
+    CHECK(inv.removeFromGrid(8) && inv.grid().size() == 1 && inv.inGrid(8));
+    CHECK(inv.grid().front().x != first.x || inv.grid().front().y != first.y);  // the top-left one went
+    CHECK(inv.removeFromGrid(8) && !inv.inGrid(8));
+    inv.addMoney(50);
+    CHECK(inv.money() == 50 && !inv.spend(60) && inv.money() == 50 && inv.spend(20) && inv.money() == 30);
+    CHECK(inv.addHealthPack() && inv.healthPacks() == 6);
+}
+
 void testRealData(const char* dir) {
     Vfs vfs(dir);
     const auto items = mgr::parse(*vfs.read("res\\common\\managers\\item.mgr"));
@@ -239,6 +258,7 @@ int main() {
     testGrid();
     testClicks();
     testAdd();
+    testStoryAsks();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
         testRealData(dir);
     else

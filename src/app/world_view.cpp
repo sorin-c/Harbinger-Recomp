@@ -8,16 +8,32 @@
 #include <queue>
 #include <string>
 
+#include "ui/text.hpp"
 #include "world/motion.hpp"
 
 namespace harbinger::app {
+
+namespace {
+
+// The characters' health items (item.mgr: HumHealth.itm, GladHealth.itm,
+// CHealth.itm).
+constexpr uint16_t kMoneyItem = 12;  // item.mgr: money.itm
+
+uint16_t healthItem(world::Character c) {
+    switch (c) {
+        case world::Character::Gladiator: return 8;
+        case world::Character::Culibine: return 51;
+        default: return 7;
+    }
+}
+
+}  // namespace
 
 WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world::Character character, int screenW,
                      int screenH, world::Inventory::Layout inventory, uint16_t entry,
                      std::optional<world::WalkMap::Point> at)
     : assets_(assets), ren_(ren), level_(std::make_unique<world::Level>(assets.vfs(), assets.ini(), levelId)),
-      levelId_(levelId),
-      screenW_(screenW), screenH_(screenH), centreX_(screenW / 2.0) {
+      levelId_(levelId), character_(character), screenW_(screenW), screenH_(screenH), centreX_(screenW / 2.0) {
     const auto& m = level_->map();
     // A new game enters at entry point 0, "Default" (FUN_004a05d0 sets
     // +0x136 = 0; FUN_00498250 looks it up).
@@ -68,6 +84,13 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     loot_ = std::make_unique<world::Loot>(assets.vfs(), assets.ini(), character, *level_, *walk_, rng_);
     spawners_ = std::make_unique<world::Spawners>(assets.vfs(), *level_);
     bolts_ = std::make_unique<world::Bolts>(assets.vfs(), assets.ini(), *walk_, rng_);
+    cutscene_->setTriggerFired(
+        [this](uint16_t id) { story_->event(qst::EntityKind::Trigger, qst::Fired, id); });
+    // The character's quests and dialogs; the game starts with the first
+    // quest of its index, at the first update (FUN_004f6a10).
+    storyFiles_ = std::make_unique<world::StoryFiles>(assets.vfs(), assets.ini(), world::characterSection(character));
+    story_ = std::make_unique<world::Story>(world::Story::Host{}, uint16_t(character));
+    bindStory();
     if (const auto* w = player_->rangedWeapon()) player_->setBoltSpeed(bolts_->speedOf(*w));
     for (size_t i = 0; i < foes_->all().size(); ++i)
         if (const auto& r = foes_->all()[i].ranged) foes_->setBoltSpeed(int(i), bolts_->speedOf(*r));
@@ -104,17 +127,24 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
 }
 
 WorldView::~WorldView() {
+    for (auto& [key, t] : messageTextures_) SDL_DestroyTexture(t.tex);
     for (auto& [key, t] : tiles_) SDL_DestroyTexture(t.tex);
     for (auto& [key, t] : objectTextures_) SDL_DestroyTexture(t.tex);
 }
 
 WorldView::Carried WorldView::takeCarried() {
-    return {std::move(catalog_), std::move(inventory_), player_->hitPoints(), player_->energy(), std::move(codes_)};
+    return {std::move(catalog_),    std::move(inventory_), player_->hitPoints(), player_->energy(),
+            std::move(codes_),      std::move(storyFiles_), std::move(story_)};
 }
 
 void WorldView::carry(Carried c) {
     catalog_ = std::move(c.catalog);
     inventory_ = std::move(c.inventory);
+    if (c.story && c.storyFiles) {
+        storyFiles_ = std::move(c.storyFiles);
+        story_ = std::move(c.story);
+        bindStory();
+    }
     player_->equip(inventory_->equippedIds());
     if (const auto* w = player_->rangedWeapon()) player_->setBoltSpeed(bolts_->speedOf(*w));
     equipRev_ = inventory_->equipmentRevision();
@@ -199,9 +229,148 @@ bool WorldView::useHealthPack() {
     return true;
 }
 
+void WorldView::bindStory() {
+    world::Story::Host host;
+    storyFiles_->attach(host);
+    host.run = [this](const dlg::Action& a) { runAction(a); };
+    host.hasItem = [this](uint16_t id) { return inventory_->inGrid(id); };
+    host.money = [this] { return inventory_->money(); };
+    host.level = [this] { return levelId_; };
+    host.random = [this] { return rng_.next(); };
+    story_->setHost(std::move(host));
+    if (std::getenv("HARBINGER_STORY_LOG"))
+        story_->trace = [](const std::string& s) { std::fprintf(stderr, "story: %s\n", s.c_str()); };
+}
+
+std::string WorldView::itemName(uint16_t id) const {
+    const world::ItemInfo* info = catalog_->info(id);
+    return info ? info->name : "item " + std::to_string(id);
+}
+
+void WorldView::say(const std::string& text, uint64_t forMs) {
+    // FUN_004e4520: the newest goes first; past the list's length the
+    // oldest is dropped.
+    messages_.push_front({text, forMs ? elapsedMs_ + forMs : 0});
+    while (messages_.size() > kMaxMessages) messages_.pop_back();
+    if (std::getenv("HARBINGER_STORY_LOG")) std::fprintf(stderr, "message: %s\n", text.c_str());
+}
+
+void WorldView::give(uint16_t item, uint32_t amount) {
+    // Into the inventory, which tells the quests (GInventory_v1: event 9
+    // with the item's id). With no room the rebuild drops it at the
+    // player's feet (how the pick-up refuses is not read).
+    if (inventory_->add({item, {}}, amount) == world::Inventory::Added::NoRoom) {
+        loot_->place({item, amount}, player_->x(), player_->y(), elapsedMs_);
+        return;
+    }
+    story_->event(qst::EntityKind::Player, qst::Picked, item);
+}
+
+void WorldView::runAction(const dlg::Action& a) {
+    // The entity actions' slot 8 (docs/dialogue.md). The story keeps the
+    // quest, the dialogs and the quest log itself.
+    using T = dlg::ActionType;
+    switch (a.type) {
+        case T::GiveItem:
+            // GGiveItemEntityAction_v8 -> FUN_00489090: the message, then the
+            // player picks the item up (its slot 0xb8).
+            say("Player received " + itemName(a.id));
+            give(a.id, 0);
+            break;
+        case T::TakeItem:
+            // GTakeItemEntityAction_v8: only if it is in the grid.
+            if (inventory_->inGrid(a.id)) {
+                say("Player lost " + itemName(a.id));
+                inventory_->removeFromGrid(a.id);
+            }
+            break;
+        case T::GiveMoney:
+            // GGiveMoneyEntityAction_v8: a money item (money.itm) of that
+            // amount, picked up the same way. The message names the item
+            // (its slot 0x14); "N Uan" is the rebuild's guess at that name.
+            say("Player received " + std::to_string(a.id) + " Uan");
+            give(kMoneyItem, a.id);
+            break;
+        case T::TakeMoney:
+            // GTakeMoneyEntityAction_v8: nothing unless there is that much.
+            if (inventory_->spend(a.id)) say("Player lost " + std::to_string(a.id) + " Uan");
+            break;
+        case T::GiveHealth: {
+            // GGiveHealthEntityAction_v8: `id` of the character's health
+            // item (the player's slot 0x1b8 names its class; FUN_004d9b50
+            // makes the first item of it), one message for them all.
+            const uint16_t pack = healthItem(character_);
+            for (uint16_t i = 0; i < a.id; ++i) {
+                if (i == 0) say("Player received " + itemName(pack));
+                give(pack, 0);
+            }
+            break;
+        }
+        case T::LaunchScript: cutscene_->launch(a.id); break;
+        case T::ActivateGizmo:
+            // FUN_004a28e0: the gizmo with that instance, as a trigger's.
+            if (const chk::GizmoRecord* g = level_->gizmoByInstance(a.id))
+                level_->useGizmo(*g, elapsedMs_, [&](const chk::GizmoRecord& o) { return occupied(o); });
+            break;
+        case T::UnlockUmbilical:
+            // GUnlockUmbEntityAction_v8: the message only for a new code,
+            // and only when the action asks for it.
+            if (unlockCode(a.id, a.entry, a.gold) && a.announce) say("Player received umbilical code.");
+            break;
+        case T::ClearUmbilicals: codes_->clear(); break;
+        case T::SetLevel: setLevel(a.id); break;
+        case T::QuestString: say("Quest Log updated."); break;
+        case T::DisplayText: say(a.text); break;
+        default:
+            // Experience and stats, trade and accounts: not rebuilt yet.
+            if (std::getenv("HARBINGER_STORY_LOG"))
+                std::fprintf(stderr, "story: action %s not rebuilt\n", dlg::name(a.type));
+            break;
+    }
+}
+
+const chk::AgentRecord* WorldView::npcAt(float x, float y) const {
+    // The front-most NPC with a drawn pixel under the pointer.
+    const double sx = x - centreX_ + camX_, sy = y - screenH_ / 2.0 + camY_;
+    for (auto k = order_.rbegin(); k != order_.rend(); ++k) {
+        if (*k >= objects_.size() || !objects_[*k].agent) continue;
+        const chk::AgentRecord& a = *objects_[*k].agent;
+        if (!level_->agentTemplate(a).isNpc()) continue;
+        const Sprite s = agentSprite(&a);
+        if (!s.image) continue;
+        const int u = int(std::floor(sx)) - s.left, v = int(std::floor(sy)) - s.top;
+        if (u < 0 || v < 0 || u >= s.image->width || v >= s.image->height) continue;
+        if ((s.image->pixels[size_t(v) * size_t(s.image->width) + size_t(u)] >> 24) > 0x40) return &a;
+    }
+    return nullptr;
+}
+
+void WorldView::approachNpc(const chk::AgentRecord& a) {
+    // Walk to the passable half cell nearest the NPC on the player's side
+    // (a rebuild choice, like a gizmo's use point).
+    const auto at = foes_->position(a);
+    const int px = int(std::floor(at.x * 2)), py = int(std::floor(at.y * 2));
+    double best = 1e9;
+    world::WalkMap::Point to{player_->x(), player_->y()};
+    for (int dx = -4; dx <= 4; ++dx)
+        for (int dy = -4; dy <= 4; ++dy) {
+            const int sx = px + dx, sy = py + dy;
+            if (!walk_->passable(sx, sy, player_->limit())) continue;
+            const double cx = (sx + 0.5) / 2.0, cy = (sy + 0.5) / 2.0;
+            const double d = std::hypot(cx - at.x, cy - at.y);
+            if (d < 0.75 || d > kTalkReach) continue;
+            const double score = d + 0.25 * std::hypot(cx - player_->x(), cy - player_->y());
+            if (score < best) best = score, to = {cx, cy};
+        }
+    player_->walkTo(to.x, to.y);
+    pendingTalk_ = &a;
+    pendingUse_ = nullptr;
+    pendingPickup_ = 0;
+}
+
 void WorldView::steer(float dx, float dy) {
     if (locked()) return;
-    if (dx != 0 || dy != 0) pendingUse_ = nullptr, pendingPickup_ = 0;
+    if (dx != 0 || dy != 0) pendingUse_ = nullptr, pendingPickup_ = 0, pendingTalk_ = nullptr;
     // A screen direction to a map one: invert screen = ((x - y) * 64, (x + y) * 32).
     const double mx = dx / 64.0 + dy / 32.0, my = dy / 32.0 - dx / 64.0;
     player_->steer(mx, my);
@@ -214,7 +383,7 @@ world::WalkMap::Point WorldView::mapPoint(float x, float y) const {
 
 void WorldView::walkTo(float x, float y) {
     if (locked()) return;
-    pendingUse_ = nullptr, pendingPickup_ = 0;
+    pendingUse_ = nullptr, pendingPickup_ = 0, pendingTalk_ = nullptr;
     const auto p = mapPoint(x, y);
     player_->walkTo(p.x, p.y);
 }
@@ -243,7 +412,7 @@ bool WorldView::attackAt(float x, float y) {
     const int best = foeAt(x, y);
     if (best < 0) return false;
     const auto& f = foes_->all()[size_t(best)];
-    pendingUse_ = nullptr, pendingPickup_ = 0;
+    pendingUse_ = nullptr, pendingPickup_ = 0, pendingTalk_ = nullptr;
     player_->attack(best, f.x, f.y);
     return true;
 }
@@ -253,7 +422,7 @@ bool WorldView::shootAt(float x, float y) {
     const int best = foeAt(x, y);
     if (best < 0) return false;
     const auto& f = foes_->all()[size_t(best)];
-    pendingUse_ = nullptr, pendingPickup_ = 0;
+    pendingUse_ = nullptr, pendingPickup_ = 0, pendingTalk_ = nullptr;
     player_->shoot(best, f.x, f.y);
     return true;
 }
@@ -263,7 +432,7 @@ bool WorldView::shootNearest() {
     const int id = foes_->nearest(player_->x(), player_->y(), world::Player::kShootRange, player_->facing());
     if (id < 0) return false;
     const auto& f = foes_->all()[size_t(id)];
-    pendingUse_ = nullptr, pendingPickup_ = 0;
+    pendingUse_ = nullptr, pendingPickup_ = 0, pendingTalk_ = nullptr;
     player_->shoot(id, f.x, f.y);
     return true;
 }
@@ -279,7 +448,7 @@ bool WorldView::attackNearest() {
     const int id = foes_->nearest(player_->x(), player_->y(), 4.0, player_->facing());
     if (id < 0) return false;
     const auto& f = foes_->all()[size_t(id)];
-    pendingUse_ = nullptr, pendingPickup_ = 0;
+    pendingUse_ = nullptr, pendingPickup_ = 0, pendingTalk_ = nullptr;
     player_->attack(id, f.x, f.y);
     return true;
 }
@@ -324,12 +493,14 @@ void WorldView::approach(const chk::GizmoRecord& g) {
     player_->walkTo(to.x, to.y);
     pendingUse_ = &g;
     pendingPickup_ = 0;
+    pendingTalk_ = nullptr;
 }
 
 void WorldView::approachItem(const world::Loot::GroundItem& g) {
     player_->walkTo(g.x, g.y);
     pendingPickup_ = g.id;
     pendingUse_ = nullptr;
+    pendingTalk_ = nullptr;
 }
 
 const Texture* WorldView::groundItemPicture(const world::Loot::GroundItem& g, SDL_FRect& src, SDL_FRect& at) const {
@@ -369,6 +540,10 @@ bool WorldView::useAt(float x, float y) {
         approachItem(*item);
         return true;
     }
+    if (const auto* npc = npcAt(x, y)) {
+        approachNpc(*npc);
+        return true;
+    }
     const chk::GizmoRecord* g = gizmoAt(x, y);
     if (!g) return false;
     approach(*g);
@@ -380,6 +555,20 @@ bool WorldView::useNearest() {
     if (const auto* item = loot_->nearest(player_->x(), player_->y(), kUseRange, elapsedMs_)) {
         approachItem(*item);
         return true;
+    }
+    {
+        const chk::AgentRecord* best = nullptr;
+        double bestD = kUseRange;
+        for (const auto& a : level_->map().agents) {
+            if (!level_->agentVisible(a) || !level_->agentTemplate(a).isNpc()) continue;
+            const auto at = foes_->position(a);
+            const double d = std::hypot(at.x - player_->x(), at.y - player_->y());
+            if (d <= bestD) bestD = d, best = &a;
+        }
+        if (best) {
+            approachNpc(*best);
+            return true;
+        }
     }
     const chk::GizmoRecord* best = nullptr;
     double bestD = kUseRange * kUseRange;
@@ -418,13 +607,16 @@ bool WorldView::occupied(const chk::GizmoRecord& g) const {
 
 void WorldView::update(uint64_t nowMs) {
     if (!startMs_) startMs_ = nowMs;
-    if (menu_ || travel_) {
+    if (menu_ || travel_ || talking()) {
         // The umbilical list stops the game (FUN_004a1bb0 sets the pause
-        // flag at DAT_005847dc), so its clock does not move.
+        // flag at DAT_005847dc), so its clock does not move; so does a
+        // conversation (a rebuild choice).
         startMs_ = nowMs - elapsedMs_;
         return;
     }
     elapsedMs_ = nowMs - startMs_;
+    if (!story_->begun()) story_->begin(storyFiles_->firstQuest());
+    while (!messages_.empty() && messages_.back().until && messages_.back().until <= elapsedMs_) messages_.pop_back();
     // Gizmos first: a door that has just opened can be walked through.
     for (const chk::GizmoRecord* g : level_->update(elapsedMs_)) walk_->repaint(*level_, *g);
     loot_->update(elapsedMs_);
@@ -520,6 +712,13 @@ void WorldView::update(uint64_t nowMs) {
                 std::fprintf(stderr, "enemy %d blow: roll %d %s, %d damage, player %.0f left\n", h.foe, h.strike.roll,
                              h.strike.hit ? "hit" : "miss", h.strike.damage, player_->hitPoints());
         }
+        // The quests hear of each enemy that dies (event 0 on its agent).
+        wasDead_.resize(foes_->all().size());
+        for (size_t i = 0; i < foes_->all().size(); ++i) {
+            const auto& f = foes_->all()[i];
+            if (f.dead && !wasDead_[i]) story_->event(qst::EntityKind::Agent, qst::Died, f.record->instance);
+            wasDead_[i] = f.dead;
+        }
         for (const auto& s : foes_->takeShots()) {
             const auto& f = foes_->all()[size_t(s.foe)];
             if (bolts_->fire(s.foe, s.x, s.y, s.z, s.heading, *f.ranged, f.rating, elapsedMs_))
@@ -542,9 +741,23 @@ void WorldView::update(uint64_t nowMs) {
             if (std::hypot(g->x - player_->x(), g->y - player_->y()) <= kUseReach) {
                 world::Inventory trial = *inventory_;
                 if (trial.add({g->drop.item, {}}, g->drop.amount) != world::Inventory::Added::NoRoom)
-                    if (const auto d = loot_->take(pendingPickup_)) inventory_->add({d->item, {}}, d->amount);
+                    if (const auto d = loot_->take(pendingPickup_)) {
+                        inventory_->add({d->item, {}}, d->amount);
+                        // The player picked up an item (event 9 with its id).
+                        story_->event(qst::EntityKind::Player, qst::Picked, d->item);
+                    }
             }
         pendingPickup_ = 0;
+    }
+    if (pendingTalk_ && player_->path().empty()) {
+        // GCulibineNPCPlug_v76 once the player has walked up: the NPC's
+        // dialog for the quest opens.
+        const auto at = foes_->position(*pendingTalk_);
+        if (std::hypot(at.x - player_->x(), at.y - player_->y()) <= kTalkReach + 0.5) {
+            player_->steer(0, 0);
+            story_->talk(pendingTalk_->instance);
+        }
+        pendingTalk_ = nullptr;
     }
     if (inventory_->equipmentRevision() != equipRev_) {
         equipRev_ = inventory_->equipmentRevision();
@@ -840,6 +1053,39 @@ void WorldView::draw() const {
     drawTargetBar();
     drawHealth();
     cutscene_->draw();
+    drawMessages();
+}
+
+void WorldView::drawMessages() const {
+    // Where and in which font the original draws the list (game+0xb4) is
+    // not read: the rebuild puts the lines centred along the top of the
+    // view, newest at the top, in the thought bubbles' font 7, coloured
+    // through the dialogue screen's palette.
+    if (messages_.empty()) return;
+    const fnt::Font& font = assets_.font(7);
+    const auto& palette = assets_.image("res\\Common\\interface\\Dialog\\Screen.tga").palette;
+    float y = 8 + (cinematic() ? float(Cutscene::kBarHeight) : 0.0f);
+    for (const auto& m : messages_) {
+        auto it = messageTextures_.find(m.text);
+        if (it == messageTextures_.end()) {
+            const ui::TextMetrics tm = ui::measure(font, m.text);
+            if (messageTextures_.size() > 64) {
+                for (auto& [key, t] : messageTextures_) SDL_DestroyTexture(t.tex);
+                messageTextures_.clear();
+            }
+            render::RgbaImage img;
+            img.width = tm.width + 4, img.height = font.lineHeight + 4;
+            img.pixels.assign(size_t(img.width) * size_t(img.height), 0);
+            ui::drawText(img, font, palette, m.text, 2, 2 + tm.ascent, 0);
+            it = messageTextures_.emplace(m.text, assets_.upload(img.pixels, img.width, img.height)).first;
+        }
+        const Texture& t = it->second;
+        if (t.tex) {
+            const SDL_FRect dst{float(std::floor((screenW_ - t.w) / 2.0)), y, float(t.w), float(t.h)};
+            SDL_RenderTexture(ren_, t.tex, nullptr, &dst);
+        }
+        y += float(font.lineHeight + 2);
+    }
 }
 
 }  // namespace harbinger::app

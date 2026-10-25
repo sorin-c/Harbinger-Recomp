@@ -20,6 +20,8 @@ add_library(harbinger_formats
   src/formats/agt.cpp
   src/formats/anm.cpp
   src/formats/gsc.cpp
+  src/formats/dlg.cpp
+  src/formats/qst.cpp
   src/formats/gig.cpp
   src/formats/fnt.cpp
   src/formats/gim.cpp
@@ -79,6 +81,7 @@ add_library(harbinger_core
   src/world/spawners.cpp
   src/world/portal.cpp
   src/world/umbilical.cpp
+  src/world/story.cpp
 )
 target_link_libraries(harbinger_core PUBLIC harbinger_formats)
 target_include_directories(harbinger_core SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/_deps/dr_libs)
@@ -110,7 +113,7 @@ if(HARBINGER_BUILD_APPS)
   endif()
 
   add_executable(harbinger src/app/harbinger.cpp src/app/assets.cpp src/app/screen.cpp src/app/sound.cpp
-    src/app/world_view.cpp src/app/cutscene.cpp src/app/hud.cpp src/app/level_select.cpp)
+    src/app/world_view.cpp src/app/cutscene.cpp src/app/hud.cpp src/app/level_select.cpp src/app/dialogue.cpp)
   target_link_libraries(harbinger PRIVATE harbinger_core SDL3::SDL3)
   target_compile_options(harbinger PRIVATE ${HARBINGER_WARNINGS})
   if(WIN32)
@@ -126,7 +129,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-  foreach(t sqh gim core ui resources audio world movement combat inventory)
+  foreach(t sqh gim core ui resources audio world movement combat inventory story)
     add_executable(test_${t} tests/test_${t}.cpp)
     target_link_libraries(test_${t} PRIVATE harbinger_core)
     add_test(NAME ${t} COMMAND test_${t})

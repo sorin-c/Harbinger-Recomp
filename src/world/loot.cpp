@@ -153,6 +153,16 @@ void Loot::drop(const chk::GizmoRecord& g, const ChestContents& c, uint64_t nowM
     }
 }
 
+void Loot::place(const Drop& d, double x, double y, uint64_t nowMs) {
+    GroundItem gi;
+    gi.id = nextId_++;
+    gi.drop = d;
+    gi.x = x, gi.y = y;
+    gi.showMs = nowMs;
+    gi.item = item(d.item);
+    ground_.push_back(gi);
+}
+
 const Loot::GroundItem* Loot::find(uint32_t id) const {
     for (const auto& g : ground_)
         if (g.id == id) return &g;

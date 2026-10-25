@@ -42,6 +42,7 @@
 #include <string>
 
 #include "app/assets.hpp"
+#include "app/dialogue.hpp"
 #include "app/hud.hpp"
 #include "app/screen.hpp"
 #include "app/sound.hpp"
@@ -76,6 +77,8 @@ struct Options {
     uint64_t timeMs = 0, runMs = 0;
     std::optional<SDL_FPoint> mouse, click, stick;  // screenshot mode: pointer, a click at 0 ms, a held stick
     std::optional<SDL_FPoint> at;  // the player's start, map cells (a testing aid)
+    std::vector<SDL_FPoint> walk;  // screenshot mode: map points to walk to, one after another
+    std::string pick;                // screenshot mode: responses to pick (digits from 1), 1 s apart while talking
     world::Character character = world::Character::Human;
     // Umbilical codes to start with, "level:entry,..." (a testing aid until
     // dialogue hands them out).
@@ -232,6 +235,7 @@ public:
             world_->draw();
             hud_->draw(ren_);
             select_->draw(ren_);
+            if (world_->talking()) dialogue_->draw(ren_);
         } else {
             screen_->draw(ren_);
         }
@@ -260,6 +264,14 @@ public:
         if (world_ && !world_->closeBubble()) world_->useNearest();
     }
     void holdStick(SDL_FPoint v) { stick_ = v; }
+    void walkWorld(SDL_FPoint p) {
+        if (world_) world_->walkToCell(p.x, p.y);
+    }
+    bool walking() const { return world_ && (!world_->player().path().empty() || world_->cinematic()); }
+    bool talking() const { return world_ && world_->talking(); }
+    void pickWorld(size_t i) {
+        if (talking()) pickResponse(i);
+    }
     void openInventory() {
         if (hud_) hud_->setInventoryOpen(true);
     }
@@ -289,6 +301,10 @@ private:
         hud_->attach(&world_->inventory(), &world_->catalog());
         select_ = std::make_unique<LevelSelect>(assets_, w, h);
         for (const auto& [l, e] : startCodes_) world_->unlockCode(l, e, false);
+        dialogue_ = std::make_unique<Dialogue>(assets_, w, h, [this](int slot, uint16_t id, bool restart) {
+            if (!sound_) return;
+            if (const audio::Pcm* pcm = assets_.sound(id)) sound_->play(slot, *pcm, restart);
+        });
         SDL_SetRenderLogicalPresentation(ren_, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
         gameW_ = w, gameH_ = h;
         mouse_ = {w / 2.0f, h / 2.0f};
@@ -298,6 +314,7 @@ private:
     }
     void endGame() {
         select_.reset();
+        dialogue_.reset();
         hud_.reset();
         world_.reset();
         if (sound_) playMusic(introMusic_ ? &*introMusic_ : nullptr);
@@ -360,6 +377,7 @@ private:
             mouseHeld_ = false;
             return startGame();
         }
+        if (world_->talking()) return handleDialogue(e);
         if (select_->isOpen()) return handleSelect(e);
         switch (e.type) {
             case SDL_EVENT_QUIT: running_ = false; break;
@@ -471,7 +489,83 @@ private:
         }
     }
 
+    // A conversation has the mouse, keys and pad while it is open
+    // (rebuild controls besides the mouse: up / down or the D-pad move
+    // along the responses, Enter, Space, E or A picks, 1-4 pick directly,
+    // Page Up / Down, the wheel or the shoulders scroll, Escape or B close).
+    void handleDialogue(const SDL_Event& e) {
+        mouseHeld_ = false;
+        switch (e.type) {
+            case SDL_EVENT_QUIT: running_ = false; break;
+            case SDL_EVENT_GAMEPAD_ADDED: SDL_OpenGamepad(e.gdevice.which); break;
+            case SDL_EVENT_MOUSE_MOTION:
+                mouse_ = {e.motion.x, e.motion.y};
+                showCursor_ = true;
+                dialogue_->pointerMove(mouse_.x, mouse_.y);
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (e.button.button == (settings_.swapMouse ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT)) {
+                    mouse_ = {e.button.x, e.button.y};
+                    showCursor_ = true;
+                    if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) dialogue_->pointerDown(mouse_.x, mouse_.y);
+                    else dialogue_->pointerUp(mouse_.x, mouse_.y);
+                }
+                break;
+            case SDL_EVENT_MOUSE_WHEEL: dialogue_->wheel(e.wheel.y > 0 ? -1 : e.wheel.y < 0 ? 1 : 0); break;
+            case SDL_EVENT_KEY_DOWN:
+                if (e.key.key == SDLK_ESCAPE) world_->story().close();
+                else if (e.key.key == SDLK_UP || e.key.key == SDLK_W) dialogue_->moveFocus(-1);
+                else if (e.key.key == SDLK_DOWN || e.key.key == SDLK_S || e.key.key == SDLK_TAB) dialogue_->moveFocus(1);
+                else if (e.key.key == SDLK_PAGEUP) dialogue_->scroll(-4);
+                else if (e.key.key == SDLK_PAGEDOWN) dialogue_->scroll(4);
+                else if ((e.key.key == SDLK_RETURN || e.key.key == SDLK_SPACE || e.key.key == SDLK_E) && !e.key.repeat)
+                    dialogue_->activateFocus();
+                else if (e.key.key >= SDLK_1 && e.key.key <= SDLK_4 && !e.key.repeat)
+                    pickResponse(size_t(e.key.key - SDLK_1));
+                break;
+            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                showCursor_ = false;
+                switch (e.gbutton.button) {
+                    case SDL_GAMEPAD_BUTTON_DPAD_UP: dialogue_->moveFocus(-1); break;
+                    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: dialogue_->moveFocus(1); break;
+                    case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: dialogue_->scroll(-4); break;
+                    case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: dialogue_->scroll(4); break;
+                    case SDL_GAMEPAD_BUTTON_SOUTH: dialogue_->activateFocus(); break;
+                    case SDL_GAMEPAD_BUTTON_EAST: world_->story().close(); break;
+                    default: break;
+                }
+                break;
+            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+                if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) stick_.x = e.gaxis.value / 32767.0f;
+                if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
+                    stick_.y = e.gaxis.value / 32767.0f;
+                    // The stick steps the focus once per push.
+                    const int dir = e.gaxis.value > 16000 ? 1 : e.gaxis.value < -16000 ? -1 : 0;
+                    if (dir && !dialogueStick_) dialogue_->moveFocus(dir);
+                    dialogueStick_ = dir != 0;
+                }
+                break;
+            default: break;
+        }
+    }
+    void pickResponse(size_t i) {
+        if (i < world_->story().responses().size()) world_->story().choose(i);
+    }
+
     void updateWorld(uint64_t nowMs) {
+        if (world_->talking()) {
+            // The conversation: the world stands still (WorldView::update).
+            dialogue_->sync(world_->story());
+            dialogue_->update(nowMs);
+            if (const auto i = dialogue_->takeChoice()) pickResponse(*i);
+            if (world_->talking()) dialogue_->sync(world_->story());
+            if (steering_) world_->steer(0, 0), steering_ = false;
+            world_->update(nowMs);
+            const world::Player& p = world_->player();
+            hud_->update(nowMs, Hud::Vitals{p.hitPoints(), p.maxHitPoints(), p.energy(), p.maxEnergy()});
+            return;
+        }
         // The stick, with a radial dead zone (rebuild choice: 25% of the
         // throw), or the keys, give a screen direction to walk in.
         float dx = 0, dy = 0;
@@ -859,13 +953,14 @@ private:
     std::unique_ptr<LevelSelect> select_;
     std::vector<std::pair<uint16_t, uint16_t>> startCodes_;
     std::optional<int> travelPick_;
+    std::unique_ptr<Dialogue> dialogue_;
     std::optional<std::string> introMusic_;
     uint16_t level_ = 1, entry_ = 0;
     std::optional<world::WalkMap::Point> at_;
     int gameW_ = kScreenW, gameH_ = kScreenH;
     SDL_FPoint stick_{0, 0};
     world::Character character_ = world::Character::Human;
-    bool mouseHeld_ = false, steering_ = false, trigger_ = false, leftTrigger_ = false;
+    bool mouseHeld_ = false, steering_ = false, trigger_ = false, leftTrigger_ = false, dialogueStick_ = false;
     uint64_t lastRetarget_ = 0;
     static constexpr float kStickDeadZone = 0.25f;
     static constexpr uint64_t kRetargetMs = 100;  // rebuild choice
@@ -934,6 +1029,15 @@ Options parseArgs(int argc, char** argv) {
             else if (v == "gladiator") o.character = world::Character::Gladiator;
             else if (v == "culibine") o.character = world::Character::Culibine;
             else throw std::runtime_error("--character expects human, gladiator or culibine");
+        } else if (a == "--walk") {
+            for (size_t at = 0; at < v.size();) {
+                const size_t end = std::min(v.find(';', at), v.size()), comma = v.find(',', at);
+                if (comma == std::string::npos || comma > end) throw std::runtime_error("--walk expects x,y[;x,y...]");
+                o.walk.push_back({std::stof(v.substr(at, comma - at)), std::stof(v.substr(comma + 1, end - comma - 1))});
+                at = end + 1;
+            }
+        } else if (a == "--pick") {
+            o.pick = v;
         } else if (a == "--at") {
             const auto comma = v.find(',');
             if (comma == std::string::npos) throw std::runtime_error("--at expects x,y");
@@ -961,7 +1065,7 @@ Options parseArgs(int argc, char** argv) {
                                                  "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y] [--no-audio] "
                                                  "[--character human|gladiator|culibine] [--settings config.cfg] [--aspect 4:3|16:9] [--size WxH] "
                                                  "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use] "
-                                                 "[--inventory] [--pad udlrax] [--travel line]] [--codes level:entry,...]");
+                                                 "[--inventory] [--pad udlrax] [--travel line] [--walk x,y;x,y...] [--pick 1234]] [--codes level:entry,...]");
     return o;
 }
 
@@ -1005,12 +1109,23 @@ int main(int argc, char** argv) {
                 if (opt.mouse) game.setMouse(*opt.mouse);
                 if (opt.stick) game.holdStick(*opt.stick);
                 for (char c : opt.pad) game.pressPad(c);
+                uint64_t pickAt = 0;
+                size_t next = 0, walked = 0;
                 for (uint64_t t = 0; t <= opt.timeMs; t += 10) {
                     game.update(t);
                     if (t == 0 && opt.click) game.clickWorld(*opt.click);
                     if (t == 0 && opt.attack) game.attackWorld();
                     if (t == 0 && opt.shoot) game.shootWorld();
                     if (t % 1500 == 0 && opt.use) game.useWorld();
+                    if (walked < opt.walk.size() && !game.walking() && !game.talking())
+                        game.walkWorld(opt.walk[walked++]);
+                    // Each pick a second after the conversation shows the
+                    // node before it.
+                    if (game.talking() && pickAt == 0) pickAt = t + 1000;
+                    if (pickAt && t >= pickAt && next < opt.pick.size()) {
+                        game.pickWorld(size_t(opt.pick[next++] - '1'));
+                        pickAt = 0;
+                    }
                 }
                 game.draw();
                 SDL_Surface* s = SDL_RenderReadPixels(ren, nullptr);
