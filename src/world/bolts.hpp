@@ -26,6 +26,14 @@ namespace harbinger::world {
 // the map's edge and at a half cell whose height byte is above 2 * z.
 bool lineOfFire(const WalkMap& walk, double x0, double y0, double x1, double y1, double z);
 
+// FUN_0041f8d0 at a shoot animation's -2 tag: where a shooter at (sx, sy)
+// aims at a target at (tx, ty). A target walking at (tvx, tvy) cells per ms
+// is led by delayMs * 0.001 s plus the bolt's flight, dist / (bolt speed -
+// its speed towards the shooter), but no further than where its walk ends
+// (`dest`). boltSpeed is in cells per ms.
+WalkMap::Point leadAim(double sx, double sy, double tx, double ty, double tvx, double tvy,
+                       std::optional<WalkMap::Point> dest, double boltSpeed, int delayMs);
+
 class Bolts {
 public:
     Bolts(Vfs& vfs, const Ini& ini, const WalkMap& walk, Rng& rng);

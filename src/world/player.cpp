@@ -197,24 +197,8 @@ bool Player::canShoot() const {
 }
 
 void Player::aim(int delayMs) {
-    // FUN_0041f8d0 at the -2 tag: aim at the target; if it is walking, lead
-    // it by delay * 0.001 s plus the bolt's flight, dist / (bolt speed -
-    // its speed towards the shooter), but no further than where its walk
-    // ends.
-    aimX_ = targetX_, aimY_ = targetY_;
-    const double speed = std::hypot(targetVx_, targetVy_) * 1000.0;  // cells per second
-    if (speed <= 0 || boltSpeed_ <= 0) return;
-    const double dist = std::hypot(targetX_ - x_, targetY_ - y_);
-    const uint8_t towards = facingTowards(targetX_ - x_, targetY_ - y_);
-    const uint8_t moving = facingTowards(targetVx_, targetVy_);
-    const double closing = facingCos(uint8_t(moving - towards)) * speed;
-    const double t = delayMs * 0.001 + dist / (boltSpeed_ * 1000.0 - closing);
-    double ax = targetX_ + t * facingCos(moving) * speed, ay = targetY_ + t * facingSin(moving) * speed;
-    if (targetDest_) {
-        const double toDest = std::hypot(targetDest_->x - targetX_, targetDest_->y - targetY_);
-        if (toDest < std::hypot(ax - targetX_, ay - targetY_)) ax = targetDest_->x, ay = targetDest_->y;
-    }
-    aimX_ = ax, aimY_ = ay;
+    const auto p = leadAim(x_, y_, targetX_, targetY_, targetVx_, targetVy_, targetDest_, boltSpeed_, delayMs);
+    aimX_ = p.x, aimY_ = p.y;
 }
 
 void Player::faceTarget() {

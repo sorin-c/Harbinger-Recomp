@@ -1,11 +1,12 @@
 // The level's enemies: their hit points, the blows that land on them and
 // their death, and their minds: noticing the player, walking up to it and
-// hitting it, wandering, fleeing.
+// hitting or shooting it, wandering, fleeing.
 // Notes and evidence: docs/combat.md, docs/enemies.md
 #pragma once
 
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "engine/ini.hpp"
@@ -24,6 +25,10 @@ namespace harbinger::world {
 struct Quarry {
     double x = 0, y = 0;
     double radius = 0;       // template+0x20 (slot 0x90)
+    // How it is walking (cells per ms) and where its walk ends, for leading
+    // it with a bolt.
+    double vx = 0, vy = 0;
+    std::optional<WalkMap::Point> dest;
     uint8_t visibility = 0;  // plug+0x38
     bool alive = false;
     const Defender* defender = nullptr;
@@ -34,7 +39,7 @@ public:
     // Every agent the level keeps whose class is an enemy (1-19, 37-40: not
     // the player, the NPCs 20-28, the mines 29-32 and 41, or the cameras
     // 33-36), with hit points rolled from its template (FUN_00408110), its
-    // melee weapon (stat 4) and a fresh mind.
+    // melee weapon (stat 4), its ranged weapon (stat 3) and a fresh mind.
     Foes(Vfs& vfs, const Ini& ini, Level& level, const WalkMap& walk, Rng& rng);
 
     // What an enemy is doing (its mind's current action, GIAIPolicy steps).
@@ -77,6 +82,20 @@ public:
         double reach = 0;     // plug+0x230: melee reach beyond the target's radius
         wpn::Weapon weapon;   // the melee weapon (stat 4)
         bool armed = false;
+        // The ranged weapon (stat 3: template+0x40, the weapon holder's
+        // second slot, FUN_00526740) and its energy (as the player's).
+        std::optional<wpn::Weapon> ranged;
+        double energy = 0;
+        // The weapon holder's mode (holder+0x10, FUN_0041d4e0): ranged when
+        // there is a ranged weapon (and, in the rebuild, a shoot animation).
+        bool shoots = false;
+        // FUN_00486b90: the shoot animation's parameter / 90.51, squared, is
+        // the range squared (plug+0x228); the attack policy's reach is a
+        // quarter of it (+0x220, slot 111: 0.25), the long range policy's
+        // all of it.
+        double range2 = 0, attackRange2 = 0;
+        double boltSpeed = 0;         // cells per ms, for leading (setBoltSpeed)
+        double aimX = 0, aimY = 0;    // where the -2 tag aimed
         Swing swing;
         Mind mind;
     };
@@ -113,6 +132,16 @@ public:
     // Runs every live foe's mind and body to `nowMs` against the player;
     // returns the blows that reached it.
     std::vector<Hit> update(uint64_t nowMs, const Quarry& player);
+    // A bolt fired by foe `foe` in the last update: from the muzzle at
+    // (x, y), height z, along `heading` (fired by whoever owns the bolts).
+    struct Shot {
+        int foe = -1;
+        double x = 0, y = 0, z = 0;
+        uint8_t heading = 0;
+    };
+    std::vector<Shot> takeShots() { return std::exchange(shots_, {}); }
+    // The speed foe `id`'s bolts fly at (map cells per ms), for leading.
+    void setBoltSpeed(int id, double cellsPerMs) { foes_[size_t(id)].boltSpeed = cellsPerMs; }
 
     // The foe's picture: what it is doing, in the direction it faces; dead
     // foes play their death animation (state 5) once and lie on its last
@@ -127,6 +156,9 @@ public:
     // more than 249 ms since the last time).
     static constexpr double kSight = 9.0, kSightMeditating = 5.0;
     static constexpr uint64_t kThinkMs = 250;
+    // The height the line of fire is checked at before an enemy shoots (a
+    // rebuild stand-in for its muzzle's, as Player::kMuzzleGuess).
+    static constexpr double kMuzzleGuess = 0.6;
 
 private:
     const agt::Template& tmpl(const Foe& f) const { return level_.agentTemplate(*f.record); }
@@ -144,6 +176,8 @@ private:
     void tickPolicy(Foe& f, const Quarry& q, uint64_t nowMs);
     void moveTo(Foe& f, double x, double y, uint64_t nowMs);
     void startSwing(Foe& f, const Quarry& q, uint64_t nowMs);
+    bool canFire(const Foe& f) const;
+    void fire(int id, Foe& f, const Swing::Result& r);
     void think(Foe& f, const Quarry& q, uint64_t nowMs);
     std::optional<Hit> act(int id, Foe& f, const Quarry& q, uint64_t nowMs);
     std::optional<uint8_t> pickHeading(const Foe& f, uint8_t heading, double dist);
@@ -154,6 +188,7 @@ private:
     Rng& rng_;
     mutable SpriteCache sprites_;
     std::vector<Foe> foes_;
+    std::vector<Shot> shots_;
 };
 
 }  // namespace harbinger::world

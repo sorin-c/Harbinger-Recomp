@@ -125,6 +125,33 @@ other half they lower emotion 1 by 40 and call `FUN_00423e40` (not traced).
   animation. The blow lands as the player's do (`docs/combat.md`).
 - An enemy's rating (slot 100, `GAgentPlug_v100`) is its stats[0] x 5.
 
+## Firing
+
+- Weapons: the template header (`FUN_00406a60`) keeps stats[0..3] at
+  +0x38, +0x3a, +0x3c, +0x40 and stats[4] at +0x3e. `FUN_0041d4e0` fills the
+  weapon holder (plug+0x1c0): slot 0 the melee weapon from +0x3e
+  (`FUN_00526550`), slot 1 the ranged weapon from +0x40 (`FUN_00526740`),
+  and sets the holder's mode (+0x10) to ranged when there is one. So stat 3
+  names the ranged weapon; every stat 3 in the levels names a `.wpn` with a
+  ranged tail (Infantry 4 `SmVantir.wpn`, Walker 5 `Walker1.wpn`).
+- Reach (`FUN_00421940`): blocked when plug+0x4b is set; in melee mode the
+  melee reach above; in ranged mode (`GAmpEnemyPlug_v4`) the distance squared
+  against +0x228 for the LongRangeAttack policy and against +0x220 for the
+  others. `FUN_00486b90` sets +0x228 = (shoot parameter / 90.51) squared and
+  +0x220 = slot 111 (0.25, 0x54a310) x +0x228: half the range. Infantry and
+  Walkers (600) shoot from 3.3 cells under the Attack policy.
+- The shoot animation (state 3) runs like the player's: a -2 tag aims,
+  leading a walking target (`FUN_0041f8d0`); the muzzle tag fires a bolt
+  costing the weapon's energy, which recharges as the player's.
+- Combat states (`FUN_004fa9a0`): 1 Attack, 2 LongRangeAttack (0x10; thinker 1
+  StationaryAttack 0xf), 3 and 4 Flee and HardFlee (0x11), 7 Flank (0x13),
+  8 Wait (0x14), others Wander. `GRoleMind_v13` steps them 1->2, 2 and 4->6,
+  3->4, 5->0, 6->7, 7->8, but nothing in the binary calls it except through
+  its vtable (0x557074 slot 13, offset 0x34) and no `call [reg+0x34]` site
+  is a mind's. The rebuild keeps state 1, so enemies fight under Attack.
+- `GLongRangeAttackPolicy` is `GAttackPolicy` with its own id and slot 8
+  true (the full range).
+
 ## In the Junkyard (level 2)
 
 | Enemy | Thinker | Defence | Melee weapon |
@@ -132,7 +159,8 @@ other half they lower emotion 1 by 40 and call `FUN_00423e40` (not traced).
 | Vantir Grunt | 7 Trooper | 27 | `VantirGrunt.wpn`, melee level 9, hit bonus 4 |
 | Biter Yellow | 6 Predator | 40 | `Biter.wpn`, melee level 9 (+2) |
 
-Level 3 adds Infantry and Walkers, which fire (not rebuilt yet).
+Level 3 (Storage) adds Vantir Infantry (26, stats 4 6 8 4 0) and Walker
+M-86U (4, stats 5 5 7 5 0), which fire.
 
 ## Rebuild choices
 
@@ -142,7 +170,12 @@ Level 3 adds Infantry and Walkers, which fire (not rebuilt yet).
 - No flocking and no following of a squad leader (the record's extra word,
   plug+0x218, is the squad id: `FUN_00419a50`).
 - Thinkers other than 6, 7 and 10 use the predator's logic.
-- Agents without a melee animation do not attack yet.
+- What blocks firing (plug+0x4b) is not traced; the rebuild checks the line
+  of fire at 0.7 cells (`Foes::kMuzzleGuess` + 0.1).
+- A shooter short of energy ends its Attack policy and starts it again at
+  the next think.
+- An agent with both weapons always shoots (the holder's mode switches are
+  not traced).
 - `--at x,y` starts the player at a map point (for testing).
 
 ## Evidence
@@ -162,7 +195,11 @@ Level 3 adds Infantry and Walkers, which fire (not rebuilt yet).
 | Flee distances | proven | constants 0x54e008, 0x54a048 |
 | Reach | proven | `GEnemyPlug_v3`, `FUN_00486b90`, `GAgentPlug_v3` |
 | Trooper rest | likely | `GBossThinker_v5`; `FUN_00423e40` not traced |
+| Stat 3 is the ranged weapon | proven | `FUN_00406a60`, `FUN_0041d4e0`; every level's stat 3 names a ranged `.wpn` |
+| Ranged reach, attack policy at a quarter | proven | `FUN_00421940`, `GAmpEnemyPlug_v4`, `FUN_00486b90`, 0x54a310 |
+| Combat state 1 never advances | likely | no caller of `GRoleMind_v13` found besides its vtable |
 
 Not compared under Wine yet. `tests/test_combat` runs Junkyard enemies
 against a player standing still and checks that they notice, walk up, hit
-and stop once the player is dead.
+and stop once the player is dead, and Storage Infantry against a player
+five cells off: they come to 3.3 cells and fire until it is dead.

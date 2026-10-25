@@ -245,6 +245,14 @@ the first hostile agent in their way with the original's ranged roll. Each
 shot costs energy, which comes back over time. Evidence: `docs/combat.md`
 ("Ranged attacks"), `docs/formats/emitter.md`.
 
+## Milestone 19: enemies fire (done)
+
+Infantry and Walkers carry their ranged weapon (template stat 3), come to
+half their shoot animation's range and fire the weapon's bolts at the
+player, leading it when it walks, while their energy lasts. Bolts are drawn
+added to the picture under them, as the original's particle pass does.
+Evidence: `docs/enemies.md` ("Firing").
+
 ## Next
 
 1. Configure Controls (`keyconfig.itf`, KeyField) and button tooltips
@@ -252,5 +260,6 @@ shot costs energy, which comes back over time. Evidence: `docs/combat.md`
 2. Display gamma, Bink video (later or skipped).
 3. The other classes' states (breakers, key consoles, lifts); the inventory.
 4. Spawners (and the scripts' agent commands with them). The room graph.
-5. Enemies that fire, experience; the other particle descriptions.
+5. Experience; the other particle descriptions; the long range and flanking
+   policies.
 6. The in-game loop, HUD and lighting.

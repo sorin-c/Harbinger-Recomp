@@ -46,6 +46,20 @@ bool lineOfFire(const WalkMap& walk, double x0, double y0, double x1, double y1,
     return true;
 }
 
+WalkMap::Point leadAim(double sx, double sy, double tx, double ty, double tvx, double tvy,
+                       std::optional<WalkMap::Point> dest, double boltSpeed, int delayMs) {
+    const double speed = std::hypot(tvx, tvy) * 1000.0;  // cells per second
+    if (speed <= 0 || boltSpeed <= 0) return {tx, ty};
+    const double dist = std::hypot(tx - sx, ty - sy);
+    const uint8_t towards = facingTowards(tx - sx, ty - sy);
+    const uint8_t moving = facingTowards(tvx, tvy);
+    const double closing = facingCos(uint8_t(moving - towards)) * speed;
+    const double t = delayMs * 0.001 + dist / (boltSpeed * 1000.0 - closing);
+    WalkMap::Point aim{tx + t * facingCos(moving) * speed, ty + t * facingSin(moving) * speed};
+    if (dest && std::hypot(dest->x - tx, dest->y - ty) < std::hypot(aim.x - tx, aim.y - ty)) aim = *dest;
+    return aim;
+}
+
 Bolts::Bolts(Vfs& vfs, const Ini& ini, const WalkMap& walk, Rng& rng) : vfs_(vfs), walk_(walk), rng_(rng) {
     if (auto data = vfs.read(ini.require("Paths", "Effects"))) index_ = mgr::parse(*data);
 }

@@ -188,8 +188,11 @@ keeps its last frame: the corpse stays.
   within 8 cells and the line of fire at 0.6 cells is clear (the player's
   range is not traced), shoots while the energy covers a shot, and stops
   when the target dies.
-- Bolts are drawn over the map, at the billboard's first size, turned to
-  their flight; their lights, the impact effect and lobbed or bouncing
+- Bolts are drawn over the map, added to the picture under them (the
+  particle pass's source-alpha-onto-one blending, `FUN_00476900`, for every
+  bolt: which descriptors set it is not traced), at the billboard's first
+  size, turned to their flight. Enemies' bolts work the same way
+  (`docs/enemies.md`, "Firing"). Their lights, the impact effect and lobbed or bouncing
   bolts are not rebuilt.
 - Walking or steering cuts a swing short.
 

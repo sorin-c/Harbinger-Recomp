@@ -37,6 +37,8 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     loot_ = std::make_unique<world::Loot>(assets.vfs(), assets.ini(), character, *level_, *walk_, rng_);
     bolts_ = std::make_unique<world::Bolts>(assets.vfs(), assets.ini(), *walk_, rng_);
     if (const auto* w = player_->rangedWeapon()) player_->setBoltSpeed(bolts_->speedOf(*w));
+    for (size_t i = 0; i < foes_->all().size(); ++i)
+        if (const auto& r = foes_->all()[i].ranged) foes_->setBoltSpeed(int(i), bolts_->speedOf(*r));
     const auto p = world::toScreen(player_->x(), player_->y());
     camX_ = p.x, camY_ = p.y;
 
@@ -364,11 +366,22 @@ void WorldView::update(uint64_t nowMs) {
         q.visibility = player_->visibility();
         q.alive = !player_->dead();
         q.defender = &player_->defender();
+        if (player_->state() == agt::Move) {
+            const double step = player_->speed();
+            q.vx = world::facingCos(player_->facing()) * step, q.vy = world::facingSin(player_->facing()) * step;
+            if (!player_->path().empty()) q.dest = player_->path().back();
+        }
         for (const auto& h : foes_->update(elapsedMs_, q)) {
             if (h.strike.hit) player_->takeDamage(h.strike.damage, elapsedMs_);
             if (log)
                 std::fprintf(stderr, "enemy %d blow: roll %d %s, %d damage, player %.0f left\n", h.foe, h.strike.roll,
                              h.strike.hit ? "hit" : "miss", h.strike.damage, player_->hitPoints());
+        }
+        for (const auto& s : foes_->takeShots()) {
+            const auto& f = foes_->all()[size_t(s.foe)];
+            if (bolts_->fire(s.foe, s.x, s.y, s.z, s.heading, *f.ranged, f.rating, elapsedMs_))
+                playSound(f.ranged->ranged->sound);
+            if (log) std::fprintf(stderr, "enemy %d shoots, energy %.0f\n", s.foe, f.energy);
         }
     }
     if (pendingUse_ && player_->path().empty()) {
@@ -513,7 +526,11 @@ void WorldView::drawBolts() const {
     // lifted by its height. Drawn over the map (a rebuild choice; the
     // original draws particles with the depth buffer). The size is the
     // description's first double (likely) and the frame time 100 ms times
-    // its +0x20 (guessed).
+    // its +0x20 (guessed). They are added to what is under them: the
+    // particle pass (FUN_0049d180) switches to blending source alpha onto
+    // one (FUN_00476900: D3D render states 0x13 = 5, 0x14 = 2) for batches
+    // whose flag +0xe is set (likely: which descriptors set it is not
+    // traced; the bolts' images have black backgrounds that need it).
     for (const auto& t : bolts_->all()) {
         if (!t.look || !t.look->billboard) continue;
         const emt::Billboard& b = *t.look->billboard;
@@ -531,7 +548,9 @@ void WorldView::drawBolts() const {
         const float w = float(fw * scale), h = float(fh * scale);
         const SDL_FRect at{cx - w / 2, cy - h / 2, w, h};
         const double angle = std::atan2((t.vx + t.vy) * 32.0, (t.vx - t.vy) * 64.0) * 180.0 / M_PI;
+        SDL_SetTextureBlendMode(tex.tex, SDL_BLENDMODE_ADD);
         SDL_RenderTextureRotated(ren_, tex.tex, &src, &at, angle, nullptr, SDL_FLIP_NONE);
+        SDL_SetTextureBlendMode(tex.tex, SDL_BLENDMODE_BLEND);
     }
 }
 

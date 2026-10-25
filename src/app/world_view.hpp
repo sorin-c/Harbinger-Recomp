@@ -1,7 +1,7 @@
 // The in-game view, as far as it is rebuilt: a level's floor, walls, gizmos
 // and characters, drawn and animated from the original files, and the
 // player's character walking on it with the camera following, and fighting
-// the level's enemies hand to hand.
+// the level's enemies hand to hand and at range.
 #pragma once
 
 #include <SDL3/SDL.h>

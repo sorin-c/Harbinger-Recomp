@@ -282,6 +282,83 @@ static void testShooting(const char* dir) {
     CHECK(std::fabs(after - std::min(85.0, before + 4.0)) < 0.05);
 }
 
+// Storage: an infantryman notices a player standing five cells off, comes
+// within its attack range (a quarter of the shoot animation's range
+// squared: 600 / 90.51 / 2 = 3.3 cells), and shoots it while its energy
+// lasts.
+static void testEnemyFire(const char* dir) {
+    Vfs vfs(dir);
+    const Ini ini = Ini::fromBytes(*vfs.read("Harbinger.ini"));
+    world::Level level(vfs, ini, 3);
+    world::WalkMap walk(level);
+    world::Rng rng(7);
+    world::Foes foes(vfs, ini, level, walk, rng);
+    world::Bolts bolts(vfs, ini, walk, rng);
+    int shooters = 0;
+    for (const auto& f : foes.all()) {
+        if (!f.ranged) continue;
+        ++shooters;
+        CHECK(f.shoots && f.energy == f.ranged->ranged->maxEnergy);
+        CHECK(bolts.effect(f.ranged->ranged->effect));  // the bolt's emitter decodes
+        CHECK(std::fabs(f.range2 - std::pow(600 / 90.51, 2)) < 1e-6 && f.attackRange2 == 0.25 * f.range2);
+    }
+    CHECK(shooters == 26 + 4);  // the infantry and the walkers
+    int id = -1;
+    chk::EntryPoint spot;
+    for (size_t i = 0; i < foes.all().size() && id < 0; ++i) {
+        const auto& f = foes.all()[i];
+        if (!f.shoots || level.agentTemplate(*f.record).name != "Vantir Infantry") continue;
+        for (int k = 0; k < 16 && id < 0; ++k) {
+            const double a = k * 0.392699;
+            const double px = f.x + 5 * std::cos(a), py = f.y + 5 * std::sin(a);
+            if (!walk.passableAt(px, py, 2) || !world::lineOfFire(walk, f.x, f.y, px, py, 0.7)) continue;
+            if (walk.findPath({f.x, f.y}, {px, py}, f.limit).empty()) continue;
+            spot.x = px, spot.y = py;
+            id = int(i);
+        }
+    }
+    CHECK(id >= 0);
+    if (id < 0) return;
+    world::Player player(vfs, ini, world::Character::Human, walk, spot);
+    const auto& foe = foes.all()[size_t(id)];
+    for (size_t i = 0; i < foes.all().size(); ++i)
+        if (foes.all()[i].ranged) foes.setBoltSpeed(int(i), bolts.speedOf(*foes.all()[i].ranged));
+    int shots = 0, hits = 0, damage = 0;
+    double firstShotDist = -1, lowest = foe.energy;
+    uint64_t t = 0;
+    for (; t < 20000 && !player.dead(); t += 10) {
+        world::Quarry q;
+        q.x = player.x(), q.y = player.y();
+        q.radius = player.radius();
+        q.visibility = player.visibility();
+        q.alive = !player.dead();
+        q.defender = &player.defender();
+        foes.update(t, q);
+        for (const auto& s : foes.takeShots()) {
+            const auto& f = foes.all()[size_t(s.foe)];
+            CHECK(bolts.fire(s.foe, s.x, s.y, s.z, s.heading, *f.ranged, f.rating, t));
+            if (s.foe != id) continue;
+            if (!shots++) firstShotDist = std::hypot(foe.x - player.x(), foe.y - player.y());
+            CHECK(s.z > 0.2 && s.z < 1.5);
+        }
+        lowest = std::min(lowest, foe.energy);
+        for (const auto& im : bolts.update(t, [&](int) {
+                 return std::vector<world::Bolts::Body>{
+                     {world::Bolts::kPlayer, player.x(), player.y(), player.radius(), &player.defender()}};
+             })) {
+            if (im.shooter == id) ++hits;
+            if (im.strike.hit) player.takeDamage(im.strike.damage, t), damage += im.strike.damage;
+        }
+        player.update(t);
+    }
+    std::printf("enemy fire: the infantryman fired %d shots from %.1f cells, %d reaching the player; its squad "
+                "dealt %d damage%s\n",
+                shots, firstShotDist, hits, damage, player.dead() ? ", the player died" : "");
+    CHECK(shots >= 3 && hits >= 1);
+    CHECK(firstShotDist > 0 && firstShotDist <= std::sqrt(foe.attackRange2) + 0.01);
+    CHECK(lowest < foe.ranged->ranged->maxEnergy);
+}
+
 // Junkyard: the enemies notice a player who stands still within sight, walk
 // up to it and hit it until it dies; then they settle down.
 static void testEnemies(const char* dir) {
@@ -350,7 +427,7 @@ int main() {
     testArithmetic();
     testLineOfFire();
     if (const char* dir = std::getenv("HARBINGER_DATA"))
-        testRealData(dir), testShooting(dir), testEnemies(dir);
+        testRealData(dir), testShooting(dir), testEnemyFire(dir), testEnemies(dir);
     else
         std::printf("HARBINGER_DATA not set; skipping real-data checks\n");
     if (failures) std::fprintf(stderr, "%d check(s) failed\n", failures);

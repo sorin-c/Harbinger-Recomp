@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "formats/mgr.hpp"
+#include "world/bolts.hpp"
 #include "world/motion.hpp"
 
 namespace harbinger::world {
@@ -57,6 +58,25 @@ Foes::Foes(Vfs& vfs, const Ini& ini, Level& level, const WalkMap& walk, Rng& rng
                     f.weapon = wpn::parse(*data);
                     f.armed = true;
                 }
+        // Stat 3 names the ranged weapon (FUN_00406a60 keeps it at
+        // template+0x40, which FUN_0041d4e0 hands to FUN_00526740); every
+        // stat 3 the levels use names a weapon with a ranged tail.
+        if (t.stats.size() > 3 && t.stats[3])
+            if (const std::string* w = weapons.find(t.stats[3]))
+                if (const auto data = vfs.read(*w)) {
+                    wpn::Weapon r = wpn::parse(*data);
+                    if (r.ranged) {
+                        f.energy = r.ranged->maxEnergy;
+                        f.ranged = std::move(r);
+                    }
+                }
+        const auto shoot = t.animsFor(agt::Shoot);
+        f.shoots = f.ranged && !shoot.empty();
+        if (!shoot.empty()) {
+            const double range = shoot[0]->param / 90.51;
+            f.range2 = range * range;
+            f.attackRange2 = 0.25 * f.range2;
+        }
         // FUN_00486b90: the melee animation's parameter / 90.51 is how far
         // past the target's radius a blow reaches (plug+0x230); 0 means the
         // agent's own radius + 0.1. (The original picks one of the state's
@@ -196,10 +216,24 @@ bool Foes::sees(const Foe& f, const Quarry& q) const {
 }
 
 bool Foes::inReach(const Foe& f, const Quarry& q) const {
+    const double dx = q.x - f.x, dy = q.y - f.y;
+    if (f.shoots) {
+        // FUN_00421940 with the holder in ranged mode (GAmpEnemyPlug_v4):
+        // within the attack policy's range (the distance squared against
+        // plug+0x220), and not blocked (plug+0x4b; what sets it is not
+        // traced: the rebuild checks the line of fire).
+        if (dx * dx + dy * dy > f.attackRange2) return false;
+        return lineOfFire(walk_, f.x, f.y, q.x, q.y, kMuzzleGuess + 0.1);
+    }
     // GEnemyPlug_v3 (0x486c50): out of reach when (target radius + reach)^2
     // is less than the distance squared.
-    const double r = q.radius + f.reach, dx = q.x - f.x, dy = q.y - f.y;
+    const double r = q.radius + f.reach;
     return dx * dx + dy * dy <= r * r;
+}
+
+bool Foes::canFire(const Foe& f) const {
+    // GAgentPlug_v54 -> GRangedWeapon_v6: the energy covers a shot.
+    return f.ranged && f.energy >= f.ranged->ranged->cost;
 }
 
 void Foes::moveTo(Foe& f, double x, double y, uint64_t nowMs) {
@@ -210,12 +244,29 @@ void Foes::moveTo(Foe& f, double x, double y, uint64_t nowMs) {
 
 void Foes::startSwing(Foe& f, const Quarry& q, uint64_t nowMs) {
     // GAttackAction_v1 -> slot 0xe8: turn to the target (GAgentPlug_v58)
-    // and play the melee animation.
+    // and play the melee animation, or with the holder in ranged mode the
+    // shoot animation.
     f.path.clear();
     if (q.x != f.x || q.y != f.y) f.facing = facingTowards(q.x - f.x, q.y - f.y);
+    f.aimX = q.x, f.aimY = q.y;  // for shoot animations without a -2 tag (turrets)
     f.mind.action = Action::Attack;
-    setState(f, agt::Melee, nowMs);
+    setState(f, f.shoots ? agt::Shoot : agt::Melee, nowMs);
     f.swing.start(nowMs);
+}
+
+void Foes::fire(int id, Foe& f, const Swing::Result& r) {
+    // As the player's shot (GAgentPlug_v14 in ranged mode -> v19 ->
+    // FUN_00520bc0): the muzzle is the tag point; an aim point nearer than
+    // 2 cells is pushed out to 2 cells along the facing; the shot costs
+    // the weapon's energy.
+    const double mx = f.x + r.blow->x, my = f.y + r.blow->y;
+    double ax = f.aimX, ay = f.aimY;
+    if ((ax - f.x) * (ax - f.x) + (ay - f.y) * (ay - f.y) < 4.0) {
+        const uint8_t h = facingTowards(ax - f.x, ay - f.y);
+        ax = f.x + facingCos(h) * 2.0, ay = f.y + facingSin(h) * 2.0;
+    }
+    shots_.push_back({id, mx, my, r.height, facingTowards(ax - mx, ay - my)});
+    f.energy = std::max(0.0, f.energy - f.ranged->ranged->cost);
 }
 
 bool Foes::startPolicy(Foe& f, Policy p, const Quarry& q, uint64_t nowMs, double gx, double gy) {
@@ -256,9 +307,10 @@ void Foes::prepareStep(Foe& f, const Quarry& q, uint64_t nowMs) {
                     m.goalX = q.x, m.goalY = q.y;
                     moveTo(f, q.x, q.y, nowMs);
                     started = !f.path.empty();
-                } else if (q.alive && f.armed && inReach(f, q) && !anims(f, agt::Melee).empty()) {
-                    // (Agents without a melee animation fire instead: not
-                    // rebuilt yet.)
+                } else if (q.alive && inReach(f, q) &&
+                           (f.shoots ? canFire(f) : f.armed && !anims(f, agt::Melee).empty())) {
+                    // A shooter short of energy does not start: the policy
+                    // ends and the next think starts it again.
                     startSwing(f, q, nowMs);
                     started = true;
                 }
@@ -411,6 +463,10 @@ void Foes::think(Foe& f, const Quarry& q, uint64_t nowMs) {
 std::optional<Foes::Hit> Foes::act(int id, Foe& f, const Quarry& q, uint64_t nowMs) {
     const uint64_t dt = f.lastMs ? nowMs - f.lastMs : 0;
     f.lastMs = nowMs;
+    // FUN_00521e00 (GAgentPlug_v6): the ranged weapon's energy comes back
+    // at its recharge rate a second, up to its maximum.
+    if (f.ranged)
+        f.energy = std::min<double>(f.ranged->ranged->maxEnergy, f.energy + dt * 0.001 * f.ranged->ranged->recharge);
     bool finished = false;
     std::optional<Hit> hit;
     switch (f.mind.action) {
@@ -431,16 +487,26 @@ std::optional<Foes::Hit> Foes::act(int id, Foe& f, const Quarry& q, uint64_t now
             if (f.path.empty()) finished = true;
             break;
         case Action::Attack: {
-            const auto a = anims(f, agt::Melee);
+            const auto a = anims(f, f.shoots ? agt::Shoot : agt::Melee);
             auto turn = [&] {
                 if (q.x != f.x || q.y != f.y) f.facing = facingTowards(q.x - f.x, q.y - f.y);
+                f.aimX = q.x, f.aimY = q.y;
             };
+            // Another round while the target is in reach (and, shooting,
+            // the energy lasts).
+            auto goOn = [&] { return q.alive && inReach(f, q) && (!f.shoots || canFire(f)); };
             const auto r = f.swing.advance(a, f.facing, nowMs, Level::kAgentFrameMs, [&] {
-                if (!q.alive || !inReach(f, q)) return false;
+                if (!goOn()) return false;
                 turn();
                 return true;
             });
-            if (r.blow && q.alive && q.defender && f.armed) {
+            if (r.aim && f.shoots) {
+                const auto p = leadAim(f.x, f.y, q.x, q.y, q.vx, q.vy, q.dest, f.boltSpeed, *r.aim);
+                f.aimX = p.x, f.aimY = p.y;
+            }
+            if (r.blow && f.shoots) {
+                if (canFire(f)) fire(id, f, r);
+            } else if (r.blow && q.alive && q.defender && f.armed) {
                 // FUN_004a2590: the segment to the blow point against the
                 // target's square.
                 const double bx = f.x + r.blow->x, by = f.y + r.blow->y;
@@ -450,7 +516,7 @@ std::optional<Foes::Hit> Foes::act(int id, Foe& f, const Quarry& q, uint64_t now
             if (r.ended) {
                 // GAmpEnemyPlug_v82: at the end of the animation the attack
                 // goes on while the target is in reach.
-                if (q.alive && inReach(f, q)) {
+                if (goOn()) {
                     turn();
                     f.swing.start(nowMs);
                     f.stateStart = nowMs;
@@ -513,7 +579,7 @@ Level::Pose Foes::pose(const chk::AgentRecord& a, uint64_t nowMs) {
     if (dir >= anim->directions.size() || anim->directions[dir].frames.empty()) return pose;
     const size_t frames = anim->directions[0].frames.empty() ? anim->directions[dir].frames.size()
                                                               : anim->directions[0].frames.size();
-    const uint64_t start = f->dead ? f->diedAt : f->state == agt::Melee ? f->swing.startMs() : f->stateStart;
+    const uint64_t start = f->dead ? f->diedAt : f->state == agt::Melee || f->state == agt::Shoot ? f->swing.startMs() : f->stateStart;
     const size_t step = size_t((nowMs - std::min(nowMs, start)) / Level::kAgentFrameMs);
     const size_t frame = std::min(f->dead ? std::min(step, frames - 1) : step % frames,
                                   anim->directions[dir].frames.size() - 1);
