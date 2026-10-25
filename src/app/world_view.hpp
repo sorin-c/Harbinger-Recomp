@@ -19,6 +19,8 @@
 #include "world/bolts.hpp"
 #include "world/combat.hpp"
 #include "world/foes.hpp"
+#include "world/inventory.hpp"
+#include "world/item_catalog.hpp"
 #include "world/level.hpp"
 #include "world/loot.hpp"
 #include "world/player.hpp"
@@ -31,9 +33,12 @@ class WorldView {
 public:
     // Loads level `id`, stands the player's character on its entry point
     // `entry` (0, "Default", for a new game), or at map point `at` (a testing
-    // aid), and centres the camera on it.
+    // aid), and centres the camera on it. `inventory` is the character's
+    // inventory screen layout (Hud::inventoryLayout); the starting items are
+    // added to it.
     WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world::Character character, int screenW,
-              int screenH, uint16_t entry = 0, std::optional<world::WalkMap::Point> at = {});
+              int screenH, world::Inventory::Layout inventory, uint16_t entry = 0,
+              std::optional<world::WalkMap::Point> at = {});
     ~WorldView();
     WorldView(const WorldView&) = delete;
     WorldView& operator=(const WorldView&) = delete;
@@ -54,12 +59,16 @@ public:
     // Set once the player has walked into a portal: the level and entry
     // point to load next.
     const std::optional<Cutscene::LevelChange>& levelChange() const { return cutscene_->levelChange(); }
-    // What the player carries from level to level (a stand-in until the
-    // inventory is rebuilt).
-    void carry(uint32_t money, std::vector<uint16_t> carried, double hitPoints, double energy) {
-        money_ = money, carried_ = std::move(carried);
-        player_->carry(hitPoints, energy);
-    }
+    // What the player takes from level to level: the inventory (with the
+    // catalogue it looks items up in), hit points and ranged energy.
+    struct Carried {
+        std::unique_ptr<world::ItemCatalog> catalog;
+        std::unique_ptr<world::Inventory> inventory;
+        double hitPoints = 0, energy = 0;
+    };
+    // Hands it over; this view is not used after.
+    Carried takeCarried();
+    void carry(Carried c);
 
     // Direct control from a stick or keys: walk towards screen direction
     // (dx, dy) (any length; 0, 0 stops).
@@ -102,12 +111,17 @@ public:
     const world::Player& player() const { return *player_; }
     const world::Foes& foes() const { return *foes_; }
     const world::Loot& loot() const { return *loot_; }
+    // What the player carries; the equipment it shows and fights with
+    // follows the inventory's equipment slots.
+    world::Inventory& inventory() { return *inventory_; }
+    world::ItemCatalog& catalog() { return *catalog_; }
+    // Uses a health pack off the counter; false if there is none.
+    bool useHealthPack();
+    // Where on the screen the view centres (the HUD moves it while the
+    // inventory covers the right part).
+    void setViewCentre(double x) { centreX_ = x; }
     const world::Spawners& spawners() const { return *spawners_; }
     const world::Bolts& bolts() const { return *bolts_; }
-    // What the player has picked up (item.mgr ids; money adds to money()).
-    // A plain list until the inventory is rebuilt.
-    const std::vector<uint16_t>& carried() const { return carried_; }
-    uint32_t money() const { return money_; }
 
 private:
     const Texture* tile(const chk::Layer& layer) const;
@@ -145,11 +159,13 @@ private:
     std::unique_ptr<world::Bolts> bolts_;
     SoundSystem* sound_ = nullptr;
     uint32_t pendingPickup_ = 0;  // a ground item the player is walking to (Loot::GroundItem::id)
-    std::vector<uint16_t> carried_;
-    uint32_t money_ = 0;
+    std::unique_ptr<world::ItemCatalog> catalog_;
+    std::unique_ptr<world::Inventory> inventory_;
+    uint64_t equipRev_ = 0;
     bool wasCinematic_ = false;
     const chk::GizmoRecord* pendingUse_ = nullptr;  // walking up to use it
     int screenW_, screenH_;
+    double centreX_;
     double camX_ = 0, camY_ = 0;  // map screen position at the centre of the view
     uint64_t startMs_ = 0, elapsedMs_ = 0;  // animation clock, from the first update
     // GPU copies of tile images, by brush, tile id (centre tiles are cut per id).

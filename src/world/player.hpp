@@ -173,6 +173,14 @@ public:
     // The animation groups the sprite is built from, bottom first.
     const std::vector<std::string>& layers() const { return layers_; }
 
+    // What the character starts a new game with (item.mgr ids, in the
+    // order the original adds them).
+    static std::vector<uint16_t> startingItems(Character c);
+    // Dresses the sprite and arms the blows with these equipped items
+    // (item.mgr ids, as Inventory::equippedIds gives them). The constructor
+    // starts with startingItems().
+    void equip(const std::vector<uint16_t>& ids);
+
 private:
     void setState(agt::State s, uint64_t nowMs);
     void stepSteer(double step);
@@ -184,8 +192,10 @@ private:
     void noticeLoops(uint64_t nowMs);
     std::vector<const anm::Animation*> layerAnims(agt::State s);
 
+    Vfs& vfs_;
     const WalkMap& walk_;
     SpriteCache sprites_;
+    mgr::Index items_, weapons_;
     wpn::Weapon weapon_;
     agt::Template template_;
     mgr::Index animIndex_;

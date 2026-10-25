@@ -18,12 +18,15 @@ std::vector<uint8_t> readOrThrow(Vfs& vfs, const std::string& path) {
     return std::move(*data);
 }
 
+}  // namespace
+
 // The items each character starts with, added one by one when a game starts
 // (vtable slot 108 of the character's plug: GHumanPlayerPlug_v108 0x4ee6b0,
 // GGladPlayerPlug_v108 0x4badd0, GCulibinePlug_v108 0x470b10), as item.mgr
-// ids. Each is equipped (seen in the original's inventory for the Human:
-// Alpha Advance Armor, the E-16 Rifle and an EMP mod chip in its socket).
-std::vector<uint16_t> startingItems(Character c) {
+// ids. Each goes through the inventory's add (slot 46 -> FUN_004ccd10), which
+// equips it (seen in the original's inventory for the Human: Alpha Advance
+// Armor, the E-16 Rifle and an EMP mod chip in its socket).
+std::vector<uint16_t> Player::startingItems(Character c) {
     switch (c) {
         case Character::Human: return {689, 333, 74};             // armour, rifle, EMP chip
         case Character::Gladiator: return {251, 291, 747, 103};   // blade, gun, torso, EMP chip
@@ -31,8 +34,6 @@ std::vector<uint16_t> startingItems(Character c) {
     }
     return {};
 }
-
-}  // namespace
 
 const char* characterSection(Character c) {
     switch (c) {
@@ -44,59 +45,14 @@ const char* characterSection(Character c) {
 }
 
 Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& walk, const chk::EntryPoint& start)
-    : walk_(walk), sprites_(vfs) {
+    : vfs_(vfs), walk_(walk), sprites_(vfs) {
     const std::string section = characterSection(character);
     template_ = agt::parse(readOrThrow(vfs, ini.require(section, "Agent")));
     animIndex_ = mgr::parse(readOrThrow(vfs, ini.require(section, "Anims")));
     groups_ = animgroup::parse(readOrThrow(vfs, ini.require(section, "AnimGroups")));
-    // Each equipped item hands its animation group to one of three layers
-    // (GEquipCell_v1 -> FUN_004efcf0), drawn over the body in layer order.
-    const auto items = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Items")));
-    const auto weapons = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Weapons")));
-    std::string slots[3];
-    int weaponRank = -1;
-    // Armour and helmet (plug+0x2d4, +0x2d8): their armour class (type 9,
-    // level plus the third word) adds to the defence when worn (FUN_004f0f40,
-    // FUN_004f0fb0), and their level for each damage type can stop it
-    // (FUN_004f10e0). The gladiator's torso is taken as its armour (guessed).
-    defender_ = defenderOf(template_);
-    defender_.player = true;
-    for (uint16_t id : startingItems(character)) {
-        const std::string* path = items.find(id);
-        if (!path) continue;
-        const auto data = readOrThrow(vfs, *path);
-        const uint16_t cls = data.size() < 2 ? 0 : uint16_t(data[0] | data[1] << 8);
-        if (cls < itm::HumanWeapon || cls > itm::RightGauntlet) continue;  // mod chips: in a socket
-        const itm::Item item = itm::parse(data);
-        if (cls == itm::HumanArmor || cls == itm::HumanHelmet || cls == itm::GladiatorTorso) {
-            if (const std::string* w = weapons.find(item.socketed->word38)) {
-                const wpn::Weapon armour = wpn::parse(readOrThrow(vfs, *w));
-                for (const auto& d : armour.damage) {
-                    if (d.type == wpn::ArmourClass) defender_.defence += d.level + d.extra;
-                    else if (d.type < 11) defender_.armour[d.type] += d.level;
-                }
-            }
-        }
-        // The blows' weapon: the melee one where there is a choice (the
-        // gladiator's blade over its gun, the right gauntlet over the left).
-        // The original's choice (FUN_004213a0) is not traced: guessed.
-        static constexpr uint16_t kRank[] = {0, 3, 0, 0, 1, 4, 0, 1, 2};
-        if (const std::string* w = weapons.find(item.socketed->word38)) {
-            wpn::Weapon weapon = wpn::parse(readOrThrow(vfs, *w));
-            // The shots' weapon: the first that fires (kinds 1-3).
-            if (weapon.ranged && !ranged_) ranged_ = weapon;
-            if (kRank[cls] > weaponRank) {
-                weapon_ = std::move(weapon);
-                weaponRank = kRank[cls];
-            }
-        }
-        const int layer = itm::spriteLayer(item.classId);
-        if (layer < 0) continue;
-        for (const auto& g : groups_.groups)
-            if (g.id == item.socketed->animGroup) slots[layer] = g.name;
-    }
-    for (const auto& name : slots)
-        if (!name.empty()) layers_.push_back(name);
+    items_ = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Items")));
+    weapons_ = mgr::parse(readOrThrow(vfs, ini.require("Paths", "Weapons")));
+    equip(startingItems(character));
     // The move animation's parameter is the walking speed (FUN_00406100).
     for (const auto& a : template_.anims)
         if (a.kind == agt::Move && !speed_) speed_ = walkSpeed(a.param);
@@ -113,8 +69,6 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
         case Character::Culibine: maxHitPoints_ = 60; break;
     }
     hitPoints_ = maxHitPoints_;
-    // GRangedWeapon_v7 starts the energy full (+0x58 = +0x60).
-    if (ranged_) energy_ = std::max<double>(0, ranged_->ranged->maxEnergy);
 }
 
 void Player::takeDamage(int damage, uint64_t nowMs) {
@@ -132,6 +86,66 @@ void Player::takeDamage(int damage, uint64_t nowMs) {
     target_ = -1;
     state_ = agt::Idle;
     setState(agt::Die, nowMs);
+}
+
+void Player::equip(const std::vector<uint16_t>& ids) {
+    // Each equipped item hands its animation group to one of three layers
+    // (GEquipCell_v1 -> FUN_004efcf0), drawn over the body in layer order.
+    std::string slots[3];
+    int weaponRank = -1;
+    weapon_ = {};
+    const bool hadRanged = ranged_.has_value();
+    ranged_.reset();
+    // Armour and helmet (plug+0x2d4, +0x2d8): their armour class (type 9,
+    // level plus the third word) adds to the defence when worn (FUN_004f0f40,
+    // FUN_004f0fb0), and their level for each damage type can stop it
+    // (FUN_004f10e0). The gladiator's torso is taken as its armour (guessed).
+    defender_ = defenderOf(template_);
+    defender_.player = true;
+    for (uint16_t id : ids) {
+        const std::string* path = items_.find(id);
+        if (!path) continue;
+        const auto data = readOrThrow(vfs_, *path);
+        const uint16_t cls = data.size() < 2 ? 0 : uint16_t(data[0] | data[1] << 8);
+        if (cls < itm::HumanWeapon || cls > itm::RightGauntlet) continue;  // mod chips: in a socket
+        const itm::Item item = itm::parse(data);
+        if (cls == itm::HumanArmor || cls == itm::HumanHelmet || cls == itm::GladiatorTorso) {
+            if (const std::string* w = weapons_.find(item.socketed->word38)) {
+                const wpn::Weapon armour = wpn::parse(readOrThrow(vfs_, *w));
+                for (const auto& d : armour.damage) {
+                    if (d.type == wpn::ArmourClass) defender_.defence += d.level + d.extra;
+                    else if (d.type < 11) defender_.armour[d.type] += d.level;
+                }
+            }
+        }
+        // The blows' weapon: the melee one where there is a choice (the
+        // gladiator's blade over its gun, the right gauntlet over the left).
+        // The original's choice (FUN_004213a0) is not traced: guessed.
+        static constexpr uint16_t kRank[] = {0, 3, 0, 0, 1, 4, 0, 1, 2};
+        if (const std::string* w = weapons_.find(item.socketed->word38)) {
+            wpn::Weapon weapon = wpn::parse(readOrThrow(vfs_, *w));
+            // The shots' weapon: the first that fires (kinds 1-3).
+            if (weapon.ranged && !ranged_) ranged_ = weapon;
+            if (kRank[cls] > weaponRank) {
+                weapon_ = std::move(weapon);
+                weaponRank = kRank[cls];
+            }
+        }
+        const int layer = itm::spriteLayer(item.classId);
+        if (layer < 0) continue;
+        for (const auto& g : groups_.groups)
+            if (g.id == item.socketed->animGroup) slots[layer] = g.name;
+    }
+    layers_.clear();
+    for (const auto& name : slots)
+        if (!name.empty()) layers_.push_back(name);
+    // A new ranged weapon keeps the energy there was, up to its own most
+    // (rebuild choice: how the original carries energy across a weapon
+    // swap is not traced); a first one starts full, as GRangedWeapon_v7
+    // starts it (+0x58 = +0x60).
+    if (!ranged_) energy_ = 0;
+    else if (!hadRanged) energy_ = std::max<double>(0, ranged_->ranged->maxEnergy);
+    else energy_ = std::min<double>(energy_, ranged_->ranged->maxEnergy);
 }
 
 bool Player::walkTo(double x, double y) {

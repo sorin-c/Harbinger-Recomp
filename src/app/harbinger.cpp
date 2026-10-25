@@ -6,7 +6,8 @@
 //
 //   harbinger [--data <install dir>] [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y]
 //             [--character human|gladiator|culibine] [--no-audio] [--settings config.cfg] [--run-ms ms]
-//             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use]]
+//             [--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use]
+//                                   [--inventory] [--pad udlrax]]
 //
 // Mouse, keyboard (up/down to move, left/right for sliders, Enter, Esc = back)
 // and gamepad (D-pad/stick, A, B = back) all drive the menus. In the level the
@@ -17,6 +18,12 @@
 // pad's X / Square or the right trigger hit the nearest enemy ahead. The
 // other mouse button on an enemy shoots it with the ranged weapon; G, the
 // pad's Y / Triangle or the left trigger shoot the nearest one.
+//
+// The HUD's CHAR button, I, C or Tab, or the pad's View / Back button open
+// the inventory. On the pad (as in Diablo III on a console) the D-pad or
+// the stick move the focus over the slots and grid, A picks up and puts
+// down, X equips or takes off, B closes. Q, a click on the health button or
+// the D-pad's up uses a health pack.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -29,6 +36,7 @@
 #include <string>
 
 #include "app/assets.hpp"
+#include "app/hud.hpp"
 #include "app/screen.hpp"
 #include "app/sound.hpp"
 #include "app/world_view.hpp"
@@ -54,6 +62,8 @@ struct Options {
     bool attack = false;  // screenshot mode: the attack button at 0 ms
     bool shoot = false;   // screenshot mode: the shoot button at 0 ms
     bool use = false;     // screenshot mode: the use button at 0 ms and every 1.5 s
+    bool inventory = false;  // screenshot mode: the inventory open
+    std::string pad;         // screenshot mode: pad presses at 0 ms (u d l r = D-pad, a = A, x = X)
     uint64_t timeMs = 0, runMs = 0;
     std::optional<SDL_FPoint> mouse, click, stick;  // screenshot mode: pointer, a click at 0 ms, a held stick
     std::optional<SDL_FPoint> at;  // the player's start, map cells (a testing aid)
@@ -197,13 +207,7 @@ public:
         SDL_RenderClear(ren_);
         if (world_) {
             world_->draw();
-            SDL_SetRenderDrawColor(ren_, 160, 255, 160, 255);
-            const std::string title = world_->level().map().name + "  (walking, melee, enemies fighting back, trigger scripts and loot: no HUD yet)";
-            SDL_RenderDebugText(ren_, 8, 8, title.c_str());
-            const std::string carried = "Uan: " + std::to_string(world_->money()) + "   items picked up: " +
-                                        std::to_string(world_->carried().size());
-            SDL_RenderDebugText(ren_, 8, 32, carried.c_str());
-            SDL_RenderDebugText(ren_, 8, 20, "Walk: stick / WASD / click   Hit: click enemy / F / X / RT   Use, close bubble: E / Space / A   Menu: Esc / B");
+            hud_->draw(ren_);
         } else {
             screen_->draw(ren_);
         }
@@ -214,9 +218,11 @@ public:
         mouse_ = p;
         showCursor_ = true;
         screen_->pointerMove(p.x, p.y);
+        if (hud_) hud_->pointerMove(p.x, p.y);
     }
     // Screenshot mode: walk to a view pixel, or hold the stick in a direction.
     void clickWorld(SDL_FPoint p) {
+        if (hud_ && hud_->pointerDown(p.x, p.y)) return;
         if (world_ && world_->clickBubble(p.x, p.y)) return;
         if (world_ && !world_->attackAt(p.x, p.y) && !world_->useAt(p.x, p.y)) world_->walkTo(p.x, p.y);
     }
@@ -230,14 +236,32 @@ public:
         if (world_ && !world_->closeBubble()) world_->useNearest();
     }
     void holdStick(SDL_FPoint v) { stick_ = v; }
+    void openInventory() {
+        if (hud_) hud_->setInventoryOpen(true);
+    }
+    void pressPad(char c) {
+        if (!hud_) return;
+        if (c == 'u') hud_->padMove(0, -1);
+        if (c == 'd') hud_->padMove(0, 1);
+        if (c == 'l') hud_->padMove(-1, 0);
+        if (c == 'r') hud_->padMove(1, 0);
+        if (c == 'a') hud_->padPress();
+        if (c == 'x') hud_->padQuick();
+    }
 
 private:
     // The game runs at 1024x768 with High Resolution on, 800x600 without
     // (Harbinger.ini [Video] HiRes; the front end is always 800x600).
     void startGame() {
         const int w = highRes_ ? 1024 : kScreenW, h = highRes_ ? 768 : kScreenH;
-        world_ = std::make_unique<WorldView>(assets_, ren_, level_, character_, w, h, entry_, at_);
+        world_ = std::make_unique<WorldView>(assets_, ren_, level_, character_, w, h,
+                                             Hud::inventoryLayout(assets_, character_), entry_, at_);
         world_->setSound(sound_.get());
+        hud_ = std::make_unique<Hud>(assets_, character_, w, h, [this](int slot, uint16_t id, bool restart) {
+            if (!sound_) return;
+            if (const audio::Pcm* pcm = assets_.sound(id)) sound_->play(slot, *pcm, restart);
+        });
+        hud_->attach(&world_->inventory(), &world_->catalog());
         SDL_SetRenderLogicalPresentation(ren_, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
         gameW_ = w, gameH_ = h;
         mouse_ = {w / 2.0f, h / 2.0f};
@@ -246,6 +270,7 @@ private:
         if (sound_) playMusic(assets_.soundPath(world_->level().map().music));
     }
     void endGame() {
+        hud_.reset();
         world_.reset();
         if (sound_) playMusic(introMusic_ ? &*introMusic_ : nullptr);
         SDL_SetRenderLogicalPresentation(ren_, kScreenW, kScreenH, SDL_LOGICAL_PRESENTATION_LETTERBOX);
@@ -267,12 +292,25 @@ private:
             case SDL_EVENT_MOUSE_MOTION:
                 mouse_ = {e.motion.x, e.motion.y};
                 showCursor_ = true;
+                hud_->pointerMove(mouse_.x, mouse_.y);
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                mouse_ = {e.button.x, e.button.y};
+                showCursor_ = true;
+                // The other button: over an inventory item, equip it or take it
+                // off (rebuild); over the HUD, nothing; elsewhere, shoot the
+                // enemy under the pointer.
+                if (e.button.button == (settings_.swapMouse ? SDL_BUTTON_LEFT : SDL_BUTTON_RIGHT)) {
+                    if (!hud_->pointerAlt(mouse_.x, mouse_.y)) world_->shootAt(mouse_.x, mouse_.y);
+                    break;
+                }
                 // Swap Mouse Buttons makes the right button the one that walks.
                 if (e.button.button == (settings_.swapMouse ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT)) {
-                    mouse_ = {e.button.x, e.button.y};
-                    showCursor_ = true;
+                    // The HUD's panels take the clicks that land on them.
+                    if (hud_->pointerDown(mouse_.x, mouse_.y)) {
+                        mouseHeld_ = false;
+                        break;
+                    }
                     // On an enemy: go and hit it (GAttackAction); on a console or
                     // chest: go and use it; elsewhere walk.
                     // A thought bubble takes the click that lands on it.
@@ -280,10 +318,6 @@ private:
                     mouseHeld_ = !world_->attackAt(mouse_.x, mouse_.y) && !world_->useAt(mouse_.x, mouse_.y);
                     if (mouseHeld_) world_->walkTo(mouse_.x, mouse_.y);
                     lastRetarget_ = now_;
-                } else if (e.button.button == (settings_.swapMouse ? SDL_BUTTON_LEFT : SDL_BUTTON_RIGHT)) {
-                    // The other button: shoot the enemy under the pointer.
-                    mouse_ = {e.button.x, e.button.y};
-                    world_->shootAt(mouse_.x, mouse_.y);
                 }
                 break;
             case SDL_EVENT_MOUSE_BUTTON_UP:
@@ -295,7 +329,12 @@ private:
                     applyDisplay(win_, display_);
                     saveDisplay();
                 } else if (e.key.key == SDLK_ESCAPE) {
-                    endGame();
+                    if (hud_->inventoryOpen()) hud_->setInventoryOpen(false);
+                    else endGame();
+                } else if ((e.key.key == SDLK_I || e.key.key == SDLK_C || e.key.key == SDLK_TAB) && !e.key.repeat) {
+                    hud_->toggleInventory();
+                } else if (e.key.key == SDLK_Q && !e.key.repeat) {
+                    world_->useHealthPack();
                 } else if (e.key.key == SDLK_F && !e.key.repeat) {
                     world_->attackNearest();
                 } else if (e.key.key == SDLK_G && !e.key.repeat) {
@@ -306,6 +345,26 @@ private:
                 }
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                showCursor_ = false;
+                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) {
+                    hud_->toggleInventory();
+                    break;
+                }
+                if (hud_->inventoryOpen()) {
+                    // The inventory has the pad while it is open (D3 on a console).
+                    switch (e.gbutton.button) {
+                        case SDL_GAMEPAD_BUTTON_DPAD_UP: hud_->padMove(0, -1); break;
+                        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: hud_->padMove(0, 1); break;
+                        case SDL_GAMEPAD_BUTTON_DPAD_LEFT: hud_->padMove(-1, 0); break;
+                        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: hud_->padMove(1, 0); break;
+                        case SDL_GAMEPAD_BUTTON_SOUTH: hud_->padPress(); break;
+                        case SDL_GAMEPAD_BUTTON_WEST: hud_->padQuick(); break;
+                        case SDL_GAMEPAD_BUTTON_EAST: hud_->setInventoryOpen(false); break;
+                        default: break;
+                    }
+                    break;
+                }
+                if (e.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP) world_->useHealthPack();
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) endGame();
                 // Attack (rebuild controls, D3-style): X / Square, or the right trigger.
                 if (e.gbutton.button == SDL_GAMEPAD_BUTTON_WEST) world_->attackNearest();
@@ -318,8 +377,10 @@ private:
             case SDL_EVENT_GAMEPAD_AXIS_MOTION:
                 if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) stick_.x = e.gaxis.value / 32767.0f;
                 if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) stick_.y = e.gaxis.value / 32767.0f;
-                if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX || e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY)
+                if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX || e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
                     showCursor_ = false;  // playing on the pad: hide the pointer
+                    hud_->padStick(stick_.x, stick_.y);
+                }
                 if (e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
                     const bool pulled = e.gaxis.value > 16000;
                     if (pulled && !trigger_) world_->attackNearest();
@@ -339,7 +400,9 @@ private:
         // The stick, with a radial dead zone (rebuild choice: 25% of the
         // throw), or the keys, give a screen direction to walk in.
         float dx = 0, dy = 0;
-        if (stick_.x * stick_.x + stick_.y * stick_.y > kStickDeadZone * kStickDeadZone) dx = stick_.x, dy = stick_.y;
+        // While the inventory is open the stick moves its focus instead.
+        if (!hud_->inventoryOpen() && stick_.x * stick_.x + stick_.y * stick_.y > kStickDeadZone * kStickDeadZone)
+            dx = stick_.x, dy = stick_.y;
         const bool* keys = SDL_GetKeyboardState(nullptr);
         if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]) dx -= 1;
         if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) dx += 1;
@@ -356,17 +419,22 @@ private:
             world_->walkTo(mouse_.x, mouse_.y);
             lastRetarget_ = now_;
         }
+        for (const Hud::Action a : hud_->takeActions())
+            if (a == Hud::Action::UseHealthPack) world_->useHealthPack();  // the map and quest log are not rebuilt yet
+        world_->setViewCentre(hud_->viewCentreX());
         world_->update(nowMs);
         if (const auto change = world_->levelChange()) {
             // A portal: the next level, with the player on its entry point
-            // (FUN_004a1d20 sets the load going).
-            const uint32_t money = world_->money();
-            auto carried = world_->carried();
-            const double hitPoints = world_->player().hitPoints(), energy = world_->player().energy();
+            // (FUN_004a1d20 sets the load going), carrying what it has.
+            auto carried = world_->takeCarried();
             level_ = change->level, entry_ = change->entry;
             startGame();
-            world_->carry(money, std::move(carried), hitPoints, energy);
+            world_->carry(std::move(carried));
+            hud_->attach(&world_->inventory(), &world_->catalog());
+            return;
         }
+        const world::Player& p = world_->player();
+        hud_->update(nowMs, Hud::Vitals{p.hitPoints(), p.maxHitPoints(), p.energy(), p.maxEnergy()});
     }
 
     void playMusic(const std::string* path) {
@@ -591,6 +659,7 @@ private:
     bool swapChanged_ = false, highResChanged_ = false, highRes_ = true;
     SDL_FPoint mouse_{kScreenW / 2.0f, kScreenH / 2.0f};
     std::unique_ptr<WorldView> world_;
+    std::unique_ptr<Hud> hud_;
     std::optional<std::string> introMusic_;
     uint16_t level_ = 1, entry_ = 0;
     std::optional<world::WalkMap::Point> at_;
@@ -625,6 +694,10 @@ Options parseArgs(int argc, char** argv) {
             o.use = true;
             continue;
         }
+        if (a == "--inventory") {
+            o.inventory = true;
+            continue;
+        }
         if (i + 1 >= argc) throw std::runtime_error("missing value for " + a);
         const std::string v = argv[++i];
         if (a == "--data") o.data = v;
@@ -635,6 +708,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--settings") o.settings = v;
         else if (a == "--time") o.timeMs = std::stoull(v);
         else if (a == "--run-ms") o.runMs = std::stoull(v);
+        else if (a == "--pad") o.pad = v;
         else if (a == "--character") {
             if (v == "human") o.character = world::Character::Human;
             else if (v == "gladiator") o.character = world::Character::Gladiator;
@@ -666,7 +740,8 @@ Options parseArgs(int argc, char** argv) {
     if (o.data.empty()) throw std::runtime_error("Harbinger.ini not found. Put harbinger.exe in the Harbinger folder, or run:\n"
                                                  "harbinger --data <Harbinger install dir> [--screen startup|new|options|load|game] [--level id] [--entry id] [--at x,y] [--no-audio] "
                                                  "[--character human|gladiator|culibine] [--settings config.cfg] "
-                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use]]");
+                                                 "[--screenshot out.bmp [--time ms] [--mouse x,y] [--click x,y] [--stick x,y] [--attack] [--shoot] [--use] "
+                                                 "[--inventory] [--pad udlrax]]");
     return o;
 }
 
@@ -684,7 +759,10 @@ int main(int argc, char** argv) {
         const Display display = loadDisplay(displayPath);
         SDL_Window* win = nullptr;
         SDL_Renderer* ren = nullptr;
-        if (!SDL_CreateWindowAndRenderer("Harbinger", shot ? kScreenW : display.width, shot ? kScreenH : display.height,
+        // A capture of the game is taken at its 1024x768.
+        const bool shotGame = shot && opt.screen == "game";
+        if (!SDL_CreateWindowAndRenderer("Harbinger", shot ? (shotGame ? 1024 : kScreenW) : display.width,
+                                         shot ? (shotGame ? 768 : kScreenH) : display.height,
                                          shot ? 0 : SDL_WINDOW_RESIZABLE, &win, &ren))
             throw std::runtime_error(SDL_GetError());
         if (display.fullscreen && !shot) applyDisplay(win, display);
@@ -696,8 +774,10 @@ int main(int argc, char** argv) {
             FrontEnd game(win, ren, opt, display, displayPath);
             if (shot) {
                 // Deterministic capture: simulate `--time` ms in 10 ms steps.
+                if (opt.inventory) game.openInventory();
                 if (opt.mouse) game.setMouse(*opt.mouse);
                 if (opt.stick) game.holdStick(*opt.stick);
+                for (char c : opt.pad) game.pressPad(c);
                 for (uint64_t t = 0; t <= opt.timeMs; t += 10) {
                     game.update(t);
                     if (t == 0 && opt.click) game.clickWorld(*opt.click);

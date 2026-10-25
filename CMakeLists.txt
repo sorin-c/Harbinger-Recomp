@@ -71,6 +71,10 @@ add_library(harbinger_core
   src/world/walkmap.cpp
   src/world/script.cpp
   src/world/loot.cpp
+  src/world/inventory.cpp
+  src/world/inventory_layout.cpp
+  src/world/item_catalog.cpp
+  src/world/item_text.cpp
   src/world/spawners.cpp
   src/world/portal.cpp
 )
@@ -104,7 +108,7 @@ if(HARBINGER_BUILD_APPS)
   endif()
 
   add_executable(harbinger src/app/harbinger.cpp src/app/assets.cpp src/app/screen.cpp src/app/sound.cpp
-    src/app/world_view.cpp src/app/cutscene.cpp)
+    src/app/world_view.cpp src/app/cutscene.cpp src/app/hud.cpp)
   target_link_libraries(harbinger PRIVATE harbinger_core SDL3::SDL3)
   target_compile_options(harbinger PRIVATE ${HARBINGER_WARNINGS})
   if(WIN32)
@@ -120,7 +124,7 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-  foreach(t sqh gim core ui resources audio world movement combat)
+  foreach(t sqh gim core ui resources audio world movement combat inventory)
     add_executable(test_${t} tests/test_${t}.cpp)
     target_link_libraries(test_${t} PRIVATE harbinger_core)
     add_test(NAME ${t} COMMAND test_${t})

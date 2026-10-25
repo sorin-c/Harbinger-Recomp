@@ -32,6 +32,22 @@ struct Socketed {
     std::vector<std::pair<uint16_t, uint16_t>> list;
 };
 
+// A mod chip's body (GModChipItem_v3): 2, 3 or 4 words by version.
+struct ModChipBody {
+    uint16_t target = 0;  // item+0x40: 1 armour, 2 helmet, 3 human weapon, 4 torso, 5 gladiator gun,
+                          // 6 gladiator blade, 7-8 gauntlets (GModChipItem_v5 turns it into the socket kind)
+    uint16_t word38 = 0;  // item+0x38: the damage type or stat it raises (2 = EMP for the EMP chips)
+    uint16_t word3a = 0;  // item+0x3a, from version 1.0: the amount (+1 for the level 1 chips)
+    uint16_t word3c = 0;  // item+0x3c, from version 1.1
+};
+
+// An injector's body (GInjectorItem_v3).
+struct InjectorBody {
+    uint8_t type = 0;     // item+0x38: 0 the Human's injector slot, 2 the other one (GInjectorItem_v5)
+    uint16_t word3c = 0;  // item+0x3c
+    uint16_t word40 = 0;  // item+0x40, from version 1.1
+};
+
 struct Item {
     uint16_t classId = 0;  // index into the engine's item factory (25 = GAnimatedItem)
     uint16_t versionWord = 0;  // the version times 256 (0x233 = 2.2 in most files)
@@ -44,6 +60,8 @@ struct Item {
     std::optional<std::vector<uint8_t>> block;  // the optional 8 bytes (FUN_004d6fc0)
     std::optional<Animation> animation;  // set for class 25
     std::optional<Socketed> socketed;    // set for classes 1-8
+    std::optional<ModChipBody> modChip;      // set for class 11
+    std::optional<InjectorBody> injector;    // set for class 9
     uint16_t trailer = 0;  // u16 read last by the base loader from version 1.2; 11 in every animated item
 
     double version() const { return versionWord / 256.0; }
@@ -59,13 +77,27 @@ enum : uint16_t {
     GladiatorTorso = 6,     // GGladiatorTorsoItem
     LeftGauntlet = 7,       // GLeftGauntletItem
     RightGauntlet = 8,      // GRightGauntletItem
+    Injector = 9,           // GInjectorItem
     Money = 10,             // money.itm, dropped with an amount (GMoneyPlug)
+    ModChip = 11,           // GModChipItem
+    HumanHealth = 14,       // GHealthItem: the health packs, one class per character
+    GladiatorHealth = 15,
+    CulibineHealth = 16,
+    CameraDrop = 17,        // GCameraDropItem
+    MineDrop = 18,          // GMineDropItem
+    OffensiveAmplifier = 21,
+    DefensiveAmplifier = 22,
     AnimatedItem = 25,      // GAnimatedItem
 };
 
 // The sprite layer an equipped item of this class draws on (GEquipCell_v1
 // hands its animation group to layer 0, 1 or 2), or -1 for none.
 int spriteLayer(uint16_t classId);
+
+// The equipment slot kind an item of this class goes in (vtable slot 5 of
+// the item template), 0 if it cannot be equipped. Mod chips and injectors
+// take theirs from their body, so pass the parsed item.
+uint16_t equipKind(const Item& item);
 
 // Throws std::runtime_error on malformed data, trailing bytes, or a class whose
 // body is not decoded yet.

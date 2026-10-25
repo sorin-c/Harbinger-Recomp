@@ -13,9 +13,10 @@
 namespace harbinger::app {
 
 WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world::Character character, int screenW,
-                     int screenH, uint16_t entry, std::optional<world::WalkMap::Point> at)
+                     int screenH, world::Inventory::Layout inventory, uint16_t entry,
+                     std::optional<world::WalkMap::Point> at)
     : assets_(assets), ren_(ren), level_(std::make_unique<world::Level>(assets.vfs(), assets.ini(), levelId)),
-      screenW_(screenW), screenH_(screenH) {
+      screenW_(screenW), screenH_(screenH), centreX_(screenW / 2.0) {
     const auto& m = level_->map();
     // A new game enters at entry point 0, "Default" (FUN_004a05d0 sets
     // +0x136 = 0; FUN_00498250 looks it up).
@@ -29,6 +30,13 @@ WorldView::WorldView(Assets& assets, SDL_Renderer* ren, uint16_t levelId, world:
     if (at) start.x = at->x, start.y = at->y;
     walk_ = std::make_unique<world::WalkMap>(*level_);
     player_ = std::make_unique<world::Player>(assets.vfs(), assets.ini(), character, *walk_, start);
+    // The starting items go in as pick-ups do (GHumanPlayerPlug_v108 and
+    // the others add them one by one), so they end up equipped.
+    catalog_ = std::make_unique<world::ItemCatalog>(assets.vfs(), assets.ini());
+    inventory_ = std::make_unique<world::Inventory>(std::move(inventory), catalog_->lookup());
+    for (uint16_t id : world::Player::startingItems(character)) inventory_->add({id, {}});
+    player_->equip(inventory_->equippedIds());
+    equipRev_ = inventory_->equipmentRevision();
     // The original seeds its generator once (FUN_004f9030); the rebuild seeds
     // from the clock so fights differ from game to game.
     rng_.seed(uint32_t(SDL_GetTicksNS()));
@@ -83,6 +91,29 @@ WorldView::~WorldView() {
     for (auto& [key, t] : objectTextures_) SDL_DestroyTexture(t.tex);
 }
 
+WorldView::Carried WorldView::takeCarried() {
+    return {std::move(catalog_), std::move(inventory_), player_->hitPoints(), player_->energy()};
+}
+
+void WorldView::carry(Carried c) {
+    catalog_ = std::move(c.catalog);
+    inventory_ = std::move(c.inventory);
+    player_->equip(inventory_->equippedIds());
+    if (const auto* w = player_->rangedWeapon()) player_->setBoltSpeed(bolts_->speedOf(*w));
+    equipRev_ = inventory_->equipmentRevision();
+    player_->carry(c.hitPoints, c.energy);
+}
+
+bool WorldView::useHealthPack() {
+    if (cinematic() || player_->dead() || player_->hitPoints() >= player_->maxHitPoints()) return false;
+    if (!inventory_->takeHealthPack()) return false;
+    // How much a pack heals is not traced (the use goes through the item's
+    // own vtable, FUN_004d5a50, and the item files hold no amount): half the
+    // maximum is guessed.
+    player_->heal(player_->maxHitPoints() / 2);
+    return true;
+}
+
 void WorldView::steer(float dx, float dy) {
     if (cinematic()) return;
     if (dx != 0 || dy != 0) pendingUse_ = nullptr, pendingPickup_ = 0;
@@ -92,7 +123,7 @@ void WorldView::steer(float dx, float dy) {
 }
 
 world::WalkMap::Point WorldView::mapPoint(float x, float y) const {
-    const double sx = x - screenW_ / 2.0 + camX_, sy = y - screenH_ / 2.0 + camY_;
+    const double sx = x - centreX_ + camX_, sy = y - screenH_ / 2.0 + camY_;
     return {(sx / 64.0 + sy / 32.0) / 2.0, (sy / 32.0 - sx / 64.0) / 2.0};
 }
 
@@ -107,7 +138,7 @@ int WorldView::foeAt(float x, float y) const {
     // An enemy's picture stands up from its feet: take the click as on it
     // when it falls in a box around the feet's screen point (a rebuild
     // choice, roughly a body's size).
-    const double sx = x - screenW_ / 2.0 + camX_, sy = y - screenH_ / 2.0 + camY_;
+    const double sx = x - centreX_ + camX_, sy = y - screenH_ / 2.0 + camY_;
     int best = -1;
     double bestD = 1e9;
     for (size_t i = 0; i < foes_->all().size(); ++i) {
@@ -170,7 +201,7 @@ bool WorldView::attackNearest() {
 
 const chk::GizmoRecord* WorldView::gizmoAt(float x, float y) const {
     // The front-most usable gizmo with a drawn pixel under the pointer.
-    const double sx = x - screenW_ / 2.0 + camX_, sy = y - screenH_ / 2.0 + camY_;
+    const double sx = x - centreX_ + camX_, sy = y - screenH_ / 2.0 + camY_;
     for (auto k = order_.rbegin(); k != order_.rend(); ++k) {
         if (*k >= objects_.size()) continue;
         const Object& o = objects_[*k];
@@ -237,7 +268,7 @@ const Texture* WorldView::groundItemPicture(const world::Loot::GroundItem& g, SD
 }
 
 const world::Loot::GroundItem* WorldView::itemAt(float x, float y) const {
-    const double sx = x - screenW_ / 2.0 + camX_, sy = y - screenH_ / 2.0 + camY_;
+    const double sx = x - centreX_ + camX_, sy = y - screenH_ / 2.0 + camY_;
     for (auto it = loot_->ground().rbegin(); it != loot_->ground().rend(); ++it) {
         if (!loot_->landed(*it, elapsedMs_)) continue;
         SDL_FRect src, at;
@@ -407,15 +438,21 @@ void WorldView::update(uint64_t nowMs) {
         pendingUse_ = nullptr;
     }
     if (pendingPickup_ && player_->path().empty()) {
-        // Picked up on arrival (a rebuild stand-in for GPickUpAction).
+        // Picked up on arrival (a rebuild stand-in for GPickUpAction), if
+        // the inventory has room; otherwise it stays on the ground (the
+        // original says "Unable to fit item in current state").
         if (const auto* g = loot_->find(pendingPickup_))
-            if (std::hypot(g->x - player_->x(), g->y - player_->y()) <= kUseReach)
-                if (const auto d = loot_->take(pendingPickup_)) {
-                    const itm::Item* item = loot_->item(d->item);
-                    if (item && item->classId == itm::Money) money_ += d->amount;
-                    else carried_.push_back(d->item);
-                }
+            if (std::hypot(g->x - player_->x(), g->y - player_->y()) <= kUseReach) {
+                world::Inventory trial = *inventory_;
+                if (trial.add({g->drop.item, {}}, g->drop.amount) != world::Inventory::Added::NoRoom)
+                    if (const auto d = loot_->take(pendingPickup_)) inventory_->add({d->item, {}}, d->amount);
+            }
         pendingPickup_ = 0;
+    }
+    if (inventory_->equipmentRevision() != equipRev_) {
+        equipRev_ = inventory_->equipmentRevision();
+        player_->equip(inventory_->equippedIds());
+        if (const auto* w = player_->rangedWeapon()) player_->setBoltSpeed(bolts_->speedOf(*w));
     }
     // The level's event triggers, and the script one of them started.
     cutscene_->update(elapsedMs_, x0, y0, player_->x(), player_->y(),
@@ -454,7 +491,7 @@ void WorldView::drawLayer(int x, int y, int layer) const {
     const Texture* t = tile(cell.layers[layer]);
     if (!t) return;
     const auto top = world::toScreen(x, y);
-    const float left = float(std::floor(top.x - camX_ + screenW_ / 2.0)) - world::kTileW / 2.0f;
+    const float left = float(std::floor(top.x - camX_ + centreX_)) - world::kTileW / 2.0f;
     const float bottom = float(std::floor(top.y - camY_ + screenH_ / 2.0)) + world::kTileH;
     if (left > screenW_ || left + float(t->w) < 0 || bottom < 0 || bottom - float(t->h) > screenH_) return;
     const SDL_FRect dst{left, bottom - float(t->h), float(t->w), float(t->h)};
@@ -471,7 +508,7 @@ void WorldView::drawImage(const std::string& key, const render::RgbaImage* img, 
     }
     const Texture& t = it->second;
     if (!t.tex) return;
-    const float x = float(std::floor(left - camX_ + screenW_ / 2.0));
+    const float x = float(std::floor(left - camX_ + centreX_));
     const float y = float(std::floor(top - camY_ + screenH_ / 2.0));
     if (x > screenW_ || x + float(t.w) < 0 || y > screenH_ || y + float(t.h) < 0) return;
     const SDL_FRect dst{x, y, float(t.w), float(t.h)};
@@ -520,7 +557,7 @@ void WorldView::drawGroundItems() const {
         SDL_FRect src, at;
         const Texture* t = groundItemPicture(g, src, at);
         if (!t) continue;
-        at.x = float(std::floor(at.x - camX_ + screenW_ / 2.0)), at.y = float(std::floor(at.y - camY_ + screenH_ / 2.0));
+        at.x = float(std::floor(at.x - camX_ + centreX_)), at.y = float(std::floor(at.y - camY_ + screenH_ / 2.0));
         SDL_RenderTexture(ren_, t->tex, &src, &at);
     }
 }
@@ -531,7 +568,7 @@ void WorldView::drawTargetBar() const {
     const auto* f = foes_->find(player_->target());
     if (!f || f->dead || f->maxHitPoints <= 0) return;
     const auto p = world::toScreen(f->x, f->y);
-    const float left = float(std::floor(p.x - camX_ + screenW_ / 2.0)) - 20, top = float(std::floor(p.y - camY_ + screenH_ / 2.0)) - 96;
+    const float left = float(std::floor(p.x - camX_ + centreX_)) - 20, top = float(std::floor(p.y - camY_ + screenH_ / 2.0)) - 96;
     const SDL_FRect back{left - 1, top - 1, 42, 6};
     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
     SDL_RenderFillRect(ren_, &back);
@@ -565,7 +602,7 @@ void WorldView::drawBolts() const {
         const SDL_FRect src{float(k % perRow * fw), float(k / perRow * fh), float(fw), float(fh)};
         const double scale = b.sizes[0] > 0 ? b.sizes[0] : 1.0;
         const auto p = world::toScreen(t.x, t.y);
-        const float cx = float(p.x - camX_ + screenW_ / 2.0), cy = float(p.y - camY_ + screenH_ / 2.0 - t.z * 64.0);
+        const float cx = float(p.x - camX_ + centreX_), cy = float(p.y - camY_ + screenH_ / 2.0 - t.z * 64.0);
         const float w = float(fw * scale), h = float(fh * scale);
         const SDL_FRect at{cx - w / 2, cy - h / 2, w, h};
         const double angle = std::atan2((t.vx + t.vy) * 32.0, (t.vx - t.vy) * 64.0) * 180.0 / kPi;
@@ -576,29 +613,8 @@ void WorldView::drawBolts() const {
 }
 
 void WorldView::drawHealth() const {
-    // The player's hit points, bottom left (a rebuild stand-in for the
-    // HUD's health bar until the HUD is rebuilt).
-    const float left = 16, top = float(screenH_) - 28, width = 160;
-    const SDL_FRect back{left - 2, top - 2, width + 4, 14};
-    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
-    SDL_RenderFillRect(ren_, &back);
-    const double frac = player_->maxHitPoints() > 0 ? player_->hitPoints() / player_->maxHitPoints() : 0;
-    const SDL_FRect bar{left, top, width * float(frac), 10};
-    SDL_SetRenderDrawColor(ren_, 200, 24, 24, 255);
-    SDL_RenderFillRect(ren_, &bar);
-    SDL_SetRenderDrawColor(ren_, 255, 255, 255, 255);
-    const std::string text = std::to_string(int(std::ceil(player_->hitPoints()))) + " / " +
-                             std::to_string(int(player_->maxHitPoints()));
-    SDL_RenderDebugText(ren_, left + width + 10, top + 1, text.c_str());
-    // The ranged weapon's energy under it (a stand-in as well).
-    if (player_->maxEnergy() > 0) {
-        const SDL_FRect eback{left - 2, top + 14, width + 4, 8};
-        SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
-        SDL_RenderFillRect(ren_, &eback);
-        const SDL_FRect ebar{left, top + 16, width * float(player_->energy() / player_->maxEnergy()), 4};
-        SDL_SetRenderDrawColor(ren_, 40, 200, 120, 255);
-        SDL_RenderFillRect(ren_, &ebar);
-    }
+    // The hit points and energy are on the HUD (app/hud); this keeps the
+    // death notice.
     if (gameOver()) {
         const char* msg = "You have died. Press a button or click to try again.";
         SDL_RenderDebugText(ren_, float(screenW_) / 2 - 8.0f * float(std::strlen(msg)) / 2, float(screenH_) / 2, msg);
