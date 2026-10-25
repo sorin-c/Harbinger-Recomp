@@ -33,7 +33,8 @@ What exists so far:
 - `harbinger-viewer`, an SDL3 sprite browser (keyboard or gamepad)
 - Gameplay in main so far: walking (mouse, keyboard or gamepad), gear and
   melee and ranged combat, player health and death, enemy AI with melee and
-  ranged attacks, spawners, portals between levels, scripted cutscenes and
+  ranged attacks, spawners, portals and umbilicals between levels (with
+  umbilical codes and the Level Selection screen), scripted cutscenes and
   enemy moves, gizmo use (doors, consoles), chest loot, and the HUD and
   inventory screen with full controller navigation
 

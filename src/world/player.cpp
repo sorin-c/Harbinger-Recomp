@@ -62,7 +62,7 @@ Player::Player(Vfs& vfs, const Ini& ini, Character character, const WalkMap& wal
     limit_ = WalkMap::limitFor(std::clamp(size, 0, 2));
     x_ = start.x;
     y_ = start.y;
-    facing_ = uint8_t(start.facing & 0xff);
+    facing_ = entryFacing(start.facing);
     switch (character) {
         case Character::Human: maxHitPoints_ = 70; break;
         case Character::Gladiator: maxHitPoints_ = 80; break;

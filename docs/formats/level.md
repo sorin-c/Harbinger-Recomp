@@ -34,7 +34,9 @@ u16  entryCount         FUN_004491c0 (version >= 1.16 branch)
 repeat entryCount:      GEntryPt, FUN_0048b2c0
   u16  id
   f64  x, y             map cells
-  u16  facing
+  u16  facing           a direction 0..15 (world::entryFacing, table 0x54fa58);
+                        above 15, bit 4 is cleared and the entry is marked
+                        closed for umbilicals (entry+0x2c), docs/umbilicals.md
   str  name             "Default", "Torvus Junction", ...
   i32  link             -1 on "Default"; meaning not confirmed
 u16  unknown1          chunk+0x30

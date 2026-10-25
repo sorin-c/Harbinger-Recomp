@@ -25,7 +25,12 @@ namespace harbinger::chk {
 struct EntryPoint {
     uint16_t id = 0;
     double x = 0, y = 0;  // map cells
+    // A direction 0..15 (FUN_0044bfb0 turns it into a facing byte through
+    // the table at 0x54fa58, see world::entryFacing). The file's word can
+    // be larger: FUN_0048b2c0 clears bit 4 of a word above 15 and keeps the
+    // mark as `closed`.
     uint16_t facing = 0;
+    bool closed = false;  // entry+0x2c: an umbilical arriving here starts closed
     std::string name;
     int32_t link = 0;  // -1 for "Default"; meaning not confirmed
 };

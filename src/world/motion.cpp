@@ -28,6 +28,11 @@ const Tables& tables() {
 
 }  // namespace
 
+uint8_t entryFacing(uint16_t direction) {
+    static constexpr uint8_t kTable[16] = {0, 18, 27, 37, 48, 64, 83, 109, 128, 144, 155, 165, 176, 192, 211, 237};
+    return direction < 16 ? kTable[direction] : 0;
+}
+
 uint8_t facingTowards(double dx, double dy) {
     const bool negX = dx < 0, negY = dy < 0;
     const double ax = std::fabs(dx), ay = std::fabs(dy);

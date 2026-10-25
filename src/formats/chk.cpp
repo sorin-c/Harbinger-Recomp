@@ -54,6 +54,7 @@ Level parse(const std::vector<uint8_t>& data) {
         e.x = f64(r);
         e.y = f64(r);
         e.facing = r.u16();
+        if (e.facing > 15) e.closed = true, e.facing &= uint16_t(~0x10);
         e.name = r.string();
         e.link = r.i32();
         lv.entries.push_back(std::move(e));

@@ -275,9 +275,13 @@ const render::RgbaImage* Level::gizmoFrameImage(const chk::GizmoRecord& g, size_
     return slot.get();
 }
 
+bool Level::gizmoDrawable(const chk::GizmoRecord& g) const {
+    return map_.keeps(g) && !gizmoTemplate(g).frames.empty();
+}
+
 bool Level::gizmoVisible(const chk::GizmoRecord& g) const {
-    const giz::Template& t = gizmoTemplate(g);
-    return map_.keeps(g) && !t.frames.empty() && t.cls != giz::UmbilicalShell;
+    if (!gizmoDrawable(g)) return false;
+    return gizmoTemplate(g).cls != giz::UmbilicalShell || gizmoRuntime_.at(g.instance).state.state != 0;
 }
 
 size_t Level::gizmoFrame(const chk::GizmoRecord& g, uint64_t ms) const {
@@ -315,6 +319,12 @@ void Level::setGizmoState(const chk::GizmoRecord& g, GizmoRuntime& rt, uint64_t 
     rt.startMs = nowMs;
     const uint64_t length = playLength(t, rt.play);
     rt.endMs = length ? nowMs + length : 0;
+}
+
+void Level::setGizmoState(const chk::GizmoRecord& g, uint16_t state, uint64_t nowMs) {
+    GizmoRuntime& rt = gizmoRuntime_.at(g.instance);
+    rt.state.state = state;
+    setGizmoState(g, rt, nowMs);
 }
 
 bool Level::useGizmo(const chk::GizmoRecord& g, uint64_t nowMs,
